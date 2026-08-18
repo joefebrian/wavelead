@@ -172,11 +172,45 @@ export type EventType =
   | 'bookmark'
   | 'share'
   | 'search'
+  | 'search_impression'
   | 'category_view'
   | 'submit_started'
   | 'submit_completed'
   | 'claim_started'
   | 'claim_completed';
+
+// Canonical Acquisition Source Taxonomy (M04).
+// Keep this list closed: unknown values are normalized to 'other'.
+export type AcquisitionSource =
+  | 'search'
+  | 'homepage'
+  | 'trending'
+  | 'top'
+  | 'category'
+  | 'country'
+  | 'related_channel'
+  | 'channel_profile'
+  | 'direct'
+  | 'external'
+  | 'other';
+
+export const ACQUISITION_SOURCES: readonly AcquisitionSource[] = [
+  'search','homepage','trending','top','category','country','related_channel','channel_profile','direct','external','other',
+] as const;
+
+export const SOURCE_LABELS: Record<AcquisitionSource, string> = {
+  search: 'WaveLead Search',
+  homepage: 'Homepage',
+  trending: 'Trending',
+  top: 'Top Channels',
+  category: 'Category Discovery',
+  country: 'Country Discovery',
+  related_channel: 'Related Channels',
+  channel_profile: 'Channel Profile',
+  direct: 'Direct',
+  external: 'External',
+  other: 'Other',
+};
 
 export interface EventRecord {
   id: string;
@@ -185,11 +219,15 @@ export interface EventRecord {
   user_id: string | null;
   channel_id: string | null;
   campaign_id: string | null;
-  source: string | null;
+  source: AcquisitionSource | null;
+  placement: string | null;
   referrer: string | null;
-  page_path: string | null;
+  referrer_domain: string | null;
+  search_query: string | null;
+  category_slug: string | null;
   country_code: string | null;
   device_type: string | null;
+  page_path: string | null;
   metadata: Record<string, unknown>;
   created_at: Date;
 }
@@ -197,14 +235,54 @@ export interface EventRecord {
 export interface DailyMetric {
   id: string;
   channel_id: string;
-  date: string; // YYYY-MM-DD
-  impressions: number;
+  date: string; // YYYY-MM-DD (UTC)
+  discovery_impressions: number;
+  search_impressions: number;
   profile_views: number;
+  unique_profile_views: number;
   follow_clicks: number;
-  unique_follow_clicks: number;
+  unique_follow_intents: number;
   bookmarks: number;
   shares: number;
-  search_impressions: number;
+  last_aggregated_at: Date;
+}
+
+// Per-source (canonical) daily rollup for the same channel/date.
+export interface DailySourceMetric {
+  id: string;
+  channel_id: string;
+  date: string;
+  source: AcquisitionSource;
+  impressions: number;           // discovery + search combined per source
+  profile_views: number;
+  unique_profile_views: number;
+  follow_clicks: number;
+  unique_follow_intents: number;
+  last_aggregated_at: Date;
+}
+
+// Privacy-safe search-query rollup. Only exposed to owner if impressions >= threshold.
+export interface SearchQueryMetric {
+  id: string;
+  channel_id: string;
+  date: string;
+  normalized_query: string;
+  impressions: number;
+  profile_views: number;
+  unique_profile_views: number;
+  follow_clicks: number;
+  unique_follow_intents: number;
+  last_aggregated_at: Date;
+}
+
+// Rollup coordination row: tracks freshness + a lightweight advisory lock.
+export interface RollupState {
+  id: string;
+  channel_id: string;
+  date: string;
+  last_aggregated_at: Date;
+  locked_until: Date | null;
+  updated_at: Date;
 }
 
 export interface Report {

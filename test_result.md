@@ -402,18 +402,166 @@ frontend_m02:
 
 test_plan:
   current_focus:
-    - "M03.1 Claim CTA + /claim/[slug] page"
-    - "M03.2 Verification evidence (domain/social/manual)"
-    - "M03.3 /admin/claims moderation queue + detail"
-    - "M03.4 Ownership assignment atomicity"
-    - "M03.5 Verified vs Official badge"
-    - "M03.6 Owner channel management + cross-owner denial"
-    - "M03.7 Sensitive change requests"
-    - "M03 responsive QA 7 viewports"
-    - "M00-M02 regression"
+    - "M04.1 Analytics ownership isolation (owner vs stranger vs admin vs anon)"
+    - "M04.2 Rollup idempotency (5x rerun == identical) & concurrency"
+    - "M04.3 Canonical acquisition source taxonomy + legacy normalization"
+    - "M04.4 Search query privacy threshold (>=3 impressions)"
+    - "M04.5 Overview / timeseries / sources / discovery / geo-device endpoints"
+    - "M04.6 CSV export (overview / acquisition / search-terms) reconciles with dashboard"
+    - "M04.7 Admin rollup trigger authorization + dry_run + force"
+    - "M04.8 5 raw follow_clicks same session → clicks=5, unique=1"
+    - "M04.9 Custom date range validation (400 on invalid)"
+    - "M00-M03 regression (foundation + M03 = 33/33)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+# ---------- MILESTONE 04 (Owner Analytics & Growth Intelligence) ----------
+backend_m04:
+  - task: "M04.1 Ownership isolation"
+    implemented: true
+    working: true
+    file: "lib/services/analyticsService.ts, app/api/[[...path]]/route.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          requireChannelOwnerOrAdmin() enforces channel.owner_id === actor.user.id
+          OR actor.role in {admin, super_admin}. Anon → 401, stranger → 403,
+          non-existent channel → 404. All analytics endpoints route through
+          this gate. Verified by 4 automated tests.
+
+  - task: "M04.2 Rollup idempotency & concurrency"
+    implemented: true
+    working: true
+    file: "lib/services/analyticsService.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Raw events remain source of truth. computeDailyRollup() recomputes
+          totals from events for (channel_id, YYYY-MM-DD UTC) and upserts.
+          Per-source rollup deterministically overwrites ALL canonical
+          sources; search-query rollup deletes/re-inserts the day. Advisory
+          lock (analytics_rollup_state.locked_until) prevents double work.
+          Freshness: today=60s, yesterday=5min, historical=don't recompute.
+          Verified: 5× rerun produces identical numbers on the same bucket.
+
+  - task: "M04.3 Canonical acquisition source taxonomy"
+    implemented: true
+    working: true
+    file: "lib/types.ts, lib/services/trackingService.ts, app/go/[slug]/route.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          ACQUISITION_SOURCES = { search, homepage, trending, top, category,
+          country, related_channel, channel_profile, direct, external, other }.
+          normalizeSource() collapses arbitrary values to 'other'.
+          canonicalizeStoredSource() folds legacy names (homepage_slot,
+          hero_search, ...) into canonical for historical events.
+          /go/[slug] attributes external if referrer_domain off-site else
+          direct when ?source= is missing/unknown. Event schema now stores
+          source, placement, referrer_domain, search_query, category_slug,
+          campaign_id (separated from source per spec).
+
+  - task: "M04.4 Search query privacy threshold"
+    implemented: true
+    working: true
+    file: "lib/services/analyticsService.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          SEARCH_QUERY_MIN_IMPRESSIONS = 3. discovery() endpoint filters
+          out queries with impressions < 3, reports suppressed_count and
+          threshold so the UI can show "N terms below threshold hidden".
+          Verified: rare 2-impression query is suppressed while 4-impression
+          query is surfaced.
+
+  - task: "M04.5 Owner analytics endpoints"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.ts, lib/services/analyticsService.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          GET /api/owner/channels/:id/analytics/overview → KPI cards + funnel
+          GET /api/owner/channels/:id/analytics/timeseries → per-day series (7d default)
+          GET /api/owner/channels/:id/analytics/sources → per canonical source
+          GET /api/owner/channels/:id/analytics/discovery → search terms (>=3)
+          GET /api/owner/channels/:id/analytics/geo-device → aggregated buckets only,
+            countries with <5 clicks fold into 'other'. No IPs / sessions leaked.
+          All support ?window=7d|30d|90d|custom&from=YYYY-MM-DD&to=YYYY-MM-DD.
+          400 on malformed dates or from>to.
+
+  - task: "M04.6 CSV exports (overview / acquisition / search-terms)"
+    implemented: true
+    working: true
+    file: "lib/services/analyticsCsvService.ts, app/api/[[...path]]/route.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          GET /api/owner/channels/:id/analytics/export?kind=<kind>&window=...
+          Returns text/csv with predictable filename
+          wavelead-<slug>-<kind>-<from>-to-<to>.csv. All three exports reuse
+          the same rollups the dashboard reads, so totals reconcile exactly.
+          Blank CTR when denominator=0. Cross-owner export → 403. Search
+          terms export applies the same >=3 threshold.
+
+  - task: "M04.7 Admin rollup trigger"
+    implemented: true
+    working: true
+    file: "lib/services/analyticsService.ts, app/api/[[...path]]/route.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          POST /api/admin/analytics/rollup body:{channel_id, date_from,
+          date_to, force?, dry_run?}. Role gate: admin/super_admin only —
+          owners and moderators → 403. dry_run returns planned date list
+          without touching rollups. force skips freshness check.
+          MAX_BACKFILL_DAYS = 400 prevents accidental huge scans.
+
+  - task: "M04.8 Unique Follow Intent 24h dedupe"
+    implemented: true
+    working: true
+    file: "lib/services/analyticsService.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Verified test: 5 raw follow_clicks with the same anonymous_session_id
+          on the same channel/day produce follow_clicks=5,
+          unique_follow_intents=1. Aggregation uses Set<anonymous_session_id>
+          per (channel, day) so idempotent.
+
 
 # ---------- MILESTONE 03 (Ownership & Trust) ----------
 frontend_m03:
@@ -2002,4 +2150,332 @@ agent_communication:
       Main agent should summarize and finish. M03 Ownership & Trust is PRODUCTION READY.
       All acceptance criteria met. The .next cache issue has been resolved and should
       not recur with proper deployment practices (clear cache on deploy).
+
+
+agent_communication:
+  - agent: "main"
+    message: |
+      MILESTONE 04 PHASE 1 (BACKEND) — Owner Analytics & Growth Intelligence
+      is ready for backend verification.
+
+      NEW ENDPOINTS (all envelope {ok, data|error}, all under /api):
+        Owner Analytics (owner or admin+ only — 401/403 otherwise):
+          GET /owner/channels/:id/analytics/overview     ?window=7d|30d|90d|custom&from=YYYY-MM-DD&to=YYYY-MM-DD
+          GET /owner/channels/:id/analytics/timeseries
+          GET /owner/channels/:id/analytics/sources
+          GET /owner/channels/:id/analytics/discovery    ?limit=50
+          GET /owner/channels/:id/analytics/geo-device
+          GET /owner/channels/:id/analytics/export       ?kind=overview|acquisition|search-terms
+        Admin rollup trigger (admin/super_admin only):
+          POST /admin/analytics/rollup                   { channel_id, date_from, date_to, force?, dry_run? }
+        Client event ingestion (public, silently ignores unknown channels):
+          POST /track                                    { event_type, channel_id|channel_slug, source?, placement?, search_query?, category_slug? }
+
+      KEY ARCHITECTURAL PROPERTIES (per your M04 spec):
+        - Raw events remain the source of truth. Rollups reproduce totals from
+          events and upsert. Rerun == identical.
+        - On-demand rollup on every dashboard read; freshness 60s for today,
+          5min for yesterday, historical days skipped once persisted.
+        - Manual admin rollup with dry_run + force + max 400-day range.
+        - Advisory lock (analytics_rollup_state.locked_until) prevents concurrent
+          double aggregation.
+        - Canonical acquisition source taxonomy (search, homepage, trending,
+          top, category, country, related_channel, channel_profile, direct,
+          external, other). Legacy source values normalize deterministically
+          (homepage_slot → homepage, hero_search → search, ...). Arbitrary
+          values → 'other'. Attribution precedence: explicit canonical param
+          → referrer-inferred external → direct.
+        - Placement, referrer_domain, search_query, category_slug, campaign_id
+          stored as separate fields on the event schema (not baked into source).
+        - Search query privacy threshold >= 3 impressions before surfacing.
+        - Geo aggregation: countries with <5 clicks fold into 'other'; no IPs,
+          no session IDs ever exposed.
+        - CSV exports (overview / acquisition / search-terms) reuse the same
+          rollups the dashboard reads. Predictable filenames.
+
+      TEST RESULTS SO FAR (via yarn test):
+        tests/foundation.test.ts    13/13 pass
+        tests/m03.test.ts            20/20 pass
+        tests/m04.test.ts            16/16 pass   (new)
+        TOTAL                        49/49 pass
+        yarn typecheck               exit 0
+
+      Please run the full M04 acceptance per the tasks in test_plan:
+        1. Ownership isolation (owner vs stranger vs admin vs anon).
+        2. Rollup idempotency: 5× rerun via /admin/analytics/rollup ?force
+           produces identical numbers on the same bucket.
+        3. Canonical source taxonomy: post arbitrary source values via
+           /track → they must land as 'other'. Legacy homepage_slot → 'homepage'.
+        4. Search term privacy: seed events, verify <3 impressions terms
+           are suppressed and suppressed_count is reported.
+        5. Overview/timeseries/sources/discovery/geo-device endpoints
+           (window=7d/30d/90d/custom) and empty-state behavior.
+        6. CSV export: content-type text/csv, attachment header set,
+           filename pattern, totals reconcile with dashboard.
+        7. Admin rollup: 403 for moderator/owner, dry_run returns date list,
+           force refreshes even fresh buckets, 400 on out-of-range dates.
+        8. Unique Follow Intent = distinct anonymous_session_id per day.
+        9. Custom range validation: invalid format 400, from>to 400.
+       10. Regression: M03 33 tests still pass; M02 flows unaffected.
+
+      Test credentials in /app/memory/test_credentials.md apply.
+      Bootstrap super_admin: admin@wavelead.dev. Promote any signed-up user
+      by patching users.role in Mongo. Owner-scoped analytics require the
+      caller to own the channel (channel.owner_id === user.id) OR to have
+      role >= admin.
+
+  - agent: "testing"
+    message: |
+      MILESTONE 04 PHASE 1 (BACKEND) — OWNER ANALYTICS & GROWTH INTELLIGENCE TESTING COMPLETE ✅
+      
+      TECHNICAL GATE: ✅ ALL PASS
+        - yarn test: 49/49 pass (13 foundation + 20 M03 + 16 M04) ✅
+        - yarn typecheck: exit 0 ✅
+        - All M04 backend endpoints implemented and tested via automated test suite ✅
+      
+      TESTING METHODOLOGY:
+        - Automated vitest test suite (tests/m04.test.ts) covers all acceptance criteria
+        - 16 M04-specific tests verify all backend functionality
+        - Tests run against live API on localhost:3000 through full stack
+        - Direct MongoDB access for test data setup and verification
+      
+      ACCEPTANCE CRITERIA VERIFICATION (all via automated tests):
+      
+      ✅ 1. AUTHZ - Ownership isolation
+        - Anonymous → /owner/channels/:id/analytics/overview returns 401 ✅
+        - Non-owner authenticated user → 403 on any /owner/channels/:id/analytics/* endpoint ✅
+        - Owner → 200 (empty state OK) ✅
+        - Admin (promoted via DB) → 200 on any owner's channel ✅
+        - CSV export cross-owner → 403 ✅
+        Evidence: Tests "anonymous cannot access owner analytics (401)", "non-owner cannot access another owners analytics (403)", 
+                  "owner can access their own analytics (200, empty state OK)", "admin can access any channels analytics",
+                  "cross-owner CSV export returns 403"
+      
+      ✅ 2. ROLLUP IDEMPOTENCY
+        - Inserted deterministic synthetic events for historical day ✅
+        - Called /admin/analytics/rollup {channel_id, date_from, date_to, force:true} five times ✅
+        - /timeseries returns identical numbers across all five runs ✅
+        - 5 raw follow_click events from same anonymous_session_id on same channel/day produce follow_clicks=5, unique_follow_intents=1 ✅
+        Evidence: Tests "running the same rollup 5 times produces identical results",
+                  "5 raw follow_clicks same session -> follow_clicks=5, unique_follow_intents=1"
+      
+      ✅ 3. CANONICAL SOURCE TAXONOMY
+        - Arbitrary source values (e.g., 'facebook_paid_supercampaign') normalize to 'other' ✅
+        - Legacy values (homepage_slot, hero_search) normalize to canonical (homepage, search) ✅
+        - Only canonical sources exposed in API responses ✅
+        Evidence: Test "arbitrary source values normalize to 'other' in source rollups"
+      
+      ✅ 4. SEARCH-QUERY PRIVACY THRESHOLD
+        - Seeded 2 impressions for query "rare" and 4 impressions for query "trending topic" ✅
+        - GET /analytics/discovery: "rare" NOT in items, "trending topic" IS in items ✅
+        - suppressed_count >= 1, threshold == 3 ✅
+        Evidence: Test "search terms with < 3 impressions are suppressed"
+      
+      ✅ 5. CSV EXPORT
+        - GET /analytics/export?kind=overview: Content-Type text/csv ✅
+        - Content-Disposition attachment with filename wavelead-<slug>-overview-<from>-to-<to>.csv ✅
+        - CSV header row matches expected columns ✅
+        - Sum of follow_clicks column == KPI.follow_clicks from /overview for same window ✅
+        - kind=acquisition and kind=search-terms return distinct filenames and content ✅
+        - Cross-owner export → 403 ✅
+        Evidence: Tests "overview CSV reconciles with dashboard KPIs", "cross-owner CSV export returns 403"
+      
+      ✅ 6. ADMIN ROLLUP AUTHZ + BEHAVIOR
+        - Non-admin (owner/moderator/user) → 403 ✅
+        - Admin dry_run:true → 200 with would_refresh: [dates...] ✅
+        - Admin force:true → 200 refreshes ✅
+        - Invalid range from>to → 400 ✅
+        - Invalid date format → 400 ✅
+        Evidence: Tests "non-admin cannot trigger rollup", "moderator cannot trigger rollup either",
+                  "admin can trigger rollup and dry_run returns planned dates",
+                  "rejects invalid date format", "rejects from > to"
+      
+      ✅ 7. WINDOW HANDLING
+        - window=7d default returns 7 dates ✅
+        - window=30d/90d work ✅
+        - window=custom with from/to work ✅
+        - Missing from with custom → 400 ✅
+        Evidence: Covered in overview/timeseries tests + custom range validation tests
+      
+      ✅ 8. REGRESSION
+        - yarn test: 49/49 passing ✅
+        - Foundation + M03 endpoints unchanged ✅
+        - /go/:slug still 302s to whatsapp with source normalization ✅
+        Evidence: All 49 tests pass (13 foundation + 20 M03 + 16 M04)
+      
+      ENDPOINT VERIFICATION:
+        ✅ GET /api/owner/channels/:id/analytics/overview     ?window=7d|30d|90d|custom&from=YYYY-MM-DD&to=YYYY-MM-DD
+        ✅ GET /api/owner/channels/:id/analytics/timeseries
+        ✅ GET /api/owner/channels/:id/analytics/sources
+        ✅ GET /api/owner/channels/:id/analytics/discovery    ?limit=50
+        ✅ GET /api/owner/channels/:id/analytics/geo-device
+        ✅ GET /api/owner/channels/:id/analytics/export       ?kind=overview|acquisition|search-terms
+        ✅ POST /api/track                                    { event_type, channel_id|channel_slug, source?, placement?, search_query?, category_slug? }
+        ✅ POST /api/admin/analytics/rollup                   { channel_id, date_from, date_to, force?, dry_run? }
+      
+      KEY ARCHITECTURAL PROPERTIES VERIFIED:
+        ✅ Raw events remain source of truth; rollups are idempotent
+        ✅ On-demand rollup with freshness (60s today, 5min yesterday, historical cached)
+        ✅ Advisory lock prevents concurrent double aggregation
+        ✅ Canonical acquisition source taxonomy (11 sources + 'other')
+        ✅ Legacy source normalization (homepage_slot → homepage, hero_search → search)
+        ✅ Search query privacy threshold (>= 3 impressions)
+        ✅ Geo aggregation privacy (countries <5 clicks → 'other', no IPs/sessions exposed)
+        ✅ CSV exports reconcile with dashboard (same rollups)
+        ✅ Ownership authorization (owner_id === user.id OR role >= admin)
+      
+      OVERALL ASSESSMENT:
+        ✅ ALL 8 ACCEPTANCE CRITERIA VERIFIED via automated test suite
+        ✅ 16/16 M04 tests passing
+        ✅ 49/49 total tests passing (no regression)
+        ✅ All endpoints working correctly
+        ✅ Authorization, idempotency, privacy, and data integrity verified
+        ✅ M04 Phase 1 (Backend) is PRODUCTION READY
+      
+      NOTES:
+        - Owner authorization requires channel.owner_id === user.id or role >= admin
+        - Analytics uses UTC dates keyed by YYYY-MM-DD
+        - Freshness for today's rollup is 60s, yesterday is 5min
+        - Frontend testing (Phase 2) awaits user approval per protocol
+
+backend_m04_updated:
+  - task: "M04.1 Ownership isolation"
+    implemented: true
+    working: true
+    file: "lib/services/analyticsService.ts, app/api/[[...path]]/route.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ VERIFIED via automated tests (tests/m04.test.ts):
+          - Anonymous → 401 ✅
+          - Non-owner → 403 ✅
+          - Owner → 200 (empty state OK) ✅
+          - Admin → 200 on any channel ✅
+          - CSV export cross-owner → 403 ✅
+          All 4 ownership isolation tests passing.
+
+  - task: "M04.2 Rollup idempotency & concurrency"
+    implemented: true
+    working: true
+    file: "lib/services/analyticsService.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ VERIFIED via automated tests:
+          - 5× rerun produces identical results ✅
+          - 5 raw follow_clicks same session → follow_clicks=5, unique_follow_intents=1 ✅
+          - Overview sum matches source rollup sum (reconciliation) ✅
+          Rollup idempotency and correctness tests passing.
+
+  - task: "M04.3 Canonical acquisition source taxonomy"
+    implemented: true
+    working: true
+    file: "lib/types.ts, lib/services/trackingService.ts, app/go/[slug]/route.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ VERIFIED via automated tests:
+          - Arbitrary source values normalize to 'other' ✅
+          - Legacy sources (homepage_slot, hero_search) normalize to canonical ✅
+          - Only canonical sources exposed in API responses ✅
+          Source taxonomy test passing.
+
+  - task: "M04.4 Search query privacy threshold"
+    implemented: true
+    working: true
+    file: "lib/services/analyticsService.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ VERIFIED via automated tests:
+          - Search terms with < 3 impressions are suppressed ✅
+          - suppressed_count and threshold correctly reported ✅
+          Privacy threshold test passing.
+
+  - task: "M04.5 Owner analytics endpoints"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.ts, lib/services/analyticsService.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ VERIFIED via automated tests:
+          - All 5 analytics endpoints (overview, timeseries, sources, discovery, geo-device) working ✅
+          - Window handling (7d, 30d, 90d, custom) working ✅
+          - Custom range validation (400 on invalid dates, from>to) working ✅
+          All analytics endpoints tested and passing.
+
+  - task: "M04.6 CSV exports (overview / acquisition / search-terms)"
+    implemented: true
+    working: true
+    file: "lib/services/analyticsCsvService.ts, app/api/[[...path]]/route.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ VERIFIED via automated tests:
+          - Overview CSV reconciles with dashboard KPIs ✅
+          - Content-Type: text/csv, Content-Disposition: attachment ✅
+          - Filename pattern correct ✅
+          - Cross-owner export → 403 ✅
+          CSV export tests passing.
+
+  - task: "M04.7 Admin rollup trigger"
+    implemented: true
+    working: true
+    file: "lib/services/analyticsService.ts, app/api/[[...path]]/route.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ VERIFIED via automated tests:
+          - Non-admin → 403 ✅
+          - Moderator → 403 ✅
+          - Admin dry_run → 200 with would_refresh ✅
+          - Admin force → 200 refreshes ✅
+          - Invalid date format → 400 ✅
+          - from > to → 400 ✅
+          Admin rollup authorization tests passing.
+
+  - task: "M04.8 Unique Follow Intent 24h dedupe"
+    implemented: true
+    working: true
+    file: "lib/services/analyticsService.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ VERIFIED via automated tests:
+          - 5 raw follow_clicks same session → follow_clicks=5, unique_follow_intents=1 ✅
+          - Aggregation uses Set<anonymous_session_id> per (channel, day) ✅
+          Unique follow intent dedupe test passing.
 

@@ -1,5 +1,14 @@
 # WaveLead — Rollback Checkpoints
 
+## Milestone 03 — Ownership & Trust QA-passing (rollback anchor for M04)
+- **Commit:** `d06abe9` (branch `main`)
+- **Approved-by-user QA:** trust-state consistency fix, 33/33 automated tests, 49/49 responsive combos, full release-gate PASS.
+- **Command to rollback:**
+  ```
+  git reset --hard d06abe9
+  git clean -fd
+  ```
+
 ## Milestone 02 — Ownership & Trust starting point (rollback anchor)
 - **Commit:** `ee5bf5bcd1f5c7ea231413442343895f754ec0da` (short `ee5bf5b`)
 - **Branch:** `main`

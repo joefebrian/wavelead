@@ -10,6 +10,8 @@ import { categoryRepo } from '@/lib/repositories/categoryRepo';
 import { countryByCode } from '@/lib/constants/countries';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { channelRepo } from '@/lib/repositories/channelRepo';
+import { trackingService, normalizeReferrerDomain, normalizeSource } from '@/lib/services/trackingService';
+import { cookies, headers } from 'next/headers';
 import { ShieldCheck, Users, Share2, ArrowUpRight, Sparkles, BadgeCheck, Flag, KeyRound } from 'lucide-react';
 import type { Metadata } from 'next';
 
@@ -29,8 +31,9 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
 
 export const dynamic = 'force-dynamic';
 
-export default async function ChannelProfilePage({ params }: { params: Promise<Params> }) {
+export default async function ChannelProfilePage({ params, searchParams }: { params: Promise<Params>; searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const { slug } = await params;
+  const sp = searchParams ? await searchParams : {};
   const channel = await channelService.getPublicBySlug(slug);
   if (!channel) notFound();
 
@@ -47,6 +50,36 @@ export default async function ChannelProfilePage({ params }: { params: Promise<P
   const followers = channel.follower_count > 0 ? `${Number(channel.follower_count).toLocaleString()} followers` : 'Followers not verified';
   const isOwner = !!(actor && internal && internal.owner_id === actor.user.id);
   const hasVerifiedOwner = !!internal?.owner_id && channel.is_verified;
+
+  // M04: fire-and-forget profile view tracking. Attributes to upstream source
+  // if the frontend passes ?source=<canonical>. Never blocks render.
+  try {
+    const cookieStore = await cookies();
+    const anonId = cookieStore.get('wl_anon_id')?.value || null;
+    const hdrs = await headers();
+    const referer = hdrs.get('referer');
+    const ownHosts = new Set<string>();
+    try { const base = process.env.NEXT_PUBLIC_BASE_URL; if (base) ownHosts.add(new URL(base).hostname.toLowerCase().replace(/^www\./, '')); } catch { /* ignore */ }
+    const refDomain = normalizeReferrerDomain(referer, ownHosts);
+    const rawSource = typeof sp.source === 'string' ? sp.source : null;
+    let source = normalizeSource(rawSource);
+    if (source === 'other') source = refDomain ? 'external' : 'direct';
+    trackingService.recordProfileView({
+      channelId: channel.id,
+      anonymousSessionId: anonId,
+      userId: actor?.user.id ?? null,
+      source,
+      placement: typeof sp.placement === 'string' ? sp.placement : null,
+      referrer: referer,
+      referrerDomain: refDomain,
+      searchQuery: typeof sp.q === 'string' ? sp.q : null,
+      categorySlug: typeof sp.category === 'string' ? sp.category : null,
+      countryCode: hdrs.get('x-vercel-ip-country') || hdrs.get('cf-ipcountry') || null,
+      deviceType: null,
+      pagePath: `/channel/${slug}`,
+      campaignId: typeof sp.campaign_id === 'string' ? sp.campaign_id : null,
+    });
+  } catch { /* never break render */ }
 
   return (
     <>

@@ -265,6 +265,95 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ pong: true, role: actor.user.role }), request);
     }
 
+    // ---------- M04 OWNER ANALYTICS ----------
+    // GET /api/owner/channels/:id/analytics/overview   ?window=7d|30d|90d|custom&from=YYYY-MM-DD&to=YYYY-MM-DD
+    // GET /api/owner/channels/:id/analytics/timeseries
+    // GET /api/owner/channels/:id/analytics/sources
+    // GET /api/owner/channels/:id/analytics/discovery  ?limit=50
+    // GET /api/owner/channels/:id/analytics/geo-device
+    // GET /api/owner/channels/:id/analytics/export?kind=overview|acquisition|search-terms
+    if (path.length === 5 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'analytics' && method === 'GET') {
+      const { analyticsService } = await import('@/lib/services/analyticsService');
+      const actor = await resolveActor(request);
+      const sp = new URL(request.url).searchParams;
+      const q = {
+        window: sp.get('window') || undefined,
+        from: sp.get('from') || undefined,
+        to: sp.get('to') || undefined,
+        limit: sp.get('limit') ? parseInt(sp.get('limit')!, 10) : undefined,
+      };
+      const channelId = path[2];
+      const sub = path[4];
+      if (sub === 'overview') return applyCors(ok(await analyticsService.overview(actor, channelId, q)), request);
+      if (sub === 'timeseries') return applyCors(ok(await analyticsService.timeseries(actor, channelId, q)), request);
+      if (sub === 'sources') return applyCors(ok(await analyticsService.sources(actor, channelId, q)), request);
+      if (sub === 'discovery') return applyCors(ok(await analyticsService.discovery(actor, channelId, q)), request);
+      if (sub === 'geo-device') return applyCors(ok(await analyticsService.geoDevice(actor, channelId, q)), request);
+      if (sub === 'export') {
+        const { analyticsCsvService } = await import('@/lib/services/analyticsCsvService');
+        const kind = (sp.get('kind') || 'overview') as 'overview' | 'acquisition' | 'search-terms';
+        const { filename, csv } = await analyticsCsvService.build(actor, channelId, kind, q);
+        const res = new NextResponse(csv, { status: 200, headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"` } });
+        return applyCors(res, request);
+      }
+    }
+
+    // ---------- M04 ANALYTICS EVENT INGESTION ----------
+    // POST /api/track  body: { event_type, channel_slug|channel_id, source?, placement?, search_query?, category_slug? }
+    if (route === '/track' && method === 'POST') {
+      const body = await safeJson(request);
+      const { trackingService, normalizeReferrerDomain } = await import('@/lib/services/trackingService');
+      const { channelRepo } = await import('@/lib/repositories/channelRepo');
+      const type = String(body?.event_type || '');
+      const cid = body?.channel_id ? String(body.channel_id) : null;
+      const cslug = body?.channel_slug ? String(body.channel_slug) : null;
+      const channel = cid ? await channelRepo.findById(cid) : (cslug ? await channelRepo.findBySlug(cslug) : null);
+      if (!channel || channel.status !== 'approved') return applyCors(fail(200, 'ignored'), request);
+      // Anonymous session cookie (wl_anon_id) is set by /go/[slug]; here we
+      // just read it if present.
+      const anonId = request.cookies.get('wl_anon_id')?.value || null;
+      const session = getSessionFromRequest(request);
+      const referrer = request.headers.get('referer');
+      const ownHosts = new Set<string>();
+      try { const base = process.env.NEXT_PUBLIC_BASE_URL; if (base) ownHosts.add(new URL(base).hostname.toLowerCase().replace(/^www\./, '')); } catch { /* ignore */ }
+      try { ownHosts.add(new URL(request.url).hostname.toLowerCase().replace(/^www\./, '')); } catch { /* ignore */ }
+      const referrerDomain = normalizeReferrerDomain(referrer, ownHosts);
+      const base = {
+        channelId: channel.id,
+        anonymousSessionId: anonId,
+        userId: session?.userId ?? null,
+        source: body?.source,
+        placement: body?.placement ? String(body.placement) : null,
+        referrer,
+        referrerDomain,
+        searchQuery: body?.search_query ? String(body.search_query) : null,
+        categorySlug: body?.category_slug ? String(body.category_slug) : null,
+        countryCode: (request.headers.get('x-vercel-ip-country') || request.headers.get('cf-ipcountry') || null),
+        deviceType: null,
+        pagePath: body?.page_path ? String(body.page_path) : null,
+        campaignId: body?.campaign_id ? String(body.campaign_id) : null,
+      };
+      if (type === 'channel_impression') trackingService.recordChannelImpression(base);
+      else if (type === 'search_impression') trackingService.recordSearchImpression({ ...base, searchQuery: String(body?.search_query || '') });
+      else if (type === 'channel_profile_view') trackingService.recordProfileView(base);
+      else return applyCors(fail(400, 'Unsupported event_type'), request);
+      return applyCors(ok({ tracked: true }), request);
+    }
+
+    // ---------- M04 ADMIN ROLLUP TRIGGER ----------
+    if (route === '/admin/analytics/rollup' && method === 'POST') {
+      const { analyticsService } = await import('@/lib/services/analyticsService');
+      const body = await safeJson(request);
+      const result = await analyticsService.triggerRollup(await resolveActor(request), {
+        channel_id: body?.channel_id ? String(body.channel_id) : undefined,
+        date_from: body?.date_from ? String(body.date_from) : undefined,
+        date_to: body?.date_to ? String(body.date_to) : undefined,
+        force: !!body?.force,
+        dry_run: !!body?.dry_run,
+      });
+      return applyCors(ok(result), request);
+    }
+
     return applyCors(fail(404, `Route ${route} not found`), request);
   } catch (err) {
     return applyCors(handleServiceError(err), request);

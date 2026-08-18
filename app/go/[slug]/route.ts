@@ -85,15 +85,35 @@ export async function GET(request: NextRequest, ctx: Ctx): Promise<NextResponse>
     const anonId = ensureAnonId(request, response);
     const session = getSessionFromRequest(request);
     const sp = new URL(request.url).searchParams;
+    const referrer = request.headers.get('referer');
+    // Only mark as external if the referrer is off-site. wavelead's own hosts
+    // are stripped by normalizeReferrerDomain via ownHosts.
+    const ownHosts = new Set<string>();
+    try {
+      const base = process.env.NEXT_PUBLIC_BASE_URL;
+      if (base) ownHosts.add(new URL(base).hostname.toLowerCase().replace(/^www\./, ''));
+    } catch { /* ignore */ }
+    ownHosts.add(new URL(request.url).hostname.toLowerCase().replace(/^www\./, ''));
+    const { normalizeReferrerDomain, normalizeSource } = await import('@/lib/services/trackingService');
+    const refDomain = normalizeReferrerDomain(referrer, ownHosts);
+    // Attribution precedence: explicit source query param (canonical only) →
+    // referrer-inferred external → direct.
+    let source = normalizeSource(sp.get('source'));
+    if (source === 'other') source = refDomain ? 'external' : 'direct';
     trackingService.recordFollowClick({
       channelId: channel.id,
       anonymousSessionId: anonId,
       userId: session?.userId ?? null,
-      source: sp.get('source'),
-      referrer: request.headers.get('referer'),
+      source,
+      placement: sp.get('placement'),
+      referrer,
+      referrerDomain: refDomain,
+      searchQuery: sp.get('q'),
+      categorySlug: sp.get('category'),
       pagePath: sp.get('from'),
       countryCode: request.headers.get('x-vercel-ip-country') || request.headers.get('cf-ipcountry') || null,
       deviceType: detectDeviceType(request.headers.get('user-agent')),
+      campaignId: sp.get('campaign_id'),
     });
   } catch (err) {
     console.error('[wavelead] follow_click tracking threw (ignored):', err);

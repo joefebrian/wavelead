@@ -54,6 +54,19 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { channel_id: 1, date: 1 }, unique: true, name: 'uniq_channel_date' },
       { key: { date: -1 }, name: 'by_date' },
     ]),
+    db.collection(COLLECTIONS.CHANNEL_DAILY_SOURCE_METRICS).createIndexes([
+      { key: { channel_id: 1, date: 1, source: 1 }, unique: true, name: 'uniq_channel_date_source' },
+      { key: { channel_id: 1, date: 1 }, name: 'channel_date' },
+      { key: { date: -1 }, name: 'by_date' },
+    ]),
+    db.collection(COLLECTIONS.CHANNEL_SEARCH_QUERY_METRICS).createIndexes([
+      { key: { channel_id: 1, date: 1, normalized_query: 1 }, unique: true, name: 'uniq_channel_date_query' },
+      { key: { channel_id: 1, date: 1 }, name: 'channel_date' },
+      { key: { normalized_query: 1 }, name: 'by_query' },
+    ]),
+    db.collection(COLLECTIONS.ROLLUP_STATE).createIndexes([
+      { key: { channel_id: 1, date: 1 }, unique: true, name: 'uniq_channel_date' },
+    ]),
     db.collection(COLLECTIONS.BOOKMARKS).createIndexes([
       { key: { user_id: 1, channel_id: 1 }, unique: true, name: 'uniq_bookmark' },
       { key: { user_id: 1, created_at: -1 }, name: 'user_time' },
