@@ -59,5 +59,10 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { actor_user_id: 1, created_at: -1 }, name: 'actor_time' },
       { key: { entity_type: 1, entity_id: 1, created_at: -1 }, name: 'entity_time' },
     ]),
+    db.collection(COLLECTIONS.HOMEPAGE_SLOTS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { section: 1, channel_id: 1 }, unique: true, name: 'uniq_section_channel' },
+      { key: { section: 1, active: 1, priority: 1 }, name: 'section_priority' },
+    ]),
   ]);
 }

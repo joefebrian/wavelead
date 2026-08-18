@@ -1,48 +1,80 @@
 // Discovery service. All homepage/discovery data flows through here so that
 // UI never touches Mongo directly, and we keep a single place for policy
-// (approved-only, safe-labels, etc.).
+// (approved-only, safe-labels, curated-first-with-fallback).
 import { channelRepo } from '../repositories/channelRepo';
 import { categoryRepo } from '../repositories/categoryRepo';
 import { COLLECTIONS } from '../db/collections';
 import { getCollection } from '../db/mongo';
 import { COUNTRIES } from '../constants/countries';
+import { sanitizeChannel } from '../utils/sanitize';
+import { curationService } from './curationService';
 import type { Category, Channel, PublicChannel } from '@/lib/types';
 
-function sanitize(c: Channel): PublicChannel {
-  const { owner_id: _o, verification_status, ...rest } = c;
-  void _o;
-  return {
-    ...rest,
-    is_verified: verification_status === 'verified' || verification_status === 'official',
-  };
-}
+const sanitize = sanitizeChannel;
 
 export interface CategoryWithCount extends Category { channel_count: number; }
 export interface CountryWithCount { code: string; slug: string; name: string; flag: string; channel_count: number; }
 
+type Section = 'popular' | 'new_noteworthy' | 'featured';
+
+// Fill a section: curated slots first (in priority order), then deterministic
+// fallback ranking to fill remaining positions. Never duplicates the same
+// channel across curated + fallback.
+async function fillSection(section: Section, limit: number, fallback: () => Promise<PublicChannel[]>): Promise<PublicChannel[]> {
+  const curated = await curationService.getSectionCurated(section);
+  const usedIds = new Set(curated.map((c) => c.id));
+  if (curated.length >= limit) return curated.slice(0, limit);
+  const rest = (await fallback()).filter((c) => !usedIds.has(c.id));
+  return [...curated, ...rest].slice(0, limit);
+}
+
 export const discoveryService = {
   async getPopular(limit = 6): Promise<PublicChannel[]> {
-    // "Popular on WaveLead" — featured, then follower_count. Honest label
-    // since we don't yet have real Follow Intent volume.
-    const items = await channelRepo.list({
-      filter: { status: 'approved' },
-      sort: { is_featured: -1, follower_count: -1 },
-      limit,
+    return fillSection('popular', limit, async () => {
+      // Fallback: featured then follower_count. Approved only.
+      const items = await channelRepo.list({
+        filter: { status: 'approved' },
+        sort: { is_featured: -1, follower_count: -1 },
+        limit: limit * 2,
+      });
+      return items.map(sanitize);
     });
-    return items.map(sanitize);
   },
 
   async getRising(limit = 6): Promise<PublicChannel[]> {
-    // "New & Noteworthy" — recent, verified or featured, active.
-    const items = await channelRepo.list({
-      filter: { status: 'approved', activity_level: 'active' },
-      sort: { published_at: -1, is_featured: -1 },
-      limit,
+    return fillSection('new_noteworthy', limit, async () => {
+      // Fallback: newest active approved channels.
+      const items = await channelRepo.list({
+        filter: { status: 'approved', activity_level: 'active' },
+        sort: { published_at: -1, is_featured: -1 },
+        limit: limit * 2,
+      });
+      return items.map(sanitize);
     });
-    return items.map(sanitize);
+  },
+
+  async getFeatured(limit = 6): Promise<PublicChannel[]> {
+    return fillSection('featured', limit, async () => {
+      const items = await channelRepo.list({
+        filter: { status: 'approved', is_featured: true },
+        sort: { follower_count: -1 },
+        limit: limit * 2,
+      });
+      return items.map(sanitize);
+    });
+  },
+
+  async getFeaturedCurated(limit = 6): Promise<PublicChannel[]> {
+    // Featured section renders ONLY manually curated slots (approved-only).
+    // No fallback here — if moderators haven't curated any, the section is
+    // simply hidden on the homepage. Popular already surfaces is_featured
+    // channels via its own boost, so we avoid visual duplication.
+    const curated = await curationService.getSectionCurated('featured');
+    return curated.slice(0, limit);
   },
 
   async getTop({ country, limit = 5 }: { country?: string; limit?: number } = {}): Promise<PublicChannel[]> {
+    // Top Channels stays algorithmic (behavior/follower_count), NOT curated.
     const filter: Record<string, unknown> = { status: 'approved' };
     if (country) filter.country_code = country.toUpperCase();
     const items = await channelRepo.list({ filter, sort: { follower_count: -1 }, limit });
@@ -73,15 +105,16 @@ export const discoveryService = {
   },
 
   async getHomepageBundle() {
-    const [popular, rising, topIndonesia, categories, countries, stats] = await Promise.all([
+    const [popular, rising, featured, topIndonesia, categories, countries, stats] = await Promise.all([
       discoveryService.getPopular(6),
       discoveryService.getRising(6),
+      discoveryService.getFeaturedCurated(6),
       discoveryService.getTop({ country: 'ID', limit: 5 }),
       discoveryService.getCategoryCounts(),
       discoveryService.getCountryCounts(),
       discoveryService.getStats(),
     ]);
-    return { popular, rising, topIndonesia, categories, countries, stats };
+    return { popular, rising, featured, topIndonesia, categories, countries, stats };
   },
 
   async getStats() {

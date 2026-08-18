@@ -67,7 +67,7 @@ export default async function ChannelProfilePage({ params }: { params: Promise<P
                 </div>
                 <p className="mt-3 text-base text-foreground max-w-2xl">{channel.description || channel.short_description}</p>
                 <div className="mt-5 flex flex-wrap gap-3">
-                  <a href={channel.whatsapp_url} target="_blank" rel="noopener noreferrer">
+                  <a href={`/go/${channel.slug}?source=channel_profile`} target="_blank" rel="noopener noreferrer">
                     <Button size="lg" className="gap-2">Follow on WhatsApp <ArrowUpRight className="h-4 w-4" /></Button>
                   </a>
                   <Button size="lg" variant="outline" className="gap-2"><Share2 className="h-4 w-4" /> Share</Button>

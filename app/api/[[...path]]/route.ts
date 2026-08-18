@@ -119,6 +119,63 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ seed: await runSeed({ force: !!body?.force }) }), request);
     }
 
+    // ---------- SUBMISSION (M02) ----------
+    if (route === '/submit/check' && method === 'POST') {
+      const body = await safeJson(request);
+      const { submissionService } = await import('@/lib/services/submissionService');
+      return applyCors(ok(await submissionService.checkDuplicate(String(body?.whatsapp_url || ''))), request);
+    }
+    if (route === '/submit' && method === 'POST') {
+      const actor = await resolveActor(request);
+      if (!actor) return applyCors(fail(401, 'You must be signed in to submit a channel'), request);
+      const body = await safeJson(request);
+      const { submissionService } = await import('@/lib/services/submissionService');
+      return applyCors(ok(await submissionService.submit(actor, body)), request);
+    }
+
+    // ---------- MODERATION (M02) ----------
+    if (route === '/admin/channels' && method === 'GET') {
+      const { moderationService } = await import('@/lib/services/moderationService');
+      const actor = await resolveActor(request);
+      const status = new URL(request.url).searchParams.get('status') || 'pending_review';
+      return applyCors(ok({ items: await moderationService.listQueue(actor, { status }) }), request);
+    }
+    if (path.length === 3 && path[0] === 'admin' && path[1] === 'channels' && method === 'GET') {
+      const { moderationService } = await import('@/lib/services/moderationService');
+      const actor = await resolveActor(request);
+      return applyCors(ok({ channel: await moderationService.getById(actor, path[2]) }), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'channels' && path[3] === 'approve' && method === 'POST') {
+      const { moderationService } = await import('@/lib/services/moderationService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      return applyCors(ok(await moderationService.approve(actor, path[2], body?.edits as Record<string, unknown> | undefined)), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'channels' && path[3] === 'reject' && method === 'POST') {
+      const { moderationService } = await import('@/lib/services/moderationService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      return applyCors(ok(await moderationService.reject(actor, path[2], body)), request);
+    }
+
+    // ---------- CURATION (M02) ----------
+    if (route === '/admin/homepage/slots' && method === 'GET') {
+      const { curationService } = await import('@/lib/services/curationService');
+      return applyCors(ok({ slots: await curationService.listAll(await resolveActor(request)) }), request);
+    }
+    if (route === '/admin/homepage/slots' && method === 'POST') {
+      const { curationService } = await import('@/lib/services/curationService');
+      return applyCors(ok({ slot: await curationService.addSlot(await resolveActor(request), await safeJson(request)) }), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'homepage' && path[2] === 'slots' && method === 'DELETE') {
+      const { curationService } = await import('@/lib/services/curationService');
+      return applyCors(ok(await curationService.removeSlot(await resolveActor(request), path[3])), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'homepage' && path[2] === 'slots' && method === 'PATCH') {
+      const { curationService } = await import('@/lib/services/curationService');
+      return applyCors(ok(await curationService.updateSlot(await resolveActor(request), path[3], await safeJson(request))), request);
+    }
+
     // Sample privileged endpoint used by tests: verifies live-role authorization.
     if (route === '/admin/ping' && method === 'GET') {
       const actor = await resolveActor(request);

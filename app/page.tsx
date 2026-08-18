@@ -6,10 +6,10 @@ import SectionHeader from '@/components/discovery/SectionHeader';
 import ChannelCard from '@/components/discovery/ChannelCard';
 import EmptyState from '@/components/discovery/EmptyState';
 import OwnerGrowthCta from '@/components/discovery/OwnerGrowthCta';
+import TopChannelsCountryPicker from '@/components/discovery/TopChannelsCountryPicker';
 import { discoveryService, type CategoryWithCount, type CountryWithCount } from '@/lib/services/discoveryService';
 import { COLLECTIONS as _NS } from '@/lib/db/collections';
 import { COLLECTIONS as EDITORIAL_COLLECTIONS } from '@/lib/constants/discovery-collections';
-import type { PublicChannel } from '@/lib/types';
 import Link from 'next/link';
 import type { Metadata } from 'next';
 
@@ -58,6 +58,19 @@ export default async function HomePage() {
           )}
         </section>
 
+        {/* Featured — only rendered when moderators have curated at least one slot */}
+        {bundle.featured.length > 0 && (
+          <section className="container py-8">
+            <SectionHeader
+              title="Featured"
+              subtitle="Editorial picks by the WaveLead team."
+            />
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {bundle.featured.map((c) => <ChannelCard key={c.id} channel={c} />)}
+            </div>
+          </section>
+        )}
+
         {/* New & Noteworthy */}
         <section className="container py-8">
           <SectionHeader
@@ -76,23 +89,13 @@ export default async function HomePage() {
           )}
         </section>
 
-        {/* Top in Indonesia */}
-        <section className="container py-10">
-          <SectionHeader
-            title="Top Channels in Indonesia"
-            subtitle="Ranked by follower reach on WaveLead."
-            href="/top"
-            cta="View Top Channels"
-            right={<span className="hidden md:inline-flex text-xs text-muted-foreground border border-border rounded-full px-3 py-1">🇮🇩 Indonesia</span>}
-          />
-          {bundle.topIndonesia.length === 0 ? <EmptyState /> : (
-            <div className="wh-card p-2 md:p-3 divide-y divide-border/60">
-              {bundle.topIndonesia.map((c: PublicChannel, i: number) => (
-                <ChannelCard key={c.id} channel={c} variant="ranking" rank={i + 1} />
-              ))}
-            </div>
-          )}
-        </section>
+        {/* Top in Indonesia (contextual country selector) */}
+        <TopChannelsCountryPicker
+          initial={bundle.topIndonesia}
+          initialCountry={{ code: 'ID', slug: 'indonesia', name: 'Indonesia', flag: '🇮🇩' }}
+          countries={countries.map((c) => ({ code: c.code, slug: c.slug, name: c.name, flag: c.flag }))}
+          limit={5}
+        />
 
         {/* Browse by category */}
         <section className="container py-10">

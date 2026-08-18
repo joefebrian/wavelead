@@ -1,5 +1,7 @@
 import { channelRepo } from '../repositories/channelRepo';
 import { categoryRepo } from '../repositories/categoryRepo';
+import { searchService } from './searchService';
+import { sanitizeChannel } from '../utils/sanitize';
 import type { Channel, PublicChannel } from '@/lib/types';
 import type { Filter, Sort } from 'mongodb';
 
@@ -12,17 +14,14 @@ interface ListArgs {
   skip?: number;
 }
 
-function sanitize(c: Channel): PublicChannel {
-  const { owner_id: _o, verification_status, ...rest } = c;
-  void _o;
-  return {
-    ...rest,
-    is_verified: verification_status === 'verified' || verification_status === 'official',
-  };
-}
+const sanitize = sanitizeChannel;
 
 export const channelService = {
   async listPublic({ category, country, q, sort = 'newest', limit = 24, skip = 0 }: ListArgs = {}): Promise<{ items: PublicChannel[]; total: number }> {
+    if (q && q.trim()) {
+      // Route text queries through the weighted search service.
+      return searchService.searchApproved({ q, category, country, limit });
+    }
     const filter: Filter<Channel> = { status: 'approved' };
     if (category) {
       const cat = await categoryRepo.findBySlug(category);
@@ -30,10 +29,6 @@ export const channelService = {
       filter.category_id = cat.id;
     }
     if (country) filter.country_code = country.toUpperCase();
-    if (q) filter.$or = [
-      { name: { $regex: q, $options: 'i' } },
-      { description: { $regex: q, $options: 'i' } },
-    ];
     let sortSpec: Sort = { created_at: -1 };
     if (sort === 'top') sortSpec = { follower_count: -1 };
     if (sort === 'trending') sortSpec = { is_featured: -1, follower_count: -1 };

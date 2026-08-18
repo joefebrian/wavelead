@@ -62,9 +62,22 @@ export interface Channel {
   created_at: Date;
   updated_at: Date;
   published_at: Date | null;
+  // Moderation trail (internal — sanitized out of public responses).
+  reviewed_by?: string | null;
+  reviewed_at?: Date | null;
+  rejection_reason?: string | null;
+  rejection_notes?: string | null;
 }
 
-export type PublicChannel = Omit<Channel, 'owner_id' | 'verification_status'> & {
+export type PublicChannel = Omit<
+  Channel,
+  | 'owner_id'
+  | 'verification_status'
+  | 'reviewed_by'
+  | 'reviewed_at'
+  | 'rejection_reason'
+  | 'rejection_notes'
+> & {
   is_verified: boolean;
 };
 

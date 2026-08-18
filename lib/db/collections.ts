@@ -9,6 +9,7 @@ export const COLLECTIONS = {
   BOOKMARKS: 'bookmarks',
   REPORTS: 'reports',
   AUDIT_LOGS: 'audit_logs',
+  HOMEPAGE_SLOTS: 'homepage_slots',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
