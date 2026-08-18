@@ -264,26 +264,48 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: |
-      Milestone 00.2 — Critical Tailwind build fix applied.
-      Root cause: tailwind.config.js `content` array only scanned
-      `.{js,jsx}`, so every utility class used exclusively in a `.ts/.tsx`
-      file (the entire post-Milestone-00.1 codebase) was purged from the
-      generated CSS. That is why md:flex / md:hidden / md:grid-cols-*,
-      responsive grid, container, gap-*, max-w-*, etc. were missing.
-      Fix: content globs now include `{js,ts,jsx,tsx,mdx}` under
-      pages/components/app/src. Cleared `.next` cache, restarted dev
-      server, ran `yarn build` \u2014 clean production build with all 17 routes
-      generated. Inspection of the compiled layout.css confirms the
-      previously missing utilities are now present (md:flex, md:hidden,
-      md:grid-cols-2, md:grid-cols-3, md:grid-cols-4, lg:grid-cols-3,
-      md:flex-row, container, wh-gradient-hero, gap-7, max-w-3xl, sticky,
-      etc.). 1440px screenshot verified visually.
-
-      Please re-verify the visual + build pipeline as described in the
-      task section below.
+      Milestone 00.3 \u2014 Runtime stability fix applied.
+      Root cause of the intermittent 502 on /admin and other routes: the
+      Next.js dev server was hitting the 512MB heap ceiling set in the
+      `dev` script (NODE_OPTIONS='--max-old-space-size=512'). The log
+      showed repeated "Server is approaching the used memory threshold,
+      restarting..." events; during the restart window the ingress
+      returned 502.
+      Fixes applied:
+        1. Bumped dev heap budget to 2048MB in package.json (dev script).
+        2. Removed the CORS wildcard from next.config.js headers() that
+           was overriding the strict per-origin allowlist in the API.
+        3. Configured allowedDevOrigins for the Cloudflare / preview
+           hostnames (Next.js 15 warning was flooding the log).
+        4. Tuned watchOptions (poll 3s / aggregateTimeout 500ms) and
+           onDemandEntries (maxInactiveAge 30s / buffer 3) to reduce
+           dev-mode churn.
+        5. Cleared .next cache and restarted supervisor nextjs.
+      Post-fix local verification:
+        - /api/health: 5 consecutive 200s
+        - Route smoke test 12/12 clean (200 for public, 307 for
+          protected)
+        - yarn typecheck exit 0
+        - yarn test 13/13 pass
+        - No memory/restart warnings in recent nextjs.out.log
+      Please re-verify the DEPLOYED preview (not just localhost) and
+      stress the /admin route which was previously 502'ing.
   - agent: "testing"
     message: |
-      (Previous run) Re-verification PASS on Milestone 00.1 fixes.
+      Milestone 00.3 verification COMPLETE — 8/8 PASS.
+        1. Local route smoke test: all 12 routes × 3 attempts return
+           expected codes (200 public, 307 protected). No 5xx.
+        2. Deployed preview smoke test: all 12 routes return expected
+           codes on the Cloudflare preview host.
+        3. /api/health: 30/30 200s, avg latency 22.68 ms.
+        4. No "memory threshold / restarting" warnings after load.
+        5. Authorization: unauth /admin → 307 /login?next=/admin,
+           role=user → 403 on /api/admin/ping, live-role downgrade
+           takes IMMEDIATE effect (same cookie denied after DB update).
+        6. CORS: no wildcard, allowed origin echoed with Vary: Origin.
+        7. yarn typecheck exit 0, yarn test 13/13 pass.
+        8. Stale references audit: 0 occurrences of WaveHub/wavehub in
+           active code (globals.css comments corrected in re-verify).
 
   - agent: "testing"
     message: |
@@ -363,4 +385,116 @@ agent_communication:
       CONCLUSION: The Tailwind build fix is SUCCESSFUL. All responsive breakpoints working correctly,
       all utility classes present in compiled CSS, visual layout matches requirements at all viewports.
       NO CODE MODIFICATIONS NEEDED - Pure verification PASS.
+
+  - agent: "testing"
+    message: |
+      Milestone 00.3 — Runtime Stability Verification COMPLETE
+      
+      Executed all 8 verification checks as requested. DO NOT MODIFY CODE - VERIFICATION ONLY.
+      
+      VERIFICATION RESULTS:
+      ✅ Test 1: Route smoke test — LOCAL (bypass ingress) - PASS
+         - All 12 routes × 3 attempts returned expected status codes
+         - /api/health: 200×3, /: 200×3, /channels: 200×3, /trending: 200×3, /top: 200×3
+         - /pricing: 200×3, /about: 200×3, /terms: 200×3, /privacy: 200×3
+         - /login: 200×3, /signup: 200×3, /dashboard: 307×3, /admin: 307×3
+         - No 500/502 errors or timeouts
+      
+      ✅ Test 2: Route smoke test — DEPLOYED preview - PASS
+         - All 12 routes returned expected status codes on https://grow-infrastructure.preview.emergentagent.com
+         - Same route coverage as Test 1, all successful
+         - No 500/502 errors on deployed preview
+      
+      ✅ Test 3: /api/health stability - PASS
+         - 30/30 consecutive calls returned 200
+         - Latency: min=8.04ms, max=76.68ms, avg=22.68ms
+         - No failures or timeouts
+      
+      ✅ Test 4: Memory-restart regression check - PASS
+         - Checked last 200 lines of /var/log/supervisor/nextjs.out.log
+         - NO "approaching the used memory threshold" warnings found
+         - NO "restarting..." messages found
+         - Memory fix (512MB → 2048MB) is working correctly
+      
+      ✅ Test 5: Authorization tests - PASS (All 3 sub-tests passed)
+         - 5a: Unauthenticated /admin redirect → 307 to /login?next=/admin ✅
+         - 5b: Regular user (role=user) denied admin access → 403 ✅
+         - 5c: Live-role stale-role protection ✅
+           * Cleared users, signed up admin@wavelead.dev → super_admin role
+           * Initial /api/admin/ping with cookie → 200 ✅
+           * Downgraded role to 'user' in MongoDB
+           * Same cookie, /api/admin/ping → 403 immediately ✅
+           * CRITICAL: Authorization reads CURRENT DB role, not stale JWT role
+      
+      ✅ Test 6: CORS regression - PASS (All 3 sub-tests passed)
+         - 6a: Evil origin (https://evil.example) NOT allowed ✅
+           * No wildcard CORS header (*)
+           * Evil origin not echoed
+         - 6b: Allowed origin echoed correctly ✅
+           * Origin: https://grow-infrastructure.preview.emergentagent.com
+           * Response: Access-Control-Allow-Origin: https://grow-infrastructure.preview.emergentagent.com
+           * Vary: Origin header present
+         - 6c: No global wildcard from next.config.js ✅
+           * Tested /api/health, /, /channels with evil origin
+           * No wildcard CORS headers found
+           * Previously-present global Access-Control-Allow-Origin: * is GONE
+      
+      ✅ Test 7: Compile + tests - PASS
+         - yarn typecheck → exit 0 ✅
+         - yarn test → 13/13 tests passed ✅
+      
+      ❌ Test 8: Stale references audit - FAIL (1 issue found)
+         - WaveHub (case sensitive): 2 occurrences in ACTIVE code
+           * /app/app/globals.css line 7: /* WaveHub brand tokens */
+           * /app/app/globals.css line 15: /* #12B981 WaveHub green */
+         - wavehub (case sensitive): ✅ No occurrences in active code
+         - nextjs-mongo-template: ✅ No occurrences in active code
+         - wh_session: ✅ No occurrences in active code
+         - userCount === 0 (first-user pattern): ✅ No occurrences in active code
+      
+      OVERALL RESULT: 7/8 PASS, 1/8 FAIL
+      
+      CRITICAL FINDINGS:
+      1. ✅ Memory stability fix VERIFIED - No memory threshold warnings after heap increase to 2048MB
+      2. ✅ CORS wildcard removal VERIFIED - No Access-Control-Allow-Origin: * on any route
+      3. ✅ Live-role authorization VERIFIED - Reads current DB role, not stale JWT
+      4. ✅ All routes stable on both LOCAL and DEPLOYED preview - No 502 errors
+      5. ❌ Brand migration incomplete - 2 CSS comments still reference "WaveHub" instead of "WaveLead"
+      
+      REQUIRED FIX:
+      In /app/app/globals.css:
+      - Line 7: Change "/* WaveHub brand tokens */" to "/* WaveLead brand tokens */"
+      - Line 15: Change "/* #12B981 WaveHub green */" to "/* #12B981 WaveLead green */"
+      
+      CONCLUSION:
+      Runtime stability fixes are SUCCESSFUL and VERIFIED. The memory issue is resolved,
+      CORS is properly configured, and all routes are stable. Only remaining issue is
+      cosmetic: 2 CSS comments need brand name update.
+
+  - agent: "testing"
+    message: |
+      Milestone 00.3 — Stale References Re-verification COMPLETE ✅
+      
+      Re-verified the two items flagged in previous Milestone 00.3 report:
+      
+      VERIFICATION RESULTS:
+      ✅ Test 1: Stale references audit - PASS
+         - WaveHub (case sensitive): 0 occurrences in active codebase ✅
+         - wavehub (case sensitive): 0 occurrences in active codebase ✅
+         - Verified globals.css comments updated correctly:
+           * Line 7: "/* WaveLead brand tokens */" ✅
+           * Line 15: "/* #12B981 WaveLead green */" ✅
+         - Search scope: .ts, .tsx, .js, .jsx, .css files
+         - Excluded: README.md, test_result.md, node_modules, .next, .git
+      
+      ✅ Test 2: Regression check - PASS
+         - Health endpoint: curl http://localhost:3000/api/health returns service="wavelead" ✅
+         - TypeScript compile: yarn typecheck exits with code 0 ✅
+      
+      OVERALL RESULT: 2/2 PASS
+      
+      CONCLUSION:
+      All stale "WaveHub" references have been successfully removed from the active codebase.
+      The globals.css comments have been updated to "WaveLead". No regressions detected.
+      Brand migration is now COMPLETE.
 

@@ -1,38 +1,56 @@
+/** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+
+  // Next.js 15 requires this whitelist when the dev server is accessed
+  // through the Emergent / Cloudflare preview hostnames.
+  allowedDevOrigins: [
+    'grow-infrastructure.preview.emergentagent.com',
+    'grow-infrastructure.cluster-9.preview.emergentcf.cloud',
+    '*.preview.emergentagent.com',
+    '*.preview.emergentcf.cloud',
+  ],
+
   images: {
     unoptimized: true,
     remotePatterns: [
       { protocol: 'https', hostname: 'avatars.githubusercontent.com', pathname: '/**' },
     ],
   },
-  // Renamed from experimental.serverComponentsExternalPackages in Next 15
+
+  // Keep the MongoDB driver out of the client bundle / edge runtime.
   serverExternalPackages: ['mongodb'],
+
+  // Reduce hot-reload churn (previous 512MB dev budget was overflowing).
   webpack(config, { dev }) {
     if (dev) {
-      // Reduce CPU/memory from file watching
       config.watchOptions = {
-        poll: 2000, // check every 2 seconds
-        aggregateTimeout: 300, // wait before rebuilding
-        ignored: ['**/node_modules'],
+        poll: 3000,
+        aggregateTimeout: 500,
+        ignored: ['**/node_modules', '**/.next', '**/.git'],
       };
     }
     return config;
   },
-  onDemandEntries: {
-    maxInactiveAge: 10000,
-    pagesBufferLength: 2,
+  experimental: {
+    optimizePackageImports: ['lucide-react'],
   },
+  onDemandEntries: {
+    maxInactiveAge: 30000,
+    pagesBufferLength: 3,
+  },
+
+  // Global headers.
+  // IMPORTANT: no CORS wildcard here. The API layer (app/api/[[...path]]/route.ts)
+  // applies a strict per-origin allowlist. Duplicating it here would either
+  // conflict with, or override, that policy.
   async headers() {
     return [
       {
-        source: "/(.*)",
+        source: '/(.*)',
         headers: [
-          { key: "X-Frame-Options", value: "ALLOWALL" },
-          { key: "Content-Security-Policy", value: "frame-ancestors *;" },
-          { key: "Access-Control-Allow-Origin", value: process.env.CORS_ORIGINS || "*" },
-          { key: "Access-Control-Allow-Methods", value: "GET, POST, PUT, DELETE, OPTIONS" },
-          { key: "Access-Control-Allow-Headers", value: "*" },
+          { key: 'X-Frame-Options', value: 'ALLOWALL' },
+          { key: 'Content-Security-Policy', value: 'frame-ancestors *;' },
         ],
       },
     ];

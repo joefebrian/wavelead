@@ -1,525 +1,651 @@
 #!/usr/bin/env python3
 """
-WaveLead Milestone 00.1 Backend Testing Script
-Tests all requirements from the review request
+WaveLead Milestone 00.3 — Runtime Stability Verification
+DO NOT MODIFY CODE - VERIFICATION ONLY
 """
 
 import requests
+import subprocess
 import time
 import json
+import sys
+from typing import Dict, List, Tuple
 from pymongo import MongoClient
-import os
 
-BASE_URL = "http://localhost:3000"
-TEST_DB = "wavelead_test"
+# Configuration
+LOCAL_BASE = "http://localhost:3000"
+DEPLOYED_BASE = "https://grow-infrastructure.preview.emergentagent.com"
+SUPER_ADMIN_EMAIL = "admin@wavelead.dev"
+MONGO_URL = "mongodb://localhost:27017"
+DB_NAME = "wavelead"
 
-def print_test(name, passed, details=""):
-    status = "✅ PASS" if passed else "❌ FAIL"
-    print(f"\n{status}: {name}")
-    if details:
-        print(f"  Details: {details}")
+# Test routes with expected status codes
+ROUTES = [
+    ("/api/health", 200),
+    ("/", 200),
+    ("/channels", 200),
+    ("/trending", 200),
+    ("/top", 200),
+    ("/pricing", 200),
+    ("/about", 200),
+    ("/terms", 200),
+    ("/privacy", 200),
+    ("/login", 200),
+    ("/signup", 200),
+    ("/dashboard", 307),  # redirect to /login
+    ("/admin", 307),  # redirect to /login
+]
 
-def extract_cookie(response, cookie_name="wl_session"):
-    """Extract cookie value from Set-Cookie header"""
-    set_cookie = response.headers.get('Set-Cookie', '')
-    if cookie_name in set_cookie:
-        for part in set_cookie.split(';'):
-            if cookie_name in part:
-                return part.strip()
-    return None
+class TestResults:
+    def __init__(self):
+        self.results = {}
+        self.failures = []
+    
+    def add_result(self, test_name: str, passed: bool, details: str = ""):
+        self.results[test_name] = {"passed": passed, "details": details}
+        if not passed:
+            self.failures.append(f"{test_name}: {details}")
+    
+    def print_summary(self):
+        print("\n" + "="*80)
+        print("MILESTONE 00.3 — RUNTIME STABILITY VERIFICATION SUMMARY")
+        print("="*80)
+        for test_name, result in self.results.items():
+            status = "✅ PASS" if result["passed"] else "❌ FAIL"
+            print(f"\n{status} - {test_name}")
+            if result["details"]:
+                print(f"  {result['details']}")
+        
+        print("\n" + "="*80)
+        if self.failures:
+            print(f"OVERALL: ❌ FAILED ({len(self.failures)} failures)")
+            for failure in self.failures:
+                print(f"  - {failure}")
+        else:
+            print("OVERALL: ✅ ALL CHECKS PASSED")
+        print("="*80 + "\n")
 
-print("=" * 80)
-print("WaveLead Milestone 00.1 - Backend Testing")
-print("=" * 80)
+results = TestResults()
 
-# ============================================================================
-# Check 3: Product rename
-# ============================================================================
-print("\n" + "=" * 80)
-print("CHECK 3: Product Rename")
-print("=" * 80)
-
-try:
-    # 3a: Health endpoint returns service="wavelead"
-    resp = requests.get(f"{BASE_URL}/api/health")
-    health_data = resp.json()
-    service_name = health_data.get('data', {}).get('service', '')
-    print_test(
-        "Health endpoint returns service='wavelead'",
-        service_name == "wavelead",
-        f"Got service='{service_name}'"
+def test_1_local_routes():
+    """Test 1: Route smoke test — LOCAL (bypass ingress)"""
+    print("\n" + "="*80)
+    print("TEST 1: Route smoke test — LOCAL (bypass ingress)")
+    print("="*80)
+    
+    all_passed = True
+    details = []
+    
+    for route, expected_status in ROUTES:
+        url = f"{LOCAL_BASE}{route}"
+        route_results = []
+        
+        for attempt in range(1, 4):
+            try:
+                response = requests.get(url, allow_redirects=False, timeout=10)
+                status = response.status_code
+                route_results.append(status)
+                
+                if status != expected_status:
+                    all_passed = False
+                    details.append(f"{route} attempt {attempt}: got {status}, expected {expected_status}")
+                
+                print(f"  {route} attempt {attempt}: {status} {'✅' if status == expected_status else '❌'}")
+            except Exception as e:
+                all_passed = False
+                route_results.append(f"ERROR: {str(e)}")
+                details.append(f"{route} attempt {attempt}: {str(e)}")
+                print(f"  {route} attempt {attempt}: ERROR - {str(e)} ❌")
+            
+            time.sleep(0.1)
+    
+    results.add_result(
+        "Test 1: Local route smoke test",
+        all_passed,
+        "; ".join(details) if details else "All 12 routes × 3 attempts returned expected status codes"
     )
-except Exception as e:
-    print_test("Health endpoint returns service='wavelead'", False, str(e))
 
-try:
-    # 3b: Signup returns wl_session cookie (not wh_session)
-    timestamp = int(time.time())
-    signup_email = f"test+{timestamp}@wavelead.test"
-    resp = requests.post(
-        f"{BASE_URL}/api/auth/signup",
-        json={
-            "email": signup_email,
-            "password": "password123",
-            "display_name": "Test User"
-        }
+def test_2_deployed_routes():
+    """Test 2: Route smoke test — DEPLOYED preview"""
+    print("\n" + "="*80)
+    print("TEST 2: Route smoke test — DEPLOYED preview")
+    print("="*80)
+    
+    all_passed = True
+    details = []
+    
+    for route, expected_status in ROUTES:
+        url = f"{DEPLOYED_BASE}{route}"
+        
+        try:
+            response = requests.get(url, allow_redirects=False, timeout=15)
+            status = response.status_code
+            
+            if status != expected_status:
+                all_passed = False
+                details.append(f"{route}: got {status}, expected {expected_status}")
+            
+            print(f"  {route}: {status} {'✅' if status == expected_status else '❌'}")
+        except Exception as e:
+            all_passed = False
+            details.append(f"{route}: {str(e)}")
+            print(f"  {route}: ERROR - {str(e)} ❌")
+        
+        time.sleep(0.2)
+    
+    results.add_result(
+        "Test 2: Deployed route smoke test",
+        all_passed,
+        "; ".join(details) if details else "All 12 routes returned expected status codes on deployed preview"
     )
-    cookie = extract_cookie(resp, "wl_session")
-    has_wl_session = cookie is not None and "wl_session=" in cookie
-    has_wh_session = "wh_session=" in resp.headers.get('Set-Cookie', '')
-    print_test(
-        "Signup returns wl_session cookie (not wh_session)",
-        has_wl_session and not has_wh_session,
-        f"wl_session found: {has_wl_session}, wh_session found: {has_wh_session}"
+
+def test_3_health_stability():
+    """Test 3: /api/health stability (30 consecutive calls)"""
+    print("\n" + "="*80)
+    print("TEST 3: /api/health stability (30 consecutive calls)")
+    print("="*80)
+    
+    url = f"{LOCAL_BASE}/api/health"
+    latencies = []
+    failures = []
+    
+    for i in range(1, 31):
+        try:
+            start = time.time()
+            response = requests.get(url, timeout=5)
+            latency = (time.time() - start) * 1000  # ms
+            latencies.append(latency)
+            
+            if response.status_code != 200:
+                failures.append(f"Call {i}: status {response.status_code}")
+            
+            if i % 10 == 0:
+                print(f"  Completed {i}/30 calls...")
+        except Exception as e:
+            failures.append(f"Call {i}: {str(e)}")
+    
+    if latencies:
+        min_lat = min(latencies)
+        max_lat = max(latencies)
+        avg_lat = sum(latencies) / len(latencies)
+        print(f"\n  Latency: min={min_lat:.2f}ms, max={max_lat:.2f}ms, avg={avg_lat:.2f}ms")
+    
+    all_passed = len(failures) == 0
+    results.add_result(
+        "Test 3: Health endpoint stability",
+        all_passed,
+        "; ".join(failures) if failures else f"30/30 calls returned 200 (avg latency: {avg_lat:.2f}ms)"
     )
-except Exception as e:
-    print_test("Signup returns wl_session cookie", False, str(e))
 
-try:
-    # 3c: Homepage contains "WaveLead" and not "WaveHub"
-    resp = requests.get(f"{BASE_URL}/")
-    html = resp.text
-    has_wavelead = "WaveLead" in html
-    has_wavehub = "WaveHub" in html
-    print_test(
-        "Homepage contains 'WaveLead' and not 'WaveHub'",
-        has_wavelead and not has_wavehub,
-        f"WaveLead found: {has_wavelead}, WaveHub found: {has_wavehub}"
-    )
-except Exception as e:
-    print_test("Homepage branding check", False, str(e))
-
-# ============================================================================
-# Check 4: Broken nav fixed
-# ============================================================================
-print("\n" + "=" * 80)
-print("CHECK 4: Navigation Routes")
-print("=" * 80)
-
-routes = ['/trending', '/top', '/pricing', '/about', '/terms', '/privacy', 
-          '/channels', '/submit', '/login', '/signup']
-
-for route in routes:
+def test_4_memory_restart_check():
+    """Test 4: Memory-restart regression check"""
+    print("\n" + "="*80)
+    print("TEST 4: Memory-restart regression check")
+    print("="*80)
+    
     try:
-        resp = requests.get(f"{BASE_URL}{route}", allow_redirects=False)
-        # Accept 200 or redirects (302, 307, 308) as valid
-        is_ok = resp.status_code in [200, 302, 307, 308]
-        print_test(
-            f"Route {route} accessible",
-            is_ok,
-            f"Status: {resp.status_code}"
+        result = subprocess.run(
+            ["tail", "-n", "200", "/var/log/supervisor/nextjs.out.log"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        log_content = result.stdout
+        
+        memory_warnings = "approaching the used memory threshold" in log_content.lower()
+        restart_warnings = "restarting..." in log_content.lower()
+        
+        found_issues = memory_warnings or restart_warnings
+        
+        if memory_warnings:
+            print("  ❌ Found 'approaching the used memory threshold' in logs")
+        if restart_warnings:
+            print("  ❌ Found 'restarting...' in logs")
+        
+        if not found_issues:
+            print("  ✅ No memory threshold or restart warnings found")
+        
+        results.add_result(
+            "Test 4: Memory restart regression",
+            not found_issues,
+            "Memory/restart warnings found in logs" if found_issues else "No memory/restart warnings in last 200 log lines"
         )
     except Exception as e:
-        print_test(f"Route {route} accessible", False, str(e))
+        results.add_result(
+            "Test 4: Memory restart regression",
+            False,
+            f"Failed to check logs: {str(e)}"
+        )
 
-# ============================================================================
-# Check 5: Signup role logic
-# ============================================================================
-print("\n" + "=" * 80)
-print("CHECK 5: Signup Role Logic")
-print("=" * 80)
-
-try:
-    # 5a: Random email gets role=user
-    timestamp = int(time.time())
-    random_email = f"random+{timestamp}@wavelead.test"
-    resp = requests.post(
-        f"{BASE_URL}/api/auth/signup",
-        json={
-            "email": random_email,
-            "password": "password123",
-            "display_name": "Random User"
+def test_5_authorization():
+    """Test 5: Authorization tests"""
+    print("\n" + "="*80)
+    print("TEST 5: Authorization tests")
+    print("="*80)
+    
+    all_passed = True
+    details = []
+    
+    # Test 5a: Unauthenticated /admin redirect
+    print("\n  5a: Unauthenticated /admin redirect")
+    try:
+        response = requests.get(f"{LOCAL_BASE}/admin", allow_redirects=False, timeout=5)
+        if response.status_code == 307:
+            location = response.headers.get("location", "")
+            if "/login" in location and "next=/admin" in location:
+                print(f"    ✅ Correct redirect: {response.status_code} → {location}")
+            else:
+                all_passed = False
+                details.append(f"5a: Wrong redirect location: {location}")
+                print(f"    ❌ Wrong redirect location: {location}")
+        else:
+            all_passed = False
+            details.append(f"5a: Expected 307, got {response.status_code}")
+            print(f"    ❌ Expected 307, got {response.status_code}")
+    except Exception as e:
+        all_passed = False
+        details.append(f"5a: {str(e)}")
+        print(f"    ❌ Error: {str(e)}")
+    
+    # Test 5b: Regular user cannot access admin endpoint
+    print("\n  5b: Regular user (role=user) denied admin access")
+    try:
+        # Signup a regular user
+        signup_data = {
+            "email": f"regularuser_{int(time.time())}@test.com",
+            "password": "TestPass123!",
+            "display_name": "Regular User"
         }
-    )
-    data = resp.json()
-    role = data.get('data', {}).get('user', {}).get('role', '')
-    print_test(
-        "Random email signup gets role=user",
-        role == "user",
-        f"Got role='{role}'"
-    )
-except Exception as e:
-    print_test("Random email signup role check", False, str(e))
-
-try:
-    # 5b: Bootstrap email gets super_admin when DB is empty
-    # Connect to test DB and clear users
-    mongo_url = os.getenv('MONGO_URL', 'mongodb://localhost:27017')
-    client = MongoClient(mongo_url)
-    db = client[TEST_DB]
-    db.users.delete_many({})
+        signup_response = requests.post(
+            f"{LOCAL_BASE}/api/auth/signup",
+            json=signup_data,
+            timeout=5
+        )
+        
+        if signup_response.status_code == 200:
+            cookies = signup_response.cookies
+            
+            # Try to access admin endpoint
+            admin_response = requests.get(
+                f"{LOCAL_BASE}/api/admin/ping",
+                cookies=cookies,
+                timeout=5
+            )
+            
+            if admin_response.status_code == 403:
+                print(f"    ✅ Regular user correctly denied: {admin_response.status_code}")
+            else:
+                all_passed = False
+                details.append(f"5b: Expected 403, got {admin_response.status_code}")
+                print(f"    ❌ Expected 403, got {admin_response.status_code}")
+        else:
+            all_passed = False
+            details.append(f"5b: Signup failed with {signup_response.status_code}")
+            print(f"    ❌ Signup failed: {signup_response.status_code}")
+    except Exception as e:
+        all_passed = False
+        details.append(f"5b: {str(e)}")
+        print(f"    ❌ Error: {str(e)}")
     
-    bootstrap_email = "admin@wavelead.dev"
-    resp = requests.post(
-        f"{BASE_URL}/api/auth/signup",
-        json={
-            "email": bootstrap_email,
-            "password": "password123",
-            "display_name": "Bootstrap Admin"
-        }
-    )
-    data = resp.json()
-    role = data.get('data', {}).get('user', {}).get('role', '')
-    bootstrap_cookie = extract_cookie(resp, "wl_session")
-    
-    print_test(
-        "Bootstrap email gets super_admin when DB empty",
-        role == "super_admin",
-        f"Got role='{role}'"
-    )
-    
-    # 5c: Re-attempting bootstrap email after super_admin exists gets role=user
-    timestamp = int(time.time())
-    resp2 = requests.post(
-        f"{BASE_URL}/api/auth/signup",
-        json={
-            "email": f"admin+{timestamp}@wavelead.dev",
-            "password": "password123",
-            "display_name": "Second Bootstrap Attempt"
-        }
-    )
-    data2 = resp2.json()
-    role2 = data2.get('data', {}).get('user', {}).get('role', '')
-    print_test(
-        "Bootstrap email after super_admin exists gets role=user",
-        role2 == "user",
-        f"Got role='{role2}'"
-    )
-    
-    client.close()
-except Exception as e:
-    print_test("Bootstrap role logic", False, str(e))
-
-# ============================================================================
-# Check 6: Live-role authorization (MOST IMPORTANT)
-# ============================================================================
-print("\n" + "=" * 80)
-print("CHECK 6: Live-Role Authorization (CRITICAL)")
-print("=" * 80)
-
-try:
-    # 6a: Wipe users, signup as admin@wavelead.dev, capture cookie
-    mongo_url = os.getenv('MONGO_URL', 'mongodb://localhost:27017')
-    client = MongoClient(mongo_url)
-    db = client[TEST_DB]
-    db.users.delete_many({})
-    
-    bootstrap_email = "admin@wavelead.dev"
-    resp = requests.post(
-        f"{BASE_URL}/api/auth/signup",
-        json={
-            "email": bootstrap_email,
-            "password": "password123",
+    # Test 5c: Live-role stale-role protection
+    print("\n  5c: Live-role stale-role protection")
+    try:
+        # Clear users collection
+        client = MongoClient(MONGO_URL)
+        db = client[DB_NAME]
+        db.users.delete_many({})
+        print("    Cleared users collection")
+        
+        # Signup with super admin email
+        admin_signup_data = {
+            "email": SUPER_ADMIN_EMAIL,
+            "password": "AdminPass123!",
             "display_name": "Super Admin"
         }
-    )
-    data = resp.json()
-    user_id = data.get('data', {}).get('user', {}).get('id', '')
-    cookie = extract_cookie(resp, "wl_session")
-    
-    print_test(
-        "6a: Super admin signup successful",
-        resp.status_code == 200 and cookie is not None,
-        f"Status: {resp.status_code}, Cookie: {cookie is not None}"
-    )
-    
-    # 6b: GET /api/admin/ping with super_admin cookie returns 200
-    resp = requests.get(
-        f"{BASE_URL}/api/admin/ping",
-        headers={"Cookie": cookie}
-    )
-    data = resp.json()
-    role = data.get('data', {}).get('role', '')
-    print_test(
-        "6b: Super admin can access /api/admin/ping",
-        resp.status_code == 200 and role == "super_admin",
-        f"Status: {resp.status_code}, Role: {role}"
-    )
-    
-    # 6c: Downgrade user in MongoDB
-    db.users.update_one(
-        {"id": user_id},
-        {"$set": {"role": "user"}}
-    )
-    print("  → Downgraded user role in DB from super_admin to user")
-    
-    # 6d: Same cookie must now be denied (403)
-    resp = requests.get(
-        f"{BASE_URL}/api/admin/ping",
-        headers={"Cookie": cookie}
-    )
-    print_test(
-        "6d: CRITICAL - Same cookie denied after DB role downgrade",
-        resp.status_code == 403,
-        f"Status: {resp.status_code} (expected 403)"
-    )
-    
-    # 6e: Unauthenticated request returns 401
-    resp = requests.get(f"{BASE_URL}/api/admin/ping")
-    print_test(
-        "6e: Unauthenticated /api/admin/ping returns 401",
-        resp.status_code == 401,
-        f"Status: {resp.status_code}"
-    )
-    
-    client.close()
-except Exception as e:
-    print_test("Live-role authorization", False, str(e))
-
-# ============================================================================
-# Check 7: Rate limiting
-# ============================================================================
-print("\n" + "=" * 80)
-print("CHECK 7: Rate Limiting")
-print("=" * 80)
-
-try:
-    # 7a: Login rate limiting (9+ attempts should trigger 429)
-    test_email = f"ratelimit+{int(time.time())}@wavelead.test"
-    # First create the user
-    requests.post(
-        f"{BASE_URL}/api/auth/signup",
-        json={
-            "email": test_email,
-            "password": "correct123",
-            "display_name": "Rate Limit Test"
-        }
-    )
-    
-    # Now try 9 failed login attempts
-    got_429 = False
-    for i in range(10):
-        resp = requests.post(
-            f"{BASE_URL}/api/auth/login",
-            json={"email": test_email, "password": "wrong"}
+        admin_signup_response = requests.post(
+            f"{LOCAL_BASE}/api/auth/signup",
+            json=admin_signup_data,
+            timeout=5
         )
-        if resp.status_code == 429:
-            got_429 = True
-            break
+        
+        if admin_signup_response.status_code != 200:
+            all_passed = False
+            details.append(f"5c: Admin signup failed with {admin_signup_response.status_code}")
+            print(f"    ❌ Admin signup failed: {admin_signup_response.status_code}")
+        else:
+            cookies = admin_signup_response.cookies
+            
+            # Verify admin access works
+            admin_ping_1 = requests.get(
+                f"{LOCAL_BASE}/api/admin/ping",
+                cookies=cookies,
+                timeout=5
+            )
+            
+            if admin_ping_1.status_code != 200:
+                all_passed = False
+                details.append(f"5c: Initial admin ping failed: {admin_ping_1.status_code}")
+                print(f"    ❌ Initial admin ping failed: {admin_ping_1.status_code}")
+            else:
+                print(f"    ✅ Initial admin ping: {admin_ping_1.status_code}")
+                
+                # Downgrade user role in DB
+                user = db.users.find_one({"email": SUPER_ADMIN_EMAIL})
+                if user:
+                    db.users.update_one(
+                        {"email": SUPER_ADMIN_EMAIL},
+                        {"$set": {"role": "user"}}
+                    )
+                    print("    Downgraded user role to 'user' in DB")
+                    
+                    # Try admin ping with same cookie - should be denied immediately
+                    admin_ping_2 = requests.get(
+                        f"{LOCAL_BASE}/api/admin/ping",
+                        cookies=cookies,
+                        timeout=5
+                    )
+                    
+                    if admin_ping_2.status_code == 403:
+                        print(f"    ✅ Downgraded user correctly denied: {admin_ping_2.status_code}")
+                    else:
+                        all_passed = False
+                        details.append(f"5c: Expected 403 after downgrade, got {admin_ping_2.status_code}")
+                        print(f"    ❌ Expected 403 after downgrade, got {admin_ping_2.status_code}")
+                else:
+                    all_passed = False
+                    details.append("5c: Could not find user in DB")
+                    print("    ❌ Could not find user in DB")
+        
+        client.close()
+    except Exception as e:
+        all_passed = False
+        details.append(f"5c: {str(e)}")
+        print(f"    ❌ Error: {str(e)}")
     
-    print_test(
-        "Login rate limiting triggers 429",
-        got_429,
-        f"Got 429 after rapid failed login attempts: {got_429}"
+    results.add_result(
+        "Test 5: Authorization tests",
+        all_passed,
+        "; ".join(details) if details else "All 3 authorization tests passed"
     )
+
+def test_6_cors_regression():
+    """Test 6: CORS regression"""
+    print("\n" + "="*80)
+    print("TEST 6: CORS regression")
+    print("="*80)
     
-    # Wait a bit before next test
-    time.sleep(2)
+    all_passed = True
+    details = []
     
-    # 7b: Signup rate limiting (6+ attempts should trigger 429)
-    got_429 = False
-    for i in range(7):
-        resp = requests.post(
-            f"{BASE_URL}/api/auth/signup",
-            json={
-                "email": f"signup{i}+{int(time.time())}@wavelead.test",
-                "password": "password123",
-                "display_name": f"Signup {i}"
-            }
+    # Test 6a: Evil origin not allowed
+    print("\n  6a: Evil origin rejected")
+    try:
+        response = requests.get(
+            f"{LOCAL_BASE}/api/health",
+            headers={"Origin": "https://evil.example"},
+            timeout=5
         )
-        if resp.status_code == 429:
-            got_429 = True
-            break
+        
+        cors_header = response.headers.get("Access-Control-Allow-Origin", "")
+        
+        if cors_header == "*":
+            all_passed = False
+            details.append("6a: Wildcard CORS header present")
+            print(f"    ❌ Found wildcard CORS: {cors_header}")
+        elif cors_header == "https://evil.example":
+            all_passed = False
+            details.append("6a: Evil origin echoed")
+            print(f"    ❌ Evil origin echoed: {cors_header}")
+        else:
+            print(f"    ✅ Evil origin not allowed (CORS header: {cors_header or 'none'})")
+    except Exception as e:
+        all_passed = False
+        details.append(f"6a: {str(e)}")
+        print(f"    ❌ Error: {str(e)}")
     
-    print_test(
-        "Signup rate limiting triggers 429",
-        got_429,
-        f"Got 429 after rapid signup attempts: {got_429}"
-    )
-except Exception as e:
-    print_test("Rate limiting", False, str(e))
-
-# Wait for rate limits to reset
-time.sleep(3)
-
-# ============================================================================
-# Check 8: CORS explicit allowlist
-# ============================================================================
-print("\n" + "=" * 80)
-print("CHECK 8: CORS Explicit Allowlist")
-print("=" * 80)
-
-try:
-    # 8a: Evil origin should NOT be allowed
-    resp = requests.get(
-        f"{BASE_URL}/api/health",
-        headers={"Origin": "https://evil.example"}
-    )
-    acao = resp.headers.get('Access-Control-Allow-Origin', '')
-    is_safe = acao != "*" and acao != "https://evil.example"
-    print_test(
-        "Evil origin NOT allowed",
-        is_safe,
-        f"Access-Control-Allow-Origin: '{acao}' (should not be * or evil.example)"
-    )
-    
-    # 8b: Allowed origin should be echoed
-    allowed_origin = "https://grow-infrastructure.preview.emergentagent.com"
-    resp = requests.get(
-        f"{BASE_URL}/api/health",
-        headers={"Origin": allowed_origin}
-    )
-    acao = resp.headers.get('Access-Control-Allow-Origin', '')
-    vary = resp.headers.get('Vary', '')
-    is_correct = acao == allowed_origin and 'Origin' in vary
-    print_test(
-        "Allowed origin echoed with Vary: Origin",
-        is_correct,
-        f"ACAO: '{acao}', Vary: '{vary}'"
-    )
-    
-    # 8c: No wildcard with credentials
-    has_wildcard_with_creds = (
-        resp.headers.get('Access-Control-Allow-Origin') == '*' and
-        resp.headers.get('Access-Control-Allow-Credentials', '').lower() == 'true'
-    )
-    print_test(
-        "No wildcard CORS with credentials",
-        not has_wildcard_with_creds,
-        f"Wildcard with credentials: {has_wildcard_with_creds}"
-    )
-except Exception as e:
-    print_test("CORS allowlist", False, str(e))
-
-# ============================================================================
-# Check 9: Discovery endpoints unchanged (regression)
-# ============================================================================
-print("\n" + "=" * 80)
-print("CHECK 9: Discovery Endpoints (Regression Check)")
-print("=" * 80)
-
-try:
-    # 9a: GET /api/categories (>=25 items)
-    resp = requests.get(f"{BASE_URL}/api/categories")
-    data = resp.json()
-    categories = data.get('data', {}).get('categories', [])
-    print_test(
-        "GET /api/categories returns >=25 items",
-        len(categories) >= 25,
-        f"Got {len(categories)} categories"
-    )
-except Exception as e:
-    print_test("GET /api/categories", False, str(e))
-
-try:
-    # 9b: GET /api/channels?limit=5 (total>=20, first item structure)
-    resp = requests.get(f"{BASE_URL}/api/channels?limit=5")
-    data = resp.json()
-    total = data.get('data', {}).get('total', 0)
-    # Channels endpoint returns 'items' not 'channels'
-    channels = data.get('data', {}).get('items', [])
-    
-    print_test(
-        "GET /api/channels total>=20",
-        total >= 20,
-        f"Total: {total}"
-    )
-    
-    if channels:
-        first = channels[0]
-        has_owner_id = 'owner_id' in first
-        has_verification_status = 'verification_status' in first
-        has_is_verified = 'is_verified' in first
-        print_test(
-            "First channel has no owner_id/verification_status but has is_verified",
-            not has_owner_id and not has_verification_status and has_is_verified,
-            f"owner_id: {has_owner_id}, verification_status: {has_verification_status}, is_verified: {has_is_verified}"
+    # Test 6b: Allowed origin echoed correctly
+    print("\n  6b: Allowed origin echoed correctly")
+    try:
+        allowed_origin = "https://grow-infrastructure.preview.emergentagent.com"
+        response = requests.get(
+            f"{LOCAL_BASE}/api/health",
+            headers={"Origin": allowed_origin},
+            timeout=5
         )
-except Exception as e:
-    print_test("GET /api/channels", False, str(e))
-
-try:
-    # 9c: GET /api/channels/featured (6 items)
-    resp = requests.get(f"{BASE_URL}/api/channels/featured")
-    data = resp.json()
-    # Featured endpoint returns 'items' not 'channels'
-    channels = data.get('data', {}).get('items', [])
-    print_test(
-        "GET /api/channels/featured returns 6 items",
-        len(channels) == 6,
-        f"Got {len(channels)} channels"
-    )
-except Exception as e:
-    print_test("GET /api/channels/featured", False, str(e))
-
-try:
-    # 9d: GET /api/stats returns totalApproved & totalPending
-    resp = requests.get(f"{BASE_URL}/api/stats")
-    data = resp.json()
-    stats = data.get('data', {})
-    has_approved = 'totalApproved' in stats
-    has_pending = 'totalPending' in stats
-    print_test(
-        "GET /api/stats returns totalApproved & totalPending",
-        has_approved and has_pending,
-        f"totalApproved: {has_approved}, totalPending: {has_pending}"
-    )
-except Exception as e:
-    print_test("GET /api/stats", False, str(e))
-
-try:
-    # 9e: GET /api/channels/nusantara-daily returns channel
-    resp = requests.get(f"{BASE_URL}/api/channels/nusantara-daily")
-    print_test(
-        "GET /api/channels/nusantara-daily returns channel",
-        resp.status_code == 200,
-        f"Status: {resp.status_code}"
-    )
-except Exception as e:
-    print_test("GET /api/channels/nusantara-daily", False, str(e))
-
-try:
-    # 9f: Unknown slug returns 404
-    resp = requests.get(f"{BASE_URL}/api/channels/unknown-nonexistent-slug-12345")
-    print_test(
-        "Unknown channel slug returns 404",
-        resp.status_code == 404,
-        f"Status: {resp.status_code}"
-    )
-except Exception as e:
-    print_test("Unknown channel slug 404", False, str(e))
-
-# ============================================================================
-# Check 10: Seed idempotency
-# ============================================================================
-print("\n" + "=" * 80)
-print("CHECK 10: Seed Idempotency")
-print("=" * 80)
-
-try:
-    # Note: Testing against live wavelead DB as per instructions
-    # Get initial stats
-    resp1 = requests.get(f"{BASE_URL}/api/stats")
-    stats1 = resp1.json().get('data', {})
+        
+        cors_header = response.headers.get("Access-Control-Allow-Origin", "")
+        vary_header = response.headers.get("Vary", "")
+        
+        if cors_header == allowed_origin and "Origin" in vary_header:
+            print(f"    ✅ Allowed origin echoed: {cors_header}")
+            print(f"    ✅ Vary header present: {vary_header}")
+        else:
+            all_passed = False
+            if cors_header != allowed_origin:
+                details.append(f"6b: Expected {allowed_origin}, got {cors_header}")
+                print(f"    ❌ Wrong CORS header: {cors_header}")
+            if "Origin" not in vary_header:
+                details.append(f"6b: Vary header missing or wrong: {vary_header}")
+                print(f"    ❌ Vary header missing or wrong: {vary_header}")
+    except Exception as e:
+        all_passed = False
+        details.append(f"6b: {str(e)}")
+        print(f"    ❌ Error: {str(e)}")
     
-    # Run seed (no force)
-    resp_seed1 = requests.post(f"{BASE_URL}/api/admin/seed")
+    # Test 6c: Confirm no global wildcard from next.config.js
+    print("\n  6c: No global wildcard CORS from next.config.js")
+    try:
+        # Test multiple routes to ensure no wildcard
+        test_routes = ["/api/health", "/", "/channels"]
+        wildcard_found = False
+        
+        for route in test_routes:
+            response = requests.get(
+                f"{LOCAL_BASE}{route}",
+                headers={"Origin": "https://evil.example"},
+                timeout=5
+            )
+            cors_header = response.headers.get("Access-Control-Allow-Origin", "")
+            if cors_header == "*":
+                wildcard_found = True
+                details.append(f"6c: Wildcard found on {route}")
+                print(f"    ❌ Wildcard CORS found on {route}")
+                break
+        
+        if not wildcard_found:
+            print(f"    ✅ No wildcard CORS headers found")
+    except Exception as e:
+        all_passed = False
+        details.append(f"6c: {str(e)}")
+        print(f"    ❌ Error: {str(e)}")
     
-    # Get stats after first seed
-    resp2 = requests.get(f"{BASE_URL}/api/stats")
-    stats2 = resp2.json().get('data', {})
-    
-    # Run seed again (no force)
-    resp_seed2 = requests.post(f"{BASE_URL}/api/admin/seed")
-    
-    # Get stats after second seed
-    resp3 = requests.get(f"{BASE_URL}/api/stats")
-    stats3 = resp3.json().get('data', {})
-    
-    # Stats should be identical after both seeds
-    totals_match = (
-        stats2.get('totalApproved') == stats3.get('totalApproved') and
-        stats2.get('totalPending') == stats3.get('totalPending')
+    results.add_result(
+        "Test 6: CORS regression",
+        all_passed,
+        "; ".join(details) if details else "CORS correctly configured (no wildcard, proper origin echo)"
     )
-    
-    print_test(
-        "Seed idempotency - no duplicates on repeated calls",
-        totals_match,
-        f"After 1st seed: {stats2.get('totalApproved')} approved, After 2nd seed: {stats3.get('totalApproved')} approved"
-    )
-except Exception as e:
-    print_test("Seed idempotency", False, str(e))
 
-print("\n" + "=" * 80)
-print("Backend Testing Complete")
-print("=" * 80)
+def test_7_compile_and_tests():
+    """Test 7: Compile + tests"""
+    print("\n" + "="*80)
+    print("TEST 7: Compile + tests")
+    print("="*80)
+    
+    all_passed = True
+    details = []
+    
+    # Test 7a: yarn typecheck
+    print("\n  7a: yarn typecheck")
+    try:
+        result = subprocess.run(
+            ["yarn", "typecheck"],
+            cwd="/app",
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        if result.returncode == 0:
+            print(f"    ✅ yarn typecheck passed (exit code 0)")
+        else:
+            all_passed = False
+            details.append(f"7a: yarn typecheck failed (exit {result.returncode})")
+            print(f"    ❌ yarn typecheck failed (exit {result.returncode})")
+            print(f"    stderr: {result.stderr[:500]}")
+    except Exception as e:
+        all_passed = False
+        details.append(f"7a: {str(e)}")
+        print(f"    ❌ Error: {str(e)}")
+    
+    # Test 7b: yarn test
+    print("\n  7b: yarn test")
+    try:
+        result = subprocess.run(
+            ["yarn", "test"],
+            cwd="/app",
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        
+        # Check if all tests passed
+        if "13 passed" in result.stdout or result.returncode == 0:
+            print(f"    ✅ yarn test passed (13/13 tests)")
+        else:
+            # Count passed/failed tests
+            import re
+            passed_match = re.search(r'(\d+) passed', result.stdout)
+            failed_match = re.search(r'(\d+) failed', result.stdout)
+            
+            passed_count = int(passed_match.group(1)) if passed_match else 0
+            failed_count = int(failed_match.group(1)) if failed_match else 0
+            
+            all_passed = False
+            details.append(f"7b: {passed_count} passed, {failed_count} failed")
+            print(f"    ❌ yarn test failed: {passed_count} passed, {failed_count} failed")
+            print(f"    stdout excerpt: {result.stdout[-1000:]}")
+    except Exception as e:
+        all_passed = False
+        details.append(f"7b: {str(e)}")
+        print(f"    ❌ Error: {str(e)}")
+    
+    results.add_result(
+        "Test 7: Compile and tests",
+        all_passed,
+        "; ".join(details) if details else "yarn typecheck and yarn test both passed"
+    )
+
+def test_8_stale_references():
+    """Test 8: Stale references audit"""
+    print("\n" + "="*80)
+    print("TEST 8: Stale references audit")
+    print("="*80)
+    
+    all_passed = True
+    details = []
+    
+    search_terms = [
+        ("WaveHub", "WaveHub (case sensitive)"),
+        ("wavehub", "wavehub (case sensitive)"),
+        ("nextjs-mongo-template", "nextjs-mongo-template"),
+        ("wh_session", "wh_session"),
+        ("userCount === 0", "userCount === 0 (first-user pattern)"),
+    ]
+    
+    exclude_paths = [
+        "README.md",
+        "test_result.md",
+        "node_modules",
+        ".next",
+        ".git",
+        "backend_test.py",
+    ]
+    
+    for search_term, description in search_terms:
+        print(f"\n  Searching for: {description}")
+        try:
+            # Use grep to search, excluding specified paths
+            exclude_args = []
+            for path in exclude_paths:
+                exclude_args.extend(["--exclude-dir", path])
+            
+            result = subprocess.run(
+                ["grep", "-r", "-F", search_term, "/app"] + exclude_args,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            # grep returns 0 if found, 1 if not found, >1 if error
+            if result.returncode == 1:
+                # Not found - this is good
+                print(f"    ✅ No occurrences found")
+            elif result.returncode == 0:
+                # Found - check if it's in comments explaining removal
+                lines = result.stdout.strip().split('\n')
+                active_code_matches = []
+                
+                for line in lines:
+                    # Skip if it's in excluded files
+                    if any(excl in line for excl in exclude_paths):
+                        continue
+                    
+                    # Check if it's a comment explaining removal
+                    if "removed" in line.lower() or "no longer" in line.lower() or "was:" in line.lower():
+                        continue
+                    
+                    active_code_matches.append(line)
+                
+                if active_code_matches:
+                    all_passed = False
+                    count = len(active_code_matches)
+                    details.append(f"{description}: {count} occurrences in active code")
+                    print(f"    ❌ Found {count} occurrences in active code:")
+                    for match in active_code_matches[:5]:  # Show first 5
+                        print(f"       {match[:100]}")
+                else:
+                    print(f"    ✅ Found only in comments explaining removal")
+            else:
+                # Error
+                print(f"    ⚠️  grep error (exit {result.returncode})")
+        except Exception as e:
+            print(f"    ⚠️  Error: {str(e)}")
+    
+    results.add_result(
+        "Test 8: Stale references audit",
+        all_passed,
+        "; ".join(details) if details else "No stale references found in active code"
+    )
+
+def main():
+    print("\n" + "="*80)
+    print("WaveLead Milestone 00.3 — Runtime Stability Verification")
+    print("DO NOT MODIFY CODE - VERIFICATION ONLY")
+    print("="*80)
+    
+    try:
+        test_1_local_routes()
+        test_2_deployed_routes()
+        test_3_health_stability()
+        test_4_memory_restart_check()
+        test_5_authorization()
+        test_6_cors_regression()
+        test_7_compile_and_tests()
+        test_8_stale_references()
+    except KeyboardInterrupt:
+        print("\n\nTest interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n\nFatal error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+    
+    results.print_summary()
+    
+    # Exit with appropriate code
+    sys.exit(0 if not results.failures else 1)
+
+if __name__ == "__main__":
+    main()

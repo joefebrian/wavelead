@@ -4,7 +4,7 @@
 
 @layer base {
   :root {
-    /* WaveHub brand tokens */
+    /* WaveLead brand tokens */
     --background: 210 33% 98.5%;   /* very pale blue-gray */
     --foreground: 215 60% 15%;      /* #10233F-ish deep navy */
     --card: 0 0% 100%;
@@ -12,7 +12,7 @@
     --popover: 0 0% 100%;
     --popover-foreground: 215 60% 15%;
 
-    --primary: 160 84% 40%;         /* #12B981 WaveHub green */
+    --primary: 160 84% 40%;         /* #12B981 WaveLead green */
     --primary-foreground: 0 0% 100%;
 
     --secondary: 210 30% 96%;
