@@ -58,7 +58,32 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
 
     // ---------- PUBLIC DISCOVERY ----------
     if (route === '/categories' && method === 'GET') {
+      const withCounts = new URL(request.url).searchParams.get('withCounts');
+      if (withCounts) {
+        const { discoveryService } = await import('@/lib/services/discoveryService');
+        return applyCors(ok({ categories: await discoveryService.getCategoryCounts() }), request);
+      }
       return applyCors(ok({ categories: await categoryService.listActive() }), request);
+    }
+    if (route === '/countries' && method === 'GET') {
+      const { discoveryService } = await import('@/lib/services/discoveryService');
+      return applyCors(ok({ countries: await discoveryService.getCountryCounts() }), request);
+    }
+    if (route === '/discovery/home' && method === 'GET') {
+      const { discoveryService } = await import('@/lib/services/discoveryService');
+      return applyCors(ok(await discoveryService.getHomepageBundle()), request);
+    }
+    if (route === '/channels/rising' && method === 'GET') {
+      const { discoveryService } = await import('@/lib/services/discoveryService');
+      const limit = Math.min(parseInt(new URL(request.url).searchParams.get('limit') || '6', 10) || 6, 24);
+      return applyCors(ok({ items: await discoveryService.getRising(limit) }), request);
+    }
+    if (route === '/channels/top' && method === 'GET') {
+      const { discoveryService } = await import('@/lib/services/discoveryService');
+      const sp = new URL(request.url).searchParams;
+      const country = sp.get('country') || undefined;
+      const limit = Math.min(parseInt(sp.get('limit') || '10', 10) || 10, 50);
+      return applyCors(ok({ items: await discoveryService.getTop({ country, limit }) }), request);
     }
     if (route === '/channels' && method === 'GET') {
       const sp = new URL(request.url).searchParams;

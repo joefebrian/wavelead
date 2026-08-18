@@ -91,4 +91,6 @@
   .wh-card:hover {
     @apply shadow-md -translate-y-0.5;
   }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 }

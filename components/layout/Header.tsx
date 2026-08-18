@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
-import { Radio, Menu, X } from 'lucide-react';
+import { useEffect, useState, FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
+import { Radio, Menu, X, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { PublicUser } from '@/lib/types';
 
@@ -10,6 +11,8 @@ export default function Header() {
   const [me, setMe] = useState<PublicUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const router = useRouter();
 
   useEffect(() => {
     fetch('/api/auth/me', { credentials: 'include' })
@@ -24,30 +27,52 @@ export default function Header() {
     window.location.href = '/';
   }
 
+  function onSearchSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const trimmed = q.trim();
+    router.push(trimmed ? `/search?q=${encodeURIComponent(trimmed)}` : '/channels');
+    setOpen(false);
+  }
+
   const nav = [
     { href: '/channels', label: 'Discover' },
     { href: '/trending', label: 'Trending' },
-    { href: '/submit', label: 'Submit Channel' },
-    { href: '/pricing', label: 'Pricing' },
+    { href: '/top', label: 'Top Channels' },
+    { href: '/categories', label: 'Categories' },
   ];
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-border/60 bg-background/80 backdrop-blur">
-      <div className="container flex h-16 items-center justify-between">
-        <Link href="/" className="flex items-center gap-2">
+    <header className="sticky top-0 z-40 w-full border-b border-border/60 bg-background/85 backdrop-blur">
+      <div className="container flex h-16 items-center gap-4">
+        <Link href="/" className="flex items-center gap-2 shrink-0">
           <span className="grid h-9 w-9 place-items-center rounded-lg bg-primary text-primary-foreground shadow-sm">
             <Radio className="h-5 w-5" />
           </span>
           <span className="text-lg font-bold tracking-tight">WaveLead</span>
         </Link>
 
-        <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-muted-foreground">
+        <nav className="hidden md:flex items-center gap-5 text-sm font-medium text-muted-foreground">
           {nav.map((n) => (
-            <Link key={n.href} href={n.href} className="hover:text-foreground transition-colors">{n.label}</Link>
+            <Link key={n.href} href={n.href} className="hover:text-foreground transition-colors whitespace-nowrap">{n.label}</Link>
           ))}
         </nav>
 
-        <div className="hidden md:flex items-center gap-2">
+        <form onSubmit={onSearchSubmit} className="hidden lg:flex flex-1 max-w-sm items-center gap-2 rounded-lg border border-border bg-secondary/40 px-3 py-1.5">
+          <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+          <input
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search channels…"
+            aria-label="Search channels"
+            className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
+          />
+        </form>
+
+        <div className="flex-1 lg:hidden" />
+
+        <div className="hidden md:flex items-center gap-2 shrink-0">
+          <Link href="/submit"><Button variant="outline" size="sm">Submit Channel</Button></Link>
           {loading ? (
             <div className="h-9 w-24 rounded-md bg-muted animate-pulse" />
           ) : me ? (
@@ -58,7 +83,7 @@ export default function Header() {
           ) : (
             <>
               <Link href="/login"><Button variant="ghost" size="sm">Log in</Button></Link>
-              <Link href="/signup"><Button size="sm">Get started</Button></Link>
+              <Link href="/signup"><Button size="sm">Get Started</Button></Link>
             </>
           )}
         </div>
@@ -71,7 +96,12 @@ export default function Header() {
       {open && (
         <div className="md:hidden border-t border-border/60 bg-background">
           <div className="container py-3 flex flex-col gap-2">
-            {nav.map((n) => (<Link key={n.href} href={n.href} className="py-2 text-sm font-medium">{n.label}</Link>))}
+            <form onSubmit={onSearchSubmit} className="flex items-center gap-2 rounded-lg border border-border bg-secondary/40 px-3 py-2">
+              <Search className="h-4 w-4 text-muted-foreground" />
+              <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search channels…" className="flex-1 bg-transparent text-sm outline-none" />
+            </form>
+            {nav.map((n) => (<Link key={n.href} href={n.href} className="py-2 text-sm font-medium" onClick={() => setOpen(false)}>{n.label}</Link>))}
+            <Link href="/submit" className="py-2 text-sm font-medium" onClick={() => setOpen(false)}>Submit Channel</Link>
             <div className="flex gap-2 pt-2 border-t border-border/60">
               {me ? (
                 <>
@@ -81,7 +111,7 @@ export default function Header() {
               ) : (
                 <>
                   <Link href="/login" className="flex-1"><Button variant="outline" className="w-full">Log in</Button></Link>
-                  <Link href="/signup" className="flex-1"><Button className="w-full">Get started</Button></Link>
+                  <Link href="/signup" className="flex-1"><Button className="w-full">Get Started</Button></Link>
                 </>
               )}
             </div>

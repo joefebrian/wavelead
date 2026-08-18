@@ -16,8 +16,8 @@ export default function Footer() {
             The independent growth infrastructure for WhatsApp Channels. Not affiliated with WhatsApp or Meta.
           </p>
         </div>
-        <FCol title="Discover" links={[['/channels','All Channels'],['/trending','Trending'],['/top','Top Ranked']]} />
-        <FCol title="For Owners" links={[['/submit','Submit a Channel'],['/pricing','Pricing'],['/dashboard','Owner Dashboard']]} />
+        <FCol title="Discover" links={[['/channels','All Channels'],['/trending','Trending'],['/top','Top Channels'],['/categories','Categories'],['/country/indonesia','Countries']]} />
+        <FCol title="For Owners" links={[['/submit','Submit Channel'],['/dashboard','Owner Dashboard'],['/pricing','Pricing']]} />
         <FCol title="Company" links={[['/about','About'],['/terms','Terms'],['/privacy','Privacy']]} />
       </div>
       <div className="border-t border-border/60">
