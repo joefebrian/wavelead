@@ -265,6 +265,23 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ pong: true, role: actor.user.role }), request);
     }
 
+    // ---------- M05.0 SMART CHANNEL IMPORT & ENRICHMENT ----------
+    if (route === '/channels/enrich' && method === 'POST') {
+      const body = await safeJson(request);
+      const { enrichmentService } = await import('@/lib/services/enrichment/enrichmentService');
+      const ip = request.headers.get('x-forwarded-for')?.split(',')[0].trim()
+             || request.headers.get('x-real-ip')
+             || null;
+      const actor = await resolveActor(request).catch(() => null);
+      const result = await enrichmentService.enrich(actor, {
+        channel_url: String(body?.channel_url || ''),
+        force_refresh: !!body?.force_refresh,
+        ipAddress: ip,
+      });
+      const status = result.status === 'rate_limited' ? 429 : 200;
+      return applyCors(NextResponse.json({ ok: true, data: result }, { status }), request);
+    }
+
     // ---------- M04 OWNER ANALYTICS ----------
     // GET /api/owner/channels/:id/analytics/overview   ?window=7d|30d|90d|custom&from=YYYY-MM-DD&to=YYYY-MM-DD
     // GET /api/owner/channels/:id/analytics/timeseries

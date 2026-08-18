@@ -10,6 +10,7 @@ export const COLLECTIONS = {
   CHANNEL_DAILY_SOURCE_METRICS: 'channel_daily_source_metrics',
   CHANNEL_SEARCH_QUERY_METRICS: 'channel_search_query_metrics',
   ROLLUP_STATE: 'analytics_rollup_state',
+  ENRICHMENT_CACHE: 'enrichment_cache',
   BOOKMARKS: 'bookmarks',
   REPORTS: 'reports',
   AUDIT_LOGS: 'audit_logs',

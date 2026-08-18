@@ -67,6 +67,17 @@ export async function ensureIndexes(db: Db): Promise<void> {
     db.collection(COLLECTIONS.ROLLUP_STATE).createIndexes([
       { key: { channel_id: 1, date: 1 }, unique: true, name: 'uniq_channel_date' },
     ]),
+    db.collection(COLLECTIONS.ENRICHMENT_CACHE).createIndexes([
+      { key: { cache_key: 1 }, unique: true, name: 'uniq_cache_key' },
+      { key: { canonical_url: 1 }, name: 'by_canonical_url' },
+      { key: { expires_at: 1 }, expireAfterSeconds: 0, name: 'ttl_expires_at' },
+    ]),
+    // M05: unique index on whatsapp_channel_id for canonical duplicate protection.
+    // sparse:true so legacy rows without the field don't collide during backfill.
+    db.collection(COLLECTIONS.CHANNELS).createIndex(
+      { whatsapp_channel_id: 1 },
+      { unique: true, sparse: true, name: 'uniq_whatsapp_channel_id' },
+    ),
     db.collection(COLLECTIONS.BOOKMARKS).createIndexes([
       { key: { user_id: 1, channel_id: 1 }, unique: true, name: 'uniq_bookmark' },
       { key: { user_id: 1, created_at: -1 }, name: 'user_time' },

@@ -40,6 +40,7 @@ export interface Channel {
   slug: string;
   name: string;
   whatsapp_url: string;
+  whatsapp_channel_id?: string | null;
   description: string | null;
   short_description: string | null;
   logo_url: string | null;

@@ -6,6 +6,7 @@ import { getCollection } from '../db/mongo';
 import { COLLECTIONS } from '../db/collections';
 import { validateAndNormalizeWhatsAppUrl } from '../utils/whatsapp';
 import { slugify } from '../utils/slug';
+import { normalizeChannelUrl } from './enrichment/urlNormalizer';
 import { submissionSchema } from '../validation/submissionSchema';
 import { HttpError } from '../auth/rbac';
 import type { Actor, Channel } from '@/lib/types';
@@ -54,8 +55,14 @@ export const submissionService = {
     const urlCheck = validateAndNormalizeWhatsAppUrl(data.whatsapp_url);
     if (!urlCheck.ok || !urlCheck.normalized) throw new HttpError(400, urlCheck.reason || 'Invalid WhatsApp URL');
 
-    // Duplicate detection
-    const dup = await channelRepo.list({ filter: { whatsapp_url: urlCheck.normalized }, limit: 1 });
+    // M05.0: derive canonical whatsapp_channel_id for hard duplicate protection.
+    const canonical = normalizeChannelUrl(urlCheck.normalized);
+    const whatsappChannelId = canonical?.channel_id ?? null;
+    const whatsappUrlToStore = canonical?.canonical_url ?? urlCheck.normalized;
+
+    // Duplicate detection — prefer canonical id when available.
+    const dupFilter = whatsappChannelId ? { whatsapp_channel_id: whatsappChannelId } : { whatsapp_url: whatsappUrlToStore };
+    const dup = await channelRepo.list({ filter: dupFilter, limit: 1 });
     if (dup.length > 0) {
       throw new HttpError(409, 'This WhatsApp channel is already listed on WaveLead');
     }
@@ -73,7 +80,8 @@ export const submissionService = {
       id: uuidv4(),
       slug,
       name: data.name,
-      whatsapp_url: urlCheck.normalized,
+      whatsapp_url: whatsappUrlToStore,
+      whatsapp_channel_id: whatsappChannelId,
       description: data.description || null,
       short_description: data.short_description,
       logo_url: data.logo_url || null,
