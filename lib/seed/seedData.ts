@@ -96,7 +96,10 @@ export async function runSeed({ force = false }: { force?: boolean } = {}): Prom
         category_id: bySlug.get(slugify(ch.category)) || null,
         owner_id: null,
         status: 'approved',
-        verification_status: ch.featured ? 'verified' : 'unclaimed',
+        // verification_status='verified' MUST always coexist with an owner_id.
+        // Seed data has no owner, so start unclaimed. Featured curation is
+        // independent of ownership verification.
+        verification_status: 'unclaimed',
         is_official: false,
         is_featured: !!ch.featured,
         is_nsfw: false,

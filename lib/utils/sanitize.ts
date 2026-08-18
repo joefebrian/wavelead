@@ -13,11 +13,17 @@ export function sanitizeChannel(c: Channel): PublicChannel {
     ...rest
   } = c;
   void _rb; void _ra; void _rr; void _rn;
+  const hasOwner = !!owner_id;
+  const rawVerified = verification_status === 'verified' || verification_status === 'official';
+  const rawOfficial = verification_status === 'official';
+  // Trust-state invariant: is_verified / is_official ONLY when an owner is
+  // actually assigned. This prevents an inconsistent public state (Verified
+  // badge alongside a Claim CTA) even if legacy DB rows drift out of sync.
   return {
     ...rest,
-    is_verified: verification_status === 'verified' || verification_status === 'official',
-    is_official: verification_status === 'official',
-    has_owner: !!owner_id,
+    is_verified: rawVerified && hasOwner,
+    is_official: rawOfficial && hasOwner,
+    has_owner: hasOwner,
   };
 }
 

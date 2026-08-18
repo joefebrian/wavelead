@@ -3,7 +3,7 @@
 // security invariants the spec calls out: duplicate/hijack protection,
 // evidence privacy, cross-owner denial, privileged-field injection, and
 // sensitive change request routing.
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { MongoClient } from 'mongodb';
 import { runSeed } from '@/lib/seed/seedData';
 
@@ -92,6 +92,13 @@ beforeAll(async () => {
     await db.collection('channels').deleteMany({ id: /^t-ch-/ });
   });
   await runSeed({});
+});
+
+afterAll(async () => {
+  // Remove test artifacts so release-gate QA queries see a clean slate.
+  await withDb(async (db) => {
+    await db.collection('channels').deleteMany({ id: /^t-ch-/ });
+  });
 });
 
 describe('M03 \u2014 Claim submission & privacy', () => {
@@ -363,6 +370,19 @@ describe('M03 \u2014 Sensitive change requests', () => {
 });
 
 describe('M03 \u2014 Public verified badge & regression', () => {
+  it('trust-state invariant: is_verified NEVER true without owner_id (defensive)', async () => {
+    // Even if a legacy row somehow has verification_status='verified' with a
+    // NULL owner_id, the public sanitizer must NOT surface is_verified/
+    // is_official. Otherwise the public UI would show a Verified badge
+    // alongside a Claim CTA at the same time.
+    const ch = await createApprovedChannel({ owner_id: null, verification_status: 'verified' });
+    const r = await api<{ channel: { is_verified: boolean; is_official: boolean; has_owner: boolean } }>(`/channels/${ch.slug}`);
+    expect(r.status).toBe(200);
+    expect(r.body.data!.channel.is_verified).toBe(false);
+    expect(r.body.data!.channel.is_official).toBe(false);
+    expect(r.body.data!.channel.has_owner).toBe(false);
+  });
+
   it('sanitizer exposes is_verified/is_official/has_owner and hides internals', async () => {
     const ch = await createApprovedChannel({ owner_id: 'x', verification_status: 'verified' });
     const r = await api<{ channel: Record<string, unknown> }>(`/channels/${ch.slug}`);
