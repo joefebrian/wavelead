@@ -4,7 +4,7 @@ import type { Channel, PublicChannel } from '@/lib/types';
 
 export function sanitizeChannel(c: Channel): PublicChannel {
   const {
-    owner_id: _o,
+    owner_id,
     verification_status,
     reviewed_by: _rb,
     reviewed_at: _ra,
@@ -12,10 +12,12 @@ export function sanitizeChannel(c: Channel): PublicChannel {
     rejection_notes: _rn,
     ...rest
   } = c;
-  void _o; void _rb; void _ra; void _rr; void _rn;
+  void _rb; void _ra; void _rr; void _rn;
   return {
     ...rest,
     is_verified: verification_status === 'verified' || verification_status === 'official',
+    is_official: verification_status === 'official',
+    has_owner: !!owner_id,
   };
 }
 

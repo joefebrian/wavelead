@@ -176,6 +176,88 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok(await curationService.updateSlot(await resolveActor(request), path[3], await safeJson(request))), request);
     }
 
+    // ---------- CLAIMS (M03.1 / M03.2 / M03.6 claimant) ----------
+    if (path.length === 3 && path[0] === 'claims' && path[1] === 'eligibility' && method === 'GET') {
+      const { claimService } = await import('@/lib/services/claimService');
+      return applyCors(ok(await claimService.getEligibility(path[2], await resolveActor(request))), request);
+    }
+    if (path.length === 2 && path[0] === 'claims' && method === 'POST') {
+      const { claimService } = await import('@/lib/services/claimService');
+      return applyCors(ok(await claimService.submit(await resolveActor(request), path[1], await safeJson(request))), request);
+    }
+    if (path.length === 3 && path[0] === 'claims' && path[2] === 'resubmit' && method === 'POST') {
+      const { claimService } = await import('@/lib/services/claimService');
+      return applyCors(ok(await claimService.resubmit(await resolveActor(request), path[1], await safeJson(request))), request);
+    }
+    if (path.length === 3 && path[0] === 'claims' && path[2] === 'cancel' && method === 'POST') {
+      const { claimService } = await import('@/lib/services/claimService');
+      return applyCors(ok(await claimService.cancel(await resolveActor(request), path[1])), request);
+    }
+    if (route === '/me/claims' && method === 'GET') {
+      const { claimService } = await import('@/lib/services/claimService');
+      return applyCors(ok({ items: await claimService.listMine(await resolveActor(request)) }), request);
+    }
+
+    // ---------- CLAIM MODERATION (M03.3 / M03.4) ----------
+    if (route === '/admin/claims' && method === 'GET') {
+      const { claimModerationService } = await import('@/lib/services/claimModerationService');
+      const status = new URL(request.url).searchParams.get('status') || 'pending';
+      return applyCors(ok({ items: await claimModerationService.listQueue(await resolveActor(request), { status }) }), request);
+    }
+    if (path.length === 3 && path[0] === 'admin' && path[1] === 'claims' && method === 'GET') {
+      const { claimModerationService } = await import('@/lib/services/claimModerationService');
+      return applyCors(ok(await claimModerationService.getDetail(await resolveActor(request), path[2])), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'claims' && path[3] === 'approve' && method === 'POST') {
+      const { claimModerationService } = await import('@/lib/services/claimModerationService');
+      return applyCors(ok(await claimModerationService.approve(await resolveActor(request), path[2], await safeJson(request))), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'claims' && path[3] === 'reject' && method === 'POST') {
+      const { claimModerationService } = await import('@/lib/services/claimModerationService');
+      return applyCors(ok(await claimModerationService.reject(await resolveActor(request), path[2], await safeJson(request))), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'claims' && path[3] === 'request-info' && method === 'POST') {
+      const { claimModerationService } = await import('@/lib/services/claimModerationService');
+      return applyCors(ok(await claimModerationService.requestInfo(await resolveActor(request), path[2], await safeJson(request))), request);
+    }
+
+    // ---------- OWNER CHANNEL MANAGEMENT (M03.6) ----------
+    if (route === '/me/channels' && method === 'GET') {
+      const { ownerService } = await import('@/lib/services/ownerService');
+      return applyCors(ok({ items: await ownerService.listMine(await resolveActor(request)) }), request);
+    }
+    if (path.length === 3 && path[0] === 'me' && path[1] === 'channels' && method === 'GET') {
+      const { ownerService } = await import('@/lib/services/ownerService');
+      return applyCors(ok(await ownerService.getMine(await resolveActor(request), path[2])), request);
+    }
+    if (path.length === 3 && path[0] === 'me' && path[1] === 'channels' && method === 'PATCH') {
+      const { ownerService } = await import('@/lib/services/ownerService');
+      return applyCors(ok(await ownerService.updateSafeFields(await resolveActor(request), path[2], await safeJson(request))), request);
+    }
+    if (path.length === 4 && path[0] === 'me' && path[1] === 'channels' && path[3] === 'change-request' && method === 'POST') {
+      const { ownerService } = await import('@/lib/services/ownerService');
+      return applyCors(ok(await ownerService.submitChangeRequest(await resolveActor(request), path[2], await safeJson(request))), request);
+    }
+
+    // ---------- CHANGE REQUEST MODERATION (M03.7) ----------
+    if (route === '/admin/channel-changes' && method === 'GET') {
+      const { changeRequestModerationService } = await import('@/lib/services/changeRequestModerationService');
+      const status = new URL(request.url).searchParams.get('status') || 'pending';
+      return applyCors(ok({ items: await changeRequestModerationService.listQueue(await resolveActor(request), { status }) }), request);
+    }
+    if (path.length === 3 && path[0] === 'admin' && path[1] === 'channel-changes' && method === 'GET') {
+      const { changeRequestModerationService } = await import('@/lib/services/changeRequestModerationService');
+      return applyCors(ok(await changeRequestModerationService.getDetail(await resolveActor(request), path[2])), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'channel-changes' && path[3] === 'approve' && method === 'POST') {
+      const { changeRequestModerationService } = await import('@/lib/services/changeRequestModerationService');
+      return applyCors(ok(await changeRequestModerationService.approve(await resolveActor(request), path[2], await safeJson(request))), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'channel-changes' && path[3] === 'reject' && method === 'POST') {
+      const { changeRequestModerationService } = await import('@/lib/services/changeRequestModerationService');
+      return applyCors(ok(await changeRequestModerationService.reject(await resolveActor(request), path[2], await safeJson(request))), request);
+    }
+
     // Sample privileged endpoint used by tests: verifies live-role authorization.
     if (route === '/admin/ping' && method === 'GET') {
       const actor = await resolveActor(request);

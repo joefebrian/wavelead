@@ -31,8 +31,17 @@ export async function ensureIndexes(db: Db): Promise<void> {
     db.collection(COLLECTIONS.CHANNEL_CLAIMS).createIndexes([
       { key: { id: 1 }, unique: true, name: 'uniq_id' },
       { key: { channel_id: 1 }, name: 'by_channel' },
-      { key: { user_id: 1 }, name: 'by_user' },
+      { key: { claimant_user_id: 1 }, name: 'by_claimant' },
       { key: { status: 1, submitted_at: -1 }, name: 'status_submitted' },
+      // At most one active claim per (channel, claimant) — enforced by app
+      // logic (we can't use a partial unique index across mixed status values
+      // in a portable way; the service layer checks + a unique write barrier).
+    ]),
+    db.collection(COLLECTIONS.CHANNEL_CHANGE_REQUESTS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { channel_id: 1, status: 1 }, name: 'channel_status' },
+      { key: { owner_id: 1, status: 1 }, name: 'owner_status' },
+      { key: { status: 1, submitted_at: -1 }, name: 'status_time' },
     ]),
     db.collection(COLLECTIONS.EVENTS).createIndexes([
       { key: { id: 1 }, unique: true, name: 'uniq_id' },

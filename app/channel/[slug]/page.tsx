@@ -8,7 +8,9 @@ import { Button } from '@/components/ui/button';
 import { channelService } from '@/lib/services/channelService';
 import { categoryRepo } from '@/lib/repositories/categoryRepo';
 import { countryByCode } from '@/lib/constants/countries';
-import { ShieldCheck, Users, Share2, ArrowUpRight, Sparkles } from 'lucide-react';
+import { resolveActorFromCookies } from '@/lib/auth/rbac';
+import { channelRepo } from '@/lib/repositories/channelRepo';
+import { ShieldCheck, Users, Share2, ArrowUpRight, Sparkles, BadgeCheck, Flag, KeyRound } from 'lucide-react';
 import type { Metadata } from 'next';
 
 interface Params { slug: string; }
@@ -32,15 +34,19 @@ export default async function ChannelProfilePage({ params }: { params: Promise<P
   const channel = await channelService.getPublicBySlug(slug);
   if (!channel) notFound();
 
-  const [category, related] = await Promise.all([
-    channel.category_id ? (await import('@/lib/repositories/channelRepo')).channelRepo.findById(channel.id).then(() => categoryRepo.listActive()).then((cs) => cs.find((c) => c.id === channel.category_id) || null) : Promise.resolve(null),
+  const [category, related, actor, internal] = await Promise.all([
+    channel.category_id ? categoryRepo.listActive().then((cs) => cs.find((c) => c.id === channel.category_id) || null) : Promise.resolve(null),
     channel.category_id
       ? channelService.listPublic({ limit: 6, sort: 'top' }).then((r) => r.items.filter((c) => c.id !== channel.id && c.category_id === channel.category_id).slice(0, 3))
       : Promise.resolve([]),
+    resolveActorFromCookies(),
+    channelRepo.findById(channel.id),
   ]);
 
   const country = countryByCode(channel.country_code);
   const followers = channel.follower_count > 0 ? `${Number(channel.follower_count).toLocaleString()} followers` : 'Followers not verified';
+  const isOwner = !!(actor && internal && internal.owner_id === actor.user.id);
+  const hasVerifiedOwner = !!internal?.owner_id && channel.is_verified;
 
   return (
     <>
@@ -55,7 +61,17 @@ export default async function ChannelProfilePage({ params }: { params: Promise<P
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h1 className="text-2xl md:text-3xl font-bold tracking-tight">{channel.name}</h1>
-                  {channel.is_verified && <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full"><ShieldCheck className="h-3.5 w-3.5" /> Verified</span>}
+                  {channel.is_official ? (
+                    <span
+                      title="Official WaveLead partner. Higher-tier trust designation assigned by WaveLead admins."
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-white bg-gradient-to-r from-indigo-600 to-violet-600 px-2 py-0.5 rounded-full"
+                    ><BadgeCheck className="h-3.5 w-3.5" /> Official</span>
+                  ) : channel.is_verified && (
+                    <span
+                      title="WaveLead has verified ownership or control of this channel listing. This is not WhatsApp's own verification mark."
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full"
+                    ><ShieldCheck className="h-3.5 w-3.5" /> Verified</span>
+                  )}
                   {channel.is_featured && <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full"><Sparkles className="h-3.5 w-3.5" /> Featured</span>}
                 </div>
                 <div className="mt-1 text-sm text-muted-foreground uppercase tracking-wider flex items-center flex-wrap gap-x-2 gap-y-1">
@@ -71,6 +87,21 @@ export default async function ChannelProfilePage({ params }: { params: Promise<P
                     <Button size="lg" className="gap-2">Follow on WhatsApp <ArrowUpRight className="h-4 w-4" /></Button>
                   </a>
                   <Button size="lg" variant="outline" className="gap-2"><Share2 className="h-4 w-4" /> Share</Button>
+
+                  {/* M03 Claim / Ownership CTAs */}
+                  {isOwner ? (
+                    <Link href={`/dashboard/channels/${channel.id}`}>
+                      <Button size="lg" variant="secondary" className="gap-2"><ShieldCheck className="h-4 w-4" /> Manage this channel</Button>
+                    </Link>
+                  ) : hasVerifiedOwner ? (
+                    <Link href={`/report/channel/${channel.slug}`}>
+                      <Button size="lg" variant="ghost" className="gap-2"><Flag className="h-4 w-4" /> Report ownership issue</Button>
+                    </Link>
+                  ) : (
+                    <Link href={`/claim/${channel.slug}`}>
+                      <Button size="lg" variant="secondary" className="gap-2"><KeyRound className="h-4 w-4" /> Claim this channel</Button>
+                    </Link>
+                  )}
                 </div>
                 <p className="mt-3 text-xs text-muted-foreground">Clicking &ldquo;Follow&rdquo; will open the public WhatsApp Channel link in a new tab. WaveLead does not track WhatsApp user identities.</p>
               </div>

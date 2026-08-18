@@ -4,6 +4,7 @@ export const COLLECTIONS = {
   CATEGORIES: 'categories',
   CHANNEL_CATEGORIES: 'channel_categories',
   CHANNEL_CLAIMS: 'channel_claims',
+  CHANNEL_CHANGE_REQUESTS: 'channel_change_requests',
   EVENTS: 'events',
   CHANNEL_DAILY_METRICS: 'channel_daily_metrics',
   BOOKMARKS: 'bookmarks',

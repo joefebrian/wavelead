@@ -79,6 +79,8 @@ export type PublicChannel = Omit<
   | 'rejection_notes'
 > & {
   is_verified: boolean;
+  is_official: boolean;
+  has_owner: boolean;
 };
 
 export interface Category {
@@ -94,19 +96,73 @@ export interface Category {
   updated_at: Date;
 }
 
-export type ClaimStatus = 'pending' | 'verified' | 'rejected' | 'cancelled';
+export type ClaimStatus = 'draft' | 'pending' | 'needs_information' | 'approved' | 'rejected' | 'cancelled';
+
+export type ClaimVerificationMethod = 'domain' | 'social' | 'manual';
+
+export interface ClaimEvidenceItem {
+  evidence_type: 'website' | 'youtube' | 'instagram' | 'tiktok' | 'x' | 'facebook' | 'other';
+  evidence_url: string;
+  note?: string | null;
+}
+
+export type ClaimRejectReason =
+  | 'insufficient_evidence'
+  | 'evidence_mismatch'
+  | 'channel_already_owned'
+  | 'impersonation'
+  | 'duplicate_claim'
+  | 'fraud'
+  | 'invalid_information'
+  | 'other';
 
 export interface ChannelClaim {
   id: string;
   channel_id: string;
-  user_id: string;
-  verification_method: string;
-  verification_data: Record<string, unknown>;
+  claimant_user_id: string;
+  verification_method: ClaimVerificationMethod;
+  claimant_note: string | null;
+  evidence_urls: ClaimEvidenceItem[];
+  evidence_metadata: Record<string, unknown>;
+  claimant_email: string;
+  website_domain: string | null;
+  email_domain: string | null;
+  domain_match: boolean;
   status: ClaimStatus;
-  admin_notes: string | null;
+  moderator_notes: string | null;
+  request_more_info_message: string | null;
+  reject_reason: ClaimRejectReason | null;
   submitted_at: Date;
   reviewed_at: Date | null;
   reviewed_by: string | null;
+  approved_at: Date | null;
+  rejected_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+// Public-facing claim (never expose moderator_notes / evidence internals to
+// anyone other than the claimant themself or a moderator).
+export type PublicClaimForClaimant = Omit<ChannelClaim, 'moderator_notes'>;
+export type PublicClaimSummary = Pick<ChannelClaim,
+  'id' | 'channel_id' | 'status' | 'verification_method' | 'submitted_at' |
+  'reviewed_at' | 'approved_at' | 'rejected_at' | 'request_more_info_message'>;
+
+// Sensitive change-request workflow (M03.7).
+export type ChangeRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+export interface ChannelChangeRequest {
+  id: string;
+  channel_id: string;
+  owner_id: string;
+  changes: Record<string, unknown>;   // e.g. { whatsapp_url, name, website_url, category_slug, country_code }
+  status: ChangeRequestStatus;
+  submitted_at: Date;
+  reviewed_at: Date | null;
+  reviewed_by: string | null;
+  moderator_notes: string | null;
+  created_at: Date;
+  updated_at: Date;
 }
 
 export type EventType =

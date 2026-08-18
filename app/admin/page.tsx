@@ -6,7 +6,7 @@ import Footer from '@/components/layout/Footer';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
 import { channelRepo } from '@/lib/repositories/channelRepo';
 import { Button } from '@/components/ui/button';
-import { Inbox, LayoutList, Users, Shield, Trophy, ClipboardCheck } from 'lucide-react';
+import { Inbox, LayoutList, Users, Shield, Trophy, ClipboardCheck, KeyRound, ShieldAlert } from 'lucide-react';
 
 export const metadata: Metadata = { title: 'Admin', robots: { index: false, follow: false } };
 
@@ -29,19 +29,21 @@ export default async function AdminPage() {
     );
   }
 
-  const [pendingCount, approvedCount, rejectedCount] = await Promise.all([
+  const [pendingCount, approvedCount, rejectedCount, pendingClaims, pendingChanges] = await Promise.all([
     channelRepo.count({ status: 'pending_review' }),
     channelRepo.count({ status: 'approved' }),
     channelRepo.count({ status: 'rejected' }),
+    (await import('@/lib/db/mongo')).getCollection((await import('@/lib/db/collections')).COLLECTIONS.CHANNEL_CLAIMS).then((c) => c.countDocuments({ status: 'pending' })),
+    (await import('@/lib/db/mongo')).getCollection((await import('@/lib/db/collections')).COLLECTIONS.CHANNEL_CHANGE_REQUESTS).then((c) => c.countDocuments({ status: 'pending' })),
   ]);
 
   const cards: { title: string; href: string; blurb: string; icon: React.ReactNode; badge?: string }[] = [
-    { title: 'Moderation Queue', href: '/admin/channels?status=pending_review', blurb: 'Review, approve or reject new submissions.', icon: <Inbox className="h-5 w-5" />, badge: pendingCount > 0 ? `${pendingCount} pending` : undefined },
+    { title: 'Moderation Queue', href: '/admin/channels?status=pending_review', blurb: 'Review, approve or reject new channel submissions.', icon: <Inbox className="h-5 w-5" />, badge: pendingCount > 0 ? `${pendingCount} pending` : undefined },
+    { title: 'Ownership Claims', href: '/admin/claims?status=pending', blurb: 'Approve, reject or request more info on claims.', icon: <KeyRound className="h-5 w-5" />, badge: pendingClaims > 0 ? `${pendingClaims} pending` : undefined },
+    { title: 'Sensitive Changes', href: '/admin/channel-changes?status=pending', blurb: 'Approve identity/URL changes from verified owners.', icon: <ShieldAlert className="h-5 w-5" />, badge: pendingChanges > 0 ? `${pendingChanges} pending` : undefined },
+    { title: 'Homepage Curation', href: '/admin/homepage', blurb: 'Manage Popular / New & Noteworthy / Featured slots.', icon: <LayoutList className="h-5 w-5" /> },
     { title: 'Approved channels', href: '/admin/channels?status=approved', blurb: 'Browse the current public catalogue.', icon: <ClipboardCheck className="h-5 w-5" />, badge: `${approvedCount} live` },
     { title: 'Rejected channels', href: '/admin/channels?status=rejected', blurb: 'Audit past rejection decisions.', icon: <Shield className="h-5 w-5" />, badge: rejectedCount > 0 ? `${rejectedCount}` : undefined },
-    { title: 'Homepage Curation', href: '/admin/homepage', blurb: 'Manage Popular / New & Noteworthy / Featured slots.', icon: <LayoutList className="h-5 w-5" /> },
-    { title: 'Top Channels', href: '/top', blurb: 'Algorithmic ranking preview by country.', icon: <Trophy className="h-5 w-5" /> },
-    { title: 'Users', href: '#', blurb: 'Coming in a later milestone.', icon: <Users className="h-5 w-5" /> },
   ];
 
   return (

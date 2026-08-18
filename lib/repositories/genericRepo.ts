@@ -32,9 +32,10 @@ function makeRepo<T extends Document & { id: string }>(collectionName: string) {
   };
 }
 
-import type { ChannelClaim, EventRecord, Report, AuditLog, DailyMetric } from '@/lib/types';
+import type { ChannelClaim, EventRecord, Report, AuditLog, DailyMetric, ChannelChangeRequest } from '@/lib/types';
 
 export const claimRepo = makeRepo<ChannelClaim>(COLLECTIONS.CHANNEL_CLAIMS);
+export const changeRequestRepo = makeRepo<ChannelChangeRequest>(COLLECTIONS.CHANNEL_CHANGE_REQUESTS);
 export const eventRepo = makeRepo<EventRecord>(COLLECTIONS.EVENTS);
 export const reportRepo = makeRepo<Report>(COLLECTIONS.REPORTS);
 export const auditRepo = makeRepo<AuditLog>(COLLECTIONS.AUDIT_LOGS);

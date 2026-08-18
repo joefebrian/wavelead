@@ -8,6 +8,8 @@ export default defineConfig({
     hookTimeout: 30_000,
     setupFiles: ['tests/setup.ts'],
     globals: false,
+    // Run one test file at a time so shared-DB tests don't step on each other.
+    fileParallelism: false,
     // Ensure repositories/service imports work via @/ alias.
     alias: { '@/': new URL('./', import.meta.url).pathname },
   },
