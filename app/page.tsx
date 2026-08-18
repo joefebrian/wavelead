@@ -149,11 +149,17 @@ export default async function HomePage() {
           />
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {EDITORIAL_COLLECTIONS.map((col) => (
-              <Link key={col.title} href={col.href} className={`group relative overflow-hidden rounded-xl bg-gradient-to-br ${col.gradient} p-5 text-white min-h-[130px] flex flex-col justify-end`}>
-                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition" />
+              <Link
+                key={col.title}
+                href={col.href}
+                className={`group relative overflow-hidden rounded-xl bg-gradient-to-br ${col.gradient} p-5 text-white min-h-[130px] flex flex-col justify-end shadow-md ring-1 ring-white/10 hover:shadow-xl hover:-translate-y-0.5 transition`}
+              >
+                {/* Bottom-left gradient overlay so the label always has contrast even before hover */}
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/30 via-black/10 to-transparent" aria-hidden />
+                <div className="pointer-events-none absolute inset-0 bg-black/0 group-hover:bg-black/10 transition" aria-hidden />
                 <div className="relative">
-                  <div className="font-semibold text-lg leading-tight">{col.title}</div>
-                  <div className="text-sm text-white/80 mt-1">{col.description}</div>
+                  <div className="font-semibold text-lg leading-tight drop-shadow-sm">{col.title}</div>
+                  <div className="text-sm text-white/90 mt-1 drop-shadow-sm">{col.description}</div>
                 </div>
               </Link>
             ))}

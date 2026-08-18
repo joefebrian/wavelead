@@ -281,6 +281,7 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
         from: sp.get('from') || undefined,
         to: sp.get('to') || undefined,
         limit: sp.get('limit') ? parseInt(sp.get('limit')!, 10) : undefined,
+        compare: sp.get('compare') || undefined,
       };
       const channelId = path[2];
       const sub = path[4];
@@ -289,6 +290,8 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       if (sub === 'sources') return applyCors(ok(await analyticsService.sources(actor, channelId, q)), request);
       if (sub === 'discovery') return applyCors(ok(await analyticsService.discovery(actor, channelId, q)), request);
       if (sub === 'geo-device') return applyCors(ok(await analyticsService.geoDevice(actor, channelId, q)), request);
+      if (sub === 'completeness') return applyCors(ok(await analyticsService.profileCompleteness(actor, channelId)), request);
+      if (sub === 'recommendations') return applyCors(ok(await analyticsService.growthRecommendations(actor, channelId, q)), request);
       if (sub === 'export') {
         const { analyticsCsvService } = await import('@/lib/services/analyticsCsvService');
         const kind = (sp.get('kind') || 'overview') as 'overview' | 'acquisition' | 'search-terms';

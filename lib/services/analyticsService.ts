@@ -253,24 +253,41 @@ function isStale(state: RollupState | null, dateKey: string, todayKey: string, y
 async function acquireLock(channelId: string, dateKey: string, now: Date): Promise<boolean> {
   const coll = await getCollection<RollupState>(COLLECTIONS.ROLLUP_STATE);
   const lockUntil = new Date(now.getTime() + LOCK_TTL_MS);
-  const res = await coll.updateOne(
-    {
-      channel_id: channelId,
-      date: dateKey,
-      $or: [{ locked_until: null }, { locked_until: { $lte: now } }],
-    },
-    {
-      $set: { locked_until: lockUntil, updated_at: now },
-      $setOnInsert: {
+  try {
+    // Case A: doc exists and is unlocked/expired → grab the lock.
+    const existing = await coll.findOneAndUpdate(
+      {
+        channel_id: channelId,
+        date: dateKey,
+        $or: [{ locked_until: null }, { locked_until: { $lte: now } }],
+      },
+      { $set: { locked_until: lockUntil, updated_at: now } },
+      { returnDocument: 'after' },
+    );
+    if (existing) return true;
+    // Case B: doc doesn't exist yet → insert. Duplicate key = race lost.
+    try {
+      await coll.insertOne({
         id: uuidv4(),
         channel_id: channelId,
         date: dateKey,
         last_aggregated_at: new Date(0),
-      },
-    },
-    { upsert: true },
-  );
-  return res.modifiedCount > 0 || res.upsertedCount > 0;
+        locked_until: lockUntil,
+        updated_at: now,
+      } as RollupState);
+      return true;
+    } catch (err) {
+      const anyErr = err as { code?: number };
+      if (anyErr?.code === 11000) return false; // someone else won
+      throw err;
+    }
+  } catch (err) {
+    // If doc exists but is currently locked (findOneAndUpdate returned null),
+    // we fall through to "lock not acquired" without an insert attempt above.
+    const anyErr = err as { code?: number };
+    if (anyErr?.code === 11000) return false;
+    throw err;
+  }
 }
 
 async function releaseLock(channelId: string, dateKey: string, lastAggregatedAt: Date): Promise<void> {
@@ -466,8 +483,71 @@ export interface OverviewResult {
     follow_clicks: number;
     unique_follow_intents: number;
   };
+  previous?: {
+    window: DateRange;
+    kpis: OverviewResult['kpis'];
+    has_data: boolean;
+    deltas: {
+      discovery_impressions: number | null;
+      search_impressions: number | null;
+      profile_views: number | null;
+      unique_profile_views: number | null;
+      follow_clicks: number | null;
+      unique_follow_intents: number | null;
+      discovery_profile_ctr: number | null;
+      profile_follow_ctr: number | null;
+    };
+  };
   is_empty: boolean;
   last_aggregated_at: string | null;
+}
+
+function pctChange(current: number, previous: number): number | null {
+  if (previous === 0) return current === 0 ? 0 : null; // undefined delta when previous is zero
+  return Math.round(((current - previous) / previous) * 10000) / 100;
+}
+
+function ctrChange(current: number | null, previous: number | null): number | null {
+  if (current === null || previous === null) return null;
+  return Math.round((current - previous) * 100) / 100; // absolute percentage-point diff
+}
+
+function previousRangeOf(range: DateRange): DateRange {
+  const days = enumerateDateKeys(range.fromKey, range.toKey).length;
+  const to = new Date(parseUtcDate(range.fromKey).getTime() - 24 * 3600_000);
+  const from = new Date(to.getTime() - (days - 1) * 24 * 3600_000);
+  return { fromKey: toUtcDateKey(from), toKey: toUtcDateKey(to), days };
+}
+
+async function computeOverviewForRange(channelId: string, range: DateRange): Promise<{ kpis: OverviewResult['kpis']; funnel: OverviewResult['funnel']; is_empty: boolean; last_aggregated_at: string | null; }> {
+  await ensureRollups(channelId, range);
+  const daily = await loadDaily(channelId, range);
+  const sum = (k: keyof DailyMetric) => daily.reduce((a, d) => a + (Number(d[k] as number) || 0), 0);
+  const discovery_impressions = sum('discovery_impressions');
+  const search_impressions = sum('search_impressions');
+  const profile_views = sum('profile_views');
+  const unique_profile_views = sum('unique_profile_views');
+  const follow_clicks = sum('follow_clicks');
+  const unique_follow_intents = sum('unique_follow_intents');
+  const totalReach = discovery_impressions + search_impressions;
+  const kpis = {
+    discovery_impressions, search_impressions,
+    profile_views, unique_profile_views,
+    follow_clicks, unique_follow_intents,
+    discovery_profile_ctr: pctPoint(profile_views, totalReach),
+    profile_follow_ctr: pctPoint(unique_follow_intents, unique_profile_views),
+  };
+  const funnel = {
+    discovery_impressions: totalReach,
+    profile_views: unique_profile_views || profile_views,
+    follow_clicks,
+    unique_follow_intents,
+  };
+  const is_empty = totalReach === 0 && profile_views === 0 && follow_clicks === 0;
+  const latest = daily
+    .map((d) => (d.last_aggregated_at && new Date(d.last_aggregated_at).getTime()) || 0)
+    .reduce((a, b) => Math.max(a, b), 0);
+  return { kpis, funnel, is_empty, last_aggregated_at: latest > 0 ? new Date(latest).toISOString() : null };
 }
 
 export const analyticsService = {
@@ -475,42 +555,37 @@ export const analyticsService = {
   resolveRange,
   toUtcDateKey,
 
-  async overview(actor: Actor | null, channelId: string, input: { window?: string; from?: string; to?: string } = {}): Promise<OverviewResult> {
+  async overview(actor: Actor | null, channelId: string, input: { window?: string; from?: string; to?: string; compare?: string } = {}): Promise<OverviewResult> {
     await requireChannelOwnerOrAdmin(actor, channelId);
     const range = resolveRange(input);
-    await ensureRollups(channelId, range);
-    const daily = await loadDaily(channelId, range);
-    const sum = (k: keyof DailyMetric) => daily.reduce((a, d) => a + (Number(d[k] as number) || 0), 0);
-
-    const discovery_impressions = sum('discovery_impressions');
-    const search_impressions = sum('search_impressions');
-    const profile_views = sum('profile_views');
-    const unique_profile_views = sum('unique_profile_views');
-    const follow_clicks = sum('follow_clicks');
-    const unique_follow_intents = sum('unique_follow_intents');
-    const totalReach = discovery_impressions + search_impressions;
-    const kpis = {
-      discovery_impressions, search_impressions,
-      profile_views, unique_profile_views,
-      follow_clicks, unique_follow_intents,
-      discovery_profile_ctr: pctPoint(profile_views, totalReach),
-      profile_follow_ctr: pctPoint(unique_follow_intents, unique_profile_views),
+    const current = await computeOverviewForRange(channelId, range);
+    const base: OverviewResult = {
+      window: range,
+      kpis: current.kpis,
+      funnel: current.funnel,
+      is_empty: current.is_empty,
+      last_aggregated_at: current.last_aggregated_at,
     };
-    const funnel = {
-      discovery_impressions: totalReach,
-      profile_views: unique_profile_views || profile_views,
-      follow_clicks,
-      unique_follow_intents,
-    };
-    const isEmpty = totalReach === 0 && profile_views === 0 && follow_clicks === 0;
-    const latest = daily
-      .map((d) => (d.last_aggregated_at && new Date(d.last_aggregated_at).getTime()) || 0)
-      .reduce((a, b) => Math.max(a, b), 0);
-    return {
-      window: range, kpis, funnel,
-      is_empty: isEmpty,
-      last_aggregated_at: latest > 0 ? new Date(latest).toISOString() : null,
-    };
+    if (String(input.compare || '').toLowerCase() === 'previous') {
+      const prevRange = previousRangeOf(range);
+      const previous = await computeOverviewForRange(channelId, prevRange);
+      base.previous = {
+        window: prevRange,
+        kpis: previous.kpis,
+        has_data: !previous.is_empty,
+        deltas: {
+          discovery_impressions: pctChange(current.kpis.discovery_impressions, previous.kpis.discovery_impressions),
+          search_impressions: pctChange(current.kpis.search_impressions, previous.kpis.search_impressions),
+          profile_views: pctChange(current.kpis.profile_views, previous.kpis.profile_views),
+          unique_profile_views: pctChange(current.kpis.unique_profile_views, previous.kpis.unique_profile_views),
+          follow_clicks: pctChange(current.kpis.follow_clicks, previous.kpis.follow_clicks),
+          unique_follow_intents: pctChange(current.kpis.unique_follow_intents, previous.kpis.unique_follow_intents),
+          discovery_profile_ctr: ctrChange(current.kpis.discovery_profile_ctr, previous.kpis.discovery_profile_ctr),
+          profile_follow_ctr: ctrChange(current.kpis.profile_follow_ctr, previous.kpis.profile_follow_ctr),
+        },
+      };
+    }
+    return base;
   },
 
   async timeseries(actor: Actor | null, channelId: string, input: { window?: string; from?: string; to?: string } = {}) {
@@ -660,6 +735,85 @@ export const analyticsService = {
     const devices = [...deviceMap.entries()].map(([device_type, v]) => ({ device_type, clicks: v.clicks, profile_views: v.profile_views })).sort((a, b) => b.clicks - a.clicks);
     const is_empty = countries.length === 0 && devices.length === 0;
     return { window: range, countries, devices, is_empty };
+  },
+
+  async profileCompleteness(actor: Actor | null, channelId: string) {
+    const channel = await requireChannelOwnerOrAdmin(actor, channelId);
+    // Deterministic weighted checklist. Weights sum to 100.
+    const checks = [
+      { key: 'logo',              label: 'Logo image',              weight: 12, done: !!channel.logo_url },
+      { key: 'short_description', label: 'Short description',       weight: 15, done: !!(channel.short_description && channel.short_description.length >= 30) },
+      { key: 'description',       label: 'Full description',        weight: 15, done: !!(channel.description && channel.description.length >= 80) },
+      { key: 'category',          label: 'Category set',            weight: 12, done: !!channel.category_id },
+      { key: 'country',           label: 'Country set',             weight: 8,  done: !!channel.country_code },
+      { key: 'language',          label: 'Primary language set',    weight: 8,  done: !!channel.primary_language },
+      { key: 'website',           label: 'Website linked',          weight: 10, done: !!channel.website_url },
+      { key: 'cover',             label: 'Cover image',             weight: 8,  done: !!channel.cover_url },
+      { key: 'verified',          label: 'Ownership verified',      weight: 12, done: channel.verification_status === 'verified' || channel.verification_status === 'official' },
+    ];
+    const totalWeight = checks.reduce((a, c) => a + c.weight, 0);
+    const earned = checks.reduce((a, c) => a + (c.done ? c.weight : 0), 0);
+    const score = Math.round((earned / totalWeight) * 100);
+    return {
+      score,
+      total: totalWeight,
+      checks: checks.map(({ key, label, weight, done }) => ({ key, label, weight, done })),
+    };
+  },
+
+  async growthRecommendations(actor: Actor | null, channelId: string, input: { window?: string; from?: string; to?: string } = {}) {
+    const channel = await requireChannelOwnerOrAdmin(actor, channelId);
+    const range = resolveRange({ window: input.window || '30d', from: input.from, to: input.to });
+    const [ov, sources, discovery] = await Promise.all([
+      computeOverviewForRange(channelId, range),
+      analyticsService.sources(actor, channelId, { window: input.window || '30d', from: input.from, to: input.to }),
+      analyticsService.discovery(actor, channelId, { window: input.window || '30d', from: input.from, to: input.to }),
+    ]);
+    const recs: Array<{ id: string; severity: 'info' | 'warn' | 'success'; title: string; body: string; }> = [];
+    // Rule 1 — missing short description
+    if (!channel.short_description || channel.short_description.length < 30) {
+      recs.push({ id: 'short_desc', severity: 'warn', title: 'Write a punchy short description', body: 'A 30–160 character short description helps you rank higher in WaveLead Search and appear more clearly in discovery cards.' });
+    }
+    // Rule 2 — missing website
+    if (!channel.website_url) {
+      recs.push({ id: 'website', severity: 'info', title: 'Add a website link', body: 'Owners with a linked website unlock the domain verification path and appear more trustworthy to viewers.' });
+    }
+    // Rule 3 — missing logo
+    if (!channel.logo_url) {
+      recs.push({ id: 'logo', severity: 'warn', title: 'Upload a logo', body: 'Channels with logos convert Follow clicks noticeably better than placeholder avatars.' });
+    }
+    // Rule 4 — low profile-to-follow CTR when we have enough views
+    if (ov.kpis.unique_profile_views >= 20 && (ov.kpis.profile_follow_ctr ?? 0) < 10) {
+      recs.push({ id: 'low_follow_ctr', severity: 'warn', title: 'Profile → Follow CTR is low', body: `Only ${ov.kpis.profile_follow_ctr?.toFixed(1) ?? '0'}% of unique profile visitors follow. Tightening the short description and adding a value-forward first line typically lifts this.` });
+    }
+    // Rule 5 — strong search performance
+    const searchRow = sources.items.find((s) => s.source === 'search');
+    if (searchRow && searchRow.unique_follow_intents >= 3 && searchRow.unique_follow_intents === Math.max(...sources.items.map((s) => s.unique_follow_intents))) {
+      recs.push({ id: 'search_strong', severity: 'success', title: 'WaveLead Search is your top acquisition source', body: 'Add more descriptive keywords in your description and pick the most specific category available to keep search momentum.' });
+    }
+    // Rule 6 — rising unique follow intent (compare to previous)
+    const prevRange = previousRangeOf(range);
+    const prev = await computeOverviewForRange(channelId, prevRange);
+    if (prev.kpis.unique_follow_intents > 0 && ov.kpis.unique_follow_intents > prev.kpis.unique_follow_intents) {
+      const growth = pctChange(ov.kpis.unique_follow_intents, prev.kpis.unique_follow_intents);
+      if (growth !== null && growth >= 15) {
+        recs.push({ id: 'ufi_rising', severity: 'success', title: `Unique Follow Intent up ${growth}% vs previous period`, body: 'Momentum is real. Consider requesting a Homepage curation slot to compound this while it lasts.' });
+      }
+    }
+    // Rule 7 — discovery signal present but low CTR
+    if (ov.kpis.discovery_impressions + ov.kpis.search_impressions >= 100 && (ov.kpis.discovery_profile_ctr ?? 0) < 3) {
+      recs.push({ id: 'low_discovery_ctr', severity: 'warn', title: 'Discovery → Profile CTR is low', body: 'You are getting impressions but few clicks. A stronger logo and a tighter first-line hook in your short description usually help this.' });
+    }
+    // Rule 8 — top search term
+    if (discovery.items.length > 0) {
+      const top = discovery.items[0];
+      recs.push({ id: 'top_search_term', severity: 'info', title: `Your top search term is "${top.search_query}"`, body: `That single query drove ${top.impressions} impressions this period. Make sure it appears naturally in your short and full description.` });
+    }
+    // Rule 9 — empty state
+    if (ov.is_empty && recs.length === 0) {
+      recs.push({ id: 'empty', severity: 'info', title: 'No analytics yet', body: 'Your dashboard will populate as visitors discover your channel through Search, Homepage, and Category pages.' });
+    }
+    return { window: range, recommendations: recs };
   },
 
   async triggerRollup(actor: Actor | null, params: { channel_id?: string; date_from?: string; date_to?: string; force?: boolean; dry_run?: boolean }) {

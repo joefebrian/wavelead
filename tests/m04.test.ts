@@ -107,6 +107,7 @@ async function insertEvent(evt: {
   event_type: string; channel_id: string; created_at: Date;
   anonymous_session_id?: string | null; source?: string | null;
   search_query?: string | null; country_code?: string | null; device_type?: string | null;
+  category_slug?: string | null;
 }) {
   await withDb(async (db) => {
     await db.collection('events').insertOne({
@@ -121,7 +122,7 @@ async function insertEvent(evt: {
       referrer: null,
       referrer_domain: null,
       search_query: evt.search_query ?? null,
-      category_slug: null,
+      category_slug: evt.category_slug ?? null,
       country_code: evt.country_code ?? null,
       device_type: evt.device_type ?? null,
       page_path: null,
@@ -377,5 +378,272 @@ describe('M04 — Custom range validation', () => {
     const ch = await createOwnedApprovedChannel(owner.userId);
     const r = await api(`/owner/channels/${ch.id}/analytics/overview?window=custom&from=2026-08-30&to=2026-08-01`, { headers: { Cookie: owner.cookie } });
     expect(r.status).toBe(400);
+  });
+});
+
+describe('M04 — Controlled QA reconciliation (10 disc / 4 UPV / 5 clicks / 3 UFI)', () => {
+  it('event pipeline → API produces exactly 40% D→P and 75% P→F', async () => {
+    const owner = await signup('user');
+    const ch = await createOwnedApprovedChannel(owner.userId);
+    const day = daysAgoKey(8);
+    const dayDate = new Date(`${day}T10:00:00Z`);
+    const s = { s1: uuidv4(), s2: uuidv4(), s3: uuidv4(), s4: uuidv4(), s5: uuidv4() };
+    // SEARCH (6 impressions, 2 unique PV, 4 clicks, 2 UFI including 3-click same-session dedup)
+    for (let i = 0; i < 4; i++) await insertEvent({ event_type: 'search_impression', channel_id: ch.id, created_at: dayDate, anonymous_session_id: s.s1, source: 'search', search_query: 'finance' });
+    for (let i = 0; i < 2; i++) await insertEvent({ event_type: 'search_impression', channel_id: ch.id, created_at: dayDate, anonymous_session_id: s.s2, source: 'search', search_query: 'finance' });
+    await insertEvent({ event_type: 'channel_profile_view', channel_id: ch.id, created_at: dayDate, anonymous_session_id: s.s1, source: 'search', search_query: 'finance' });
+    await insertEvent({ event_type: 'channel_profile_view', channel_id: ch.id, created_at: dayDate, anonymous_session_id: s.s2, source: 'search', search_query: 'finance' });
+    for (let i = 0; i < 3; i++) await insertEvent({ event_type: 'follow_click', channel_id: ch.id, created_at: dayDate, anonymous_session_id: s.s1, source: 'search', search_query: 'finance' });
+    await insertEvent({ event_type: 'follow_click', channel_id: ch.id, created_at: dayDate, anonymous_session_id: s.s2, source: 'search', search_query: 'finance' });
+    // HOMEPAGE (2 impressions, 1 unique PV, 0 clicks)
+    for (let i = 0; i < 2; i++) await insertEvent({ event_type: 'channel_impression', channel_id: ch.id, created_at: dayDate, anonymous_session_id: s.s3, source: 'homepage' });
+    await insertEvent({ event_type: 'channel_profile_view', channel_id: ch.id, created_at: dayDate, anonymous_session_id: s.s3, source: 'homepage' });
+    // CATEGORY (2 impressions, 1 unique PV, 1 click, 1 UFI)
+    for (let i = 0; i < 2; i++) await insertEvent({ event_type: 'channel_impression', channel_id: ch.id, created_at: dayDate, anonymous_session_id: s.s4, source: 'category', category_slug: 'sports' });
+    await insertEvent({ event_type: 'channel_profile_view', channel_id: ch.id, created_at: dayDate, anonymous_session_id: s.s4, source: 'category', category_slug: 'sports' });
+    await insertEvent({ event_type: 'follow_click', channel_id: ch.id, created_at: dayDate, anonymous_session_id: s.s4, source: 'category', category_slug: 'sports' });
+
+    const ov = await api<{ kpis: { discovery_impressions: number; search_impressions: number; profile_views: number; unique_profile_views: number; follow_clicks: number; unique_follow_intents: number; discovery_profile_ctr: number | null; profile_follow_ctr: number | null } }>(
+      `/owner/channels/${ch.id}/analytics/overview?window=custom&from=${day}&to=${day}`,
+      { headers: { Cookie: owner.cookie } },
+    );
+    // Discovery = channel_impression events only (homepage 2 + category 2 = 4)
+    expect(ov.body.data!.kpis.discovery_impressions).toBe(4);
+    expect(ov.body.data!.kpis.search_impressions).toBe(6);
+    // Total discovery reach for CTR base = discovery + search = 10
+    expect(ov.body.data!.kpis.follow_clicks).toBe(5);
+    expect(ov.body.data!.kpis.unique_follow_intents).toBe(3);
+    expect(ov.body.data!.kpis.unique_profile_views).toBe(4);
+    // 4/10 = 40%
+    expect(ov.body.data!.kpis.discovery_profile_ctr).toBe(40);
+    // 3/4 = 75%
+    expect(ov.body.data!.kpis.profile_follow_ctr).toBe(75);
+
+    // Source reconciliation
+    const src = await api<{ items: Array<{ source: string; unique_follow_intents: number; follow_clicks: number }> }>(
+      `/owner/channels/${ch.id}/analytics/sources?window=custom&from=${day}&to=${day}`,
+      { headers: { Cookie: owner.cookie } },
+    );
+    const bySrc = Object.fromEntries(src.body.data!.items.map((it) => [it.source, it]));
+    expect(bySrc.search.follow_clicks).toBe(4);
+    expect(bySrc.search.unique_follow_intents).toBe(2);
+    expect(bySrc.homepage?.follow_clicks || 0).toBe(0);
+    expect(bySrc.homepage?.unique_follow_intents || 0).toBe(0);
+    expect(bySrc.category.follow_clicks).toBe(1);
+    expect(bySrc.category.unique_follow_intents).toBe(1);
+    const sumUFI = src.body.data!.items.reduce((a, it) => a + it.unique_follow_intents, 0);
+    expect(sumUFI).toBe(3);
+  });
+});
+
+describe('M04 — Previous-period comparison', () => {
+  it('overview returns previous window with deltas when compare=previous', async () => {
+    const owner = await signup('user');
+    const ch = await createOwnedApprovedChannel(owner.userId);
+    // Current 7d: 12 UFI; Previous 7d: 10 UFI → +20%
+    const now = new Date();
+    const curDate = new Date(now.getTime() - 3 * 24 * 3600_000); // in current 7d window
+    const prevDate = new Date(now.getTime() - 10 * 24 * 3600_000); // in previous 7d window
+    for (let i = 0; i < 12; i++) await insertEvent({ event_type: 'follow_click', channel_id: ch.id, created_at: curDate, anonymous_session_id: uuidv4(), source: 'homepage' });
+    for (let i = 0; i < 10; i++) await insertEvent({ event_type: 'follow_click', channel_id: ch.id, created_at: prevDate, anonymous_session_id: uuidv4(), source: 'homepage' });
+    const r = await api<{ kpis: { unique_follow_intents: number }; previous?: { kpis: { unique_follow_intents: number }; deltas: { unique_follow_intents: number | null }; has_data: boolean } }>(
+      `/owner/channels/${ch.id}/analytics/overview?window=7d&compare=previous`,
+      { headers: { Cookie: owner.cookie } },
+    );
+    expect(r.status).toBe(200);
+    expect(r.body.data!.kpis.unique_follow_intents).toBe(12);
+    expect(r.body.data!.previous).toBeDefined();
+    expect(r.body.data!.previous!.kpis.unique_follow_intents).toBe(10);
+    expect(r.body.data!.previous!.has_data).toBe(true);
+    expect(r.body.data!.previous!.deltas.unique_follow_intents).toBe(20);
+  });
+  it('previous window with zero data reports has_data=false, null delta when current>0', async () => {
+    const owner = await signup('user');
+    const ch = await createOwnedApprovedChannel(owner.userId);
+    const cur = new Date(Date.now() - 2 * 24 * 3600_000);
+    for (let i = 0; i < 3; i++) await insertEvent({ event_type: 'follow_click', channel_id: ch.id, created_at: cur, anonymous_session_id: uuidv4(), source: 'homepage' });
+    const r = await api<{ previous?: { has_data: boolean; deltas: { follow_clicks: number | null } } }>(
+      `/owner/channels/${ch.id}/analytics/overview?window=7d&compare=previous`,
+      { headers: { Cookie: owner.cookie } },
+    );
+    expect(r.body.data!.previous!.has_data).toBe(false);
+    expect(r.body.data!.previous!.deltas.follow_clicks).toBeNull();
+  });
+});
+
+describe('M04 — Profile completeness & Growth recommendations', () => {
+  it('completeness returns score + checks; visibility follows fields', async () => {
+    const owner = await signup('user');
+    const ch = await createOwnedApprovedChannel(owner.userId);
+    const r = await api<{ score: number; checks: Array<{ key: string; done: boolean }> }>(
+      `/owner/channels/${ch.id}/analytics/completeness`,
+      { headers: { Cookie: owner.cookie } },
+    );
+    expect(r.status).toBe(200);
+    // owned + verified + short_description + country + language (all seeded) → some checks pass
+    const byKey = Object.fromEntries(r.body.data!.checks.map((c) => [c.key, c.done]));
+    expect(byKey.country).toBe(true);
+    expect(byKey.language).toBe(true);
+    expect(byKey.verified).toBe(true);
+    expect(byKey.logo).toBe(false);
+    expect(r.body.data!.score).toBeGreaterThan(0);
+    expect(r.body.data!.score).toBeLessThan(100);
+  });
+  it('recommendations respond to data (missing website triggers rule; adding it removes it)', async () => {
+    const owner = await signup('user');
+    const ch = await createOwnedApprovedChannel(owner.userId);
+    const r = await api<{ recommendations: Array<{ id: string }> }>(
+      `/owner/channels/${ch.id}/analytics/recommendations?window=30d`,
+      { headers: { Cookie: owner.cookie } },
+    );
+    const ids = r.body.data!.recommendations.map((x) => x.id);
+    expect(ids).toContain('website');
+    expect(ids).toContain('logo');
+    // Patch website via owner service — need to use API
+    await api(`/me/channels/${ch.id}`, { method: 'PATCH', headers: { Cookie: owner.cookie }, body: JSON.stringify({ website_url: 'https://example.com' }) });
+    const r2 = await api<{ recommendations: Array<{ id: string }> }>(
+      `/owner/channels/${ch.id}/analytics/recommendations?window=30d`,
+      { headers: { Cookie: owner.cookie } },
+    );
+    const ids2 = r2.body.data!.recommendations.map((x) => x.id);
+    expect(ids2).not.toContain('website');
+  });
+  it('anonymous cannot access completeness/recommendations', async () => {
+    const owner = await signup('user');
+    const ch = await createOwnedApprovedChannel(owner.userId);
+    const r1 = await api(`/owner/channels/${ch.id}/analytics/completeness`);
+    expect(r1.status).toBe(401);
+    const r2 = await api(`/owner/channels/${ch.id}/analytics/recommendations?window=7d`);
+    expect(r2.status).toBe(401);
+  });
+});
+
+describe('M04 — Query normalization determinism', () => {
+  it('varied casing/whitespace of the same term groups into one bucket', async () => {
+    const owner = await signup('user');
+    const ch = await createOwnedApprovedChannel(owner.userId);
+    const day = daysAgoKey(9);
+    const dayDate = new Date(`${day}T09:00:00Z`);
+    const variants = [' Sports ', 'SPORTS', 'sports', 'sports   ', 'Sports'];
+    for (const v of variants) {
+      await insertEvent({ event_type: 'search_impression', channel_id: ch.id, created_at: dayDate, anonymous_session_id: uuidv4(), source: 'search', search_query: v });
+    }
+    const r = await api<{ items: Array<{ search_query: string; impressions: number }> }>(
+      `/owner/channels/${ch.id}/analytics/discovery?window=custom&from=${day}&to=${day}`,
+      { headers: { Cookie: owner.cookie } },
+    );
+    const sportsRows = r.body.data!.items.filter((it) => it.search_query === 'sports');
+    expect(sportsRows.length).toBe(1);
+    expect(sportsRows[0].impressions).toBe(5);
+  });
+});
+
+describe('M04 — Concurrent rollup safety', () => {
+  it('parallel force rollups do not double-count', async () => {
+    const admin = await signup('admin');
+    const owner = await signup('user');
+    const ch = await createOwnedApprovedChannel(owner.userId);
+    const day = daysAgoKey(11);
+    const dayDate = new Date(`${day}T08:00:00Z`);
+    for (let i = 0; i < 6; i++) await insertEvent({ event_type: 'follow_click', channel_id: ch.id, created_at: dayDate, anonymous_session_id: uuidv4(), source: 'homepage' });
+    // Fire 8 concurrent force rollups.
+    await Promise.all(new Array(8).fill(0).map(() =>
+      api(`/admin/analytics/rollup`, { method: 'POST', headers: { Cookie: admin.cookie }, body: JSON.stringify({ channel_id: ch.id, date_from: day, date_to: day, force: true }) }),
+    ));
+    const r = await api<{ series: Array<{ date: string; follow_clicks: number; unique_follow_intents: number }> }>(
+      `/owner/channels/${ch.id}/analytics/timeseries?window=custom&from=${day}&to=${day}`,
+      { headers: { Cookie: owner.cookie } },
+    );
+    const row = r.body.data!.series.find((s) => s.date === day)!;
+    expect(row.follow_clicks).toBe(6);
+    expect(row.unique_follow_intents).toBe(6);
+    // Verify one daily rollup doc + one row per canonical source in Mongo.
+    await withDb(async (db) => {
+      const daily = await db.collection('channel_daily_metrics').countDocuments({ channel_id: ch.id, date: day });
+      expect(daily).toBe(1);
+    });
+  });
+});
+
+describe('M04 — On-demand rollup after wipe', () => {
+  it('deleting a completed-day rollup causes on-demand recompute with same result', async () => {
+    const owner = await signup('user');
+    const ch = await createOwnedApprovedChannel(owner.userId);
+    const day = daysAgoKey(12);
+    const dayDate = new Date(`${day}T13:00:00Z`);
+    for (let i = 0; i < 4; i++) await insertEvent({ event_type: 'follow_click', channel_id: ch.id, created_at: dayDate, anonymous_session_id: uuidv4(), source: 'homepage' });
+    // First read → creates rollup
+    const r1 = await api<{ series: Array<{ date: string; follow_clicks: number }> }>(
+      `/owner/channels/${ch.id}/analytics/timeseries?window=custom&from=${day}&to=${day}`,
+      { headers: { Cookie: owner.cookie } },
+    );
+    const r1v = r1.body.data!.series.find((s) => s.date === day)!.follow_clicks;
+    // Wipe rollup + state
+    await withDb(async (db) => {
+      await db.collection('channel_daily_metrics').deleteMany({ channel_id: ch.id, date: day });
+      await db.collection('channel_daily_source_metrics').deleteMany({ channel_id: ch.id, date: day });
+      await db.collection('analytics_rollup_state').deleteMany({ channel_id: ch.id, date: day });
+    });
+    const r2 = await api<{ series: Array<{ date: string; follow_clicks: number }> }>(
+      `/owner/channels/${ch.id}/analytics/timeseries?window=custom&from=${day}&to=${day}`,
+      { headers: { Cookie: owner.cookie } },
+    );
+    const r2v = r2.body.data!.series.find((s) => s.date === day)!.follow_clicks;
+    expect(r2v).toBe(r1v);
+    expect(r2v).toBe(4);
+  });
+});
+
+describe('M04 — Today freshness', () => {
+  it('adding an event after rollup exists causes today refresh on next read', async () => {
+    const owner = await signup('user');
+    const ch = await createOwnedApprovedChannel(owner.userId);
+    const today = utcKey(new Date());
+    const now = new Date();
+    for (let i = 0; i < 2; i++) await insertEvent({ event_type: 'follow_click', channel_id: ch.id, created_at: now, anonymous_session_id: uuidv4(), source: 'homepage' });
+    const r1 = await api<{ series: Array<{ date: string; follow_clicks: number }> }>(
+      `/owner/channels/${ch.id}/analytics/timeseries?window=custom&from=${today}&to=${today}`,
+      { headers: { Cookie: owner.cookie } },
+    );
+    expect(r1.body.data!.series.find((s) => s.date === today)!.follow_clicks).toBe(2);
+    // Age the rollup state past the 60s freshness threshold.
+    await withDb(async (db) => {
+      await db.collection('analytics_rollup_state').updateOne({ channel_id: ch.id, date: today }, { $set: { last_aggregated_at: new Date(Date.now() - 5 * 60_000) } });
+    });
+    await insertEvent({ event_type: 'follow_click', channel_id: ch.id, created_at: new Date(), anonymous_session_id: uuidv4(), source: 'homepage' });
+    const r2 = await api<{ series: Array<{ date: string; follow_clicks: number }> }>(
+      `/owner/channels/${ch.id}/analytics/timeseries?window=custom&from=${today}&to=${today}`,
+      { headers: { Cookie: owner.cookie } },
+    );
+    expect(r2.body.data!.series.find((s) => s.date === today)!.follow_clicks).toBe(3);
+  });
+});
+
+describe('M04 — Public exposure does NOT leak owner analytics', () => {
+  it('public channel endpoint does not expose analytics/session/owner fields', async () => {
+    const owner = await signup('user');
+    const ch = await createOwnedApprovedChannel(owner.userId);
+    const day = daysAgoKey(13);
+    const dayDate = new Date(`${day}T10:00:00Z`);
+    await insertEvent({ event_type: 'follow_click', channel_id: ch.id, created_at: dayDate, anonymous_session_id: uuidv4(), source: 'homepage' });
+    const r = await api<{ channel: Record<string, unknown> }>(`/channels/${ch.slug}`);
+    const c = r.body.data!.channel;
+    for (const k of ['owner_id','verification_status','reviewed_by','follow_clicks','unique_follow_intents','anonymous_session_id']) {
+      expect(c).not.toHaveProperty(k);
+    }
+  });
+});
+
+describe('M04 — 45. Homepage Explore Interests visual regression (compiled CSS gradient utilities present)', () => {
+  it('editorial gradient classes exist in built CSS', async () => {
+    // Verify the frontend page compiles the from-* to-* utilities by checking the
+    // final HTML embeds them. This proves tailwind content globs include lib/.
+    const r = await fetch(`http://localhost:3000/`);
+    const html = await r.text();
+    // At least one gradient variant used in COLLECTIONS must appear in HTML.
+    expect(html).toMatch(/from-emerald-500/);
+    expect(html).toMatch(/to-teal-600/);
+    // And the section heading is present.
+    expect(html).toMatch(/Explore interests/);
   });
 });

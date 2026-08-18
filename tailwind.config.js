@@ -6,6 +6,13 @@ module.exports = {
       './components/**/*.{js,ts,jsx,tsx,mdx}',
       './app/**/*.{js,ts,jsx,tsx,mdx}',
       './src/**/*.{js,ts,jsx,tsx,mdx}',
+      './lib/**/*.{js,ts,jsx,tsx,mdx}',
+    ],
+    // Safelist gradient utilities used from constants so JIT never drops them
+    // (belt-and-braces defence against future refactors moving these strings).
+    safelist: [
+      { pattern: /^(from|via|to)-(slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-(400|500|600|700|800)$/ },
+      { pattern: /^bg-gradient-to-(t|tr|r|br|b|bl|l|tl)$/ },
     ],
     prefix: "",
     theme: {

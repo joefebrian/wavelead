@@ -67,7 +67,11 @@ export default async function OwnerChannelPage({ params }: { params: Promise<Par
               {channel.primary_language && <><span aria-hidden>·</span><span>{channel.primary_language}</span></>}
               {category_name && <><span aria-hidden>·</span><span>{category_name}</span></>}
             </div>
-            <div className="mt-3"><Link href={`/channel/${channel.slug}`} className="text-sm text-primary underline">View public profile</Link></div>
+            <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+              <Link href={`/channel/${channel.slug}`} className="text-primary underline">View public profile</Link>
+              <span aria-hidden className="text-muted-foreground">·</span>
+              <Link href={`/dashboard/channels/${channel.id}/analytics`} className="text-primary underline">Open analytics</Link>
+            </div>
           </div>
         </div>
 

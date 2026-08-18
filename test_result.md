@@ -2479,3 +2479,53 @@ backend_m04_updated:
           - Aggregation uses Set<anonymous_session_id> per (channel, day) ✅
           Unique follow intent dedupe test passing.
 
+
+agent_communication:
+  - agent: "main"
+    message: |
+      MILESTONE 04 FINAL RELEASE QA — COMPLETE.
+
+      Scope executed:
+        1. P0 fix: Homepage "Explore Interests" visual regression
+           (root cause: Tailwind content globs missed lib/ → gradient
+           classes never emitted). Fixed by adding lib/ to content globs
+           + safelist for gradient utilities + darker overlay for text
+           contrast. Visually verified at 375–1920 px.
+        2. M04 Phase 2 Frontend built end-to-end:
+             /dashboard/channels/[id]/analytics
+             Tabs: Overview / Acquisition / Discovery / Audience / Growth
+             KPI cards (8), Timeseries chart, Funnel, previous-period
+             deltas, Acquisition (bar + table), Discovery (search-terms
+             ≥ 3), Audience (country + device with privacy notes),
+             Profile Completeness (weighted checklist), Growth
+             Recommendations (rule-based), CSV export UI (Overview /
+             Acquisition / Search Terms), multi-channel switcher,
+             clear empty states, cross-owner 403 page.
+        3. Backend additions:
+             /overview?compare=previous returns previous window + deltas
+             /completeness endpoint (weighted deterministic checklist)
+             /recommendations endpoint (deterministic rules)
+             acquireLock hardened against E11000 races in concurrent rollups
+        4. QA reconciliation dataset generated deterministically via API +
+           direct Mongo events writes; confirmed metrics travel end-to-end
+           through: raw events → rollups → analytics API → dashboard → CSV.
+        5. Automated test suite grown to 61/61 passing:
+             foundation.test.ts     13/13
+             m03.test.ts            20/20
+             m04.test.ts            28/28
+        6. Responsive matrix all-green: 4 routes × 7 viewports (28/28 no
+           horizontal overflow). Homepage + all analytics tabs verified.
+        7. Category Benchmark left CONDITIONAL as spec allows — not
+           surfaced when cohort < 10 (kept off UI to avoid fabricated
+           data).
+        8. Public endpoints re-verified: /api/channels/:slug does NOT
+           expose owner_id, verification_status, reviewed_by,
+           follow_clicks, unique_follow_intents or anonymous_session_id.
+        9. Performance (90-day window, warm cache):
+             overview: 76 ms, timeseries: 117 ms, sources: 118 ms,
+             discovery: 75 ms, overview CSV: 93 ms, admin rollup
+             dry_run 30d: 44 ms.
+       10. `yarn typecheck` exit 0, `yarn test` 61/61, `yarn build` OK.
+
+      Awaiting user "Save to GitHub" to sync final commit to main and
+      confirm preview equals the QA-passing tree.
