@@ -264,27 +264,26 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: |
-      Milestone 00.1 implementation complete + verified by testing agent.
-      All 10 review checks pass:
-        1. yarn typecheck exit 0
-        2. yarn test — 13/13 tests pass
-        3. Product rename verified (health.service=wavelead, wl_session cookie, homepage HTML)
-        4. All placeholder routes (/trending /top /pricing /about /terms /privacy) return 200
-        5. Signup role logic: random emails→user, admin@wavelead.dev→super_admin (only when DB empty)
-        6. Live-role authorization: same cookie denied immediately after DB downgrade
-        7. Rate limiting: 429 at 9th login attempt / 6th signup attempt
-        8. CORS: no wildcard with credentials, allowlist enforced, Vary: Origin present
-        9. Discovery endpoints regression clean
-       10. Seed idempotent
-      Two follow-up fixes were applied and re-verified:
-        A) toPublic() in authService.ts now strips _id in addition to password_hash
-        B) tests hit the same DB as the running server (wavelead) and use
-           unique X-Forwarded-For headers to avoid tripping the rate limiter
+      Milestone 00.2 — Critical Tailwind build fix applied.
+      Root cause: tailwind.config.js `content` array only scanned
+      `.{js,jsx}`, so every utility class used exclusively in a `.ts/.tsx`
+      file (the entire post-Milestone-00.1 codebase) was purged from the
+      generated CSS. That is why md:flex / md:hidden / md:grid-cols-*,
+      responsive grid, container, gap-*, max-w-*, etc. were missing.
+      Fix: content globs now include `{js,ts,jsx,tsx,mdx}` under
+      pages/components/app/src. Cleared `.next` cache, restarted dev
+      server, ran `yarn build` \u2014 clean production build with all 17 routes
+      generated. Inspection of the compiled layout.css confirms the
+      previously missing utilities are now present (md:flex, md:hidden,
+      md:grid-cols-2, md:grid-cols-3, md:grid-cols-4, lg:grid-cols-3,
+      md:flex-row, container, wh-gradient-hero, gap-7, max-w-3xl, sticky,
+      etc.). 1440px screenshot verified visually.
+
+      Please re-verify the visual + build pipeline as described in the
+      task section below.
   - agent: "testing"
     message: |
-      Re-verification PASS. yarn typecheck exit 0, yarn test 13/13 pass,
-      signup response confirmed clean (no _id, no password_hash), rate
-      limiter triggers 429 on 9th/10th login attempt with fixed IP.
+      (Previous run) Re-verification PASS on Milestone 00.1 fixes.
 
   - agent: "testing"
     message: |
@@ -327,3 +326,41 @@ agent_communication:
       
       All other functionality is working perfectly. The live-role authorization
       (most critical requirement) is working flawlessly.
+
+  - agent: "testing"
+    message: |
+      Milestone 00.2 — Tailwind Build Fix Verification COMPLETE ✅
+      
+      Executed comprehensive visual QA across all 7 required viewports and all 7 verification checks.
+      
+      VERIFICATION RESULTS:
+      ✅ Test 1: Homepage responsive visual QA - PASS
+         - All 7 viewport screenshots captured (1920, 1440, 1024, 768, 430, 390, 375)
+         - Desktop (≥768px): Header nav visible, hamburger hidden, 4-column pillar grid (322px×4),
+           3-column featured grid (434px×3), 4-column category grid (325px×4), 4-column footer (310px×4)
+         - Mobile (<768px): Hamburger visible, nav hidden, mobile menu opens correctly, single-column stack
+      
+      ✅ Test 2: Header nav route sanity - PASS
+         - All routes return 200: /channels, /trending, /submit, /pricing, /top, /dashboard, /about, /terms, /privacy
+      
+      ✅ Test 3: Auth pages render correctly - PASS
+         - /login and /signup render properly at 1440px and 390px with correct form elements and styling
+      
+      ✅ Test 4: /admin unauthenticated redirect - PASS
+         - Correctly redirects to /login?next=/admin
+      
+      ✅ Test 5: Build health - PASS
+         - /api/health returns {"ok":true,"data":{"status":"ok","service":"wavelead",...}}
+      
+      ✅ Test 6: Dev server logs clean - PASS
+         - No runtime errors in supervisor logs, all routes compiled successfully
+      
+      ✅ Test 7: Compiled CSS spot-check - PASS
+         - All required Tailwind classes present: md\:flex, md\:hidden, md\:grid-cols-4, md\:grid-cols-3,
+           md\:grid-cols-2, lg\:grid-cols-3, md\:flex-row, md\:py-28, md\:text-6xl, md\:text-4xl,
+           sm\:flex-row, wh-gradient-hero, wh-card, .container
+      
+      CONCLUSION: The Tailwind build fix is SUCCESSFUL. All responsive breakpoints working correctly,
+      all utility classes present in compiled CSS, visual layout matches requirements at all viewports.
+      NO CODE MODIFICATIONS NEEDED - Pure verification PASS.
+
