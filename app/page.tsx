@@ -66,9 +66,9 @@ export default async function HomePage() {
             href="/channels?sort=newest"
           />
           {bundle.rising.length === 0 ? <EmptyState /> : (
-            <div className="flex md:grid gap-4 md:grid-cols-2 lg:grid-cols-3 overflow-x-auto md:overflow-visible no-scrollbar snap-x snap-mandatory md:snap-none pr-4 md:pr-0">
+            <div className="flex md:grid gap-4 md:grid-cols-2 lg:grid-cols-3 overflow-x-auto md:overflow-visible no-scrollbar snap-x snap-mandatory md:snap-none">
               {bundle.rising.map((c) => (
-                <div key={c.id} className="snap-start shrink-0 w-[85%] sm:w-[60%] md:w-auto">
+                <div key={c.id} className="snap-start shrink-0 w-[78%] sm:w-[55%] md:w-auto">
                   <ChannelCard channel={c} />
                 </div>
               ))}

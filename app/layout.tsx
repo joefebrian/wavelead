@@ -32,7 +32,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-screen bg-background text-foreground">
+      <body className="min-h-screen bg-background text-foreground overflow-x-hidden">
         <Providers>
           {children}
           <Toaster richColors position="top-right" />

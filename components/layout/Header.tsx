@@ -57,7 +57,7 @@ export default function Header() {
           ))}
         </nav>
 
-        <form onSubmit={onSearchSubmit} className="hidden lg:flex flex-1 max-w-sm items-center gap-2 rounded-lg border border-border bg-secondary/40 px-3 py-1.5">
+        <form onSubmit={onSearchSubmit} className="hidden xl:flex flex-1 min-w-0 max-w-sm items-center gap-2 rounded-lg border border-border bg-secondary/40 px-3 py-1.5">
           <Search className="h-4 w-4 text-muted-foreground shrink-0" />
           <input
             type="search"
@@ -65,14 +65,14 @@ export default function Header() {
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search channels…"
             aria-label="Search channels"
-            className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
+            className="flex-1 min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
           />
         </form>
 
-        <div className="flex-1 lg:hidden" />
+        <div className="flex-1 xl:hidden" />
 
         <div className="hidden md:flex items-center gap-2 shrink-0">
-          <Link href="/submit"><Button variant="outline" size="sm">Submit Channel</Button></Link>
+          <Link href="/submit" className="hidden lg:inline-flex"><Button variant="outline" size="sm">Submit Channel</Button></Link>
           {loading ? (
             <div className="h-9 w-24 rounded-md bg-muted animate-pulse" />
           ) : me ? (
