@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone',
+  // NOTE: `output: 'standalone'` removed. It caused a build/dev artifact
+  // collision that 404'd the dev-mode stylesheet on the deployed preview.
+  // Re-enable this only for a dedicated production deploy pipeline that
+  // never shares its `.next/` folder with `next dev`.
 
   // Next.js 15 requires this whitelist when the dev server is accessed
   // through the Emergent / Cloudflare preview hostnames.

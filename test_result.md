@@ -628,4 +628,131 @@ agent_communication:
       proper data sanitization, auth/RBAC intact, and all compilation/tests passing.
       The application is ready for frontend testing if required.
 
+  - agent: "testing"
+    message: |
+      Milestone 01 — CSS 404 Bug Fix Verification COMPLETE ✅
+      
+      Executed comprehensive verification of the CSS 404 fix on DEPLOYED PREVIEW:
+      https://grow-infrastructure.preview.emergentagent.com
+      
+      ROOT CAUSE:
+      The .next/ directory contained artifacts from a prior yarn build (production output including
+      hashed CSS file dead035900697857.css and standalone/ directory) while next dev was serving
+      HTML that referenced dev-mode CSS path /_next/static/css/app/layout.css. The dev-mode CSS
+      file did not exist on disk because production build files had replaced it.
+      
+      FAILED CSS URL (before fix):
+      /_next/static/css/app/layout.css?v=... returned 404
+      
+      WHY IT RETURNED 404:
+      Production build artifacts were present in .next/ while dev server expected dev-mode CSS file.
+      Additionally, output: 'standalone' in next.config.js encouraged build/dev collision.
+      
+      FIX APPLIED:
+      1. sudo supervisorctl stop nextjs
+      2. rm -rf /app/.next /app/node_modules/.cache /tmp/next-*
+      3. Commented out output: 'standalone' in next.config.js (NOTE: still present in file but fix worked)
+      4. sudo supervisorctl start nextjs
+      5. Warmed up with 3 homepage requests to force CSS compilation
+      
+      CSS STATUS AFTER FIX (DEPLOYED PREVIEW):
+      ✅ Status: 200
+      ✅ Content-Type: text/css; charset=UTF-8
+      ✅ Content-Length: 86957 bytes (>10KB as expected)
+      ✅ CSS URL: /_next/static/css/app/layout.css?v=1787039237147
+      ⚠️  CORS: access-control-allow-origin: * (present on CSS file)
+      
+      BROWSER CONSOLE (DEPLOYED PREVIEW):
+      ✅ Body background-color: Styled (not default rgba(0,0,0,0))
+      ✅ H1 font-weight: Bold/extrabold applied correctly
+      ⚠️  Minor: React hydration mismatch warning (non-blocking, cosmetic)
+      
+      DEPLOYED PREVIEW STATUS: FULLY OPERATIONAL
+      
+      --- Viewport results ---
+      1920x900: PASS ✅
+        - Logo visible, full nav visible (Discover/Trending/Top Channels/Categories)
+        - Inline search box visible, Submit Channel button visible
+        - Hamburger HIDDEN (correct for desktop)
+        - Hero H1 "Find channels worth following." visible
+        - Popular pills (Football/Finance/AI/etc.) visible
+        - Category pills bar (All/News/Politics/etc.) visible
+        - "Popular on WaveLead" 3-column card grid visible
+        - "New & Noteworthy" section visible
+        - "Top Channels in Indonesia" ranking list visible
+        - Green brand color (#10B981) applied correctly
+        - Typography correct (bold headings, proper font weights)
+        - No horizontal overflow
+      
+      1440x900: PASS ✅
+        - Same as 1920x900, all desktop elements visible and styled correctly
+      
+      1024x900: PASS ✅
+        - Same desktop layout, all elements visible and styled correctly
+      
+      768x1024: PASS ✅
+        - Desktop layout maintained at 768px width
+        - All navigation elements visible
+        - No horizontal overflow
+      
+      430x900: PASS ✅
+        - Logo visible, hamburger VISIBLE (correct for mobile)
+        - Navigation collapsed (correct)
+        - Hero section visible
+        - Search box visible
+        - Popular pills wrap correctly
+        - Category pills visible
+        - "Popular on WaveLead" section visible
+        - No horizontal overflow
+      
+      390x844: PASS ✅
+        - Same as 430x900, mobile layout correct
+        - All elements stack properly
+        - No horizontal overflow
+      
+      375x812: PASS ✅
+        - Same as 390x844, mobile layout correct
+        - All elements visible and styled
+        - No horizontal overflow
+      
+      --- CTA smoke ---
+      ✅ Popular pill "AI": /search?q=ai → 200
+      ✅ Category pill "Finance": /category/finance → 200
+      ✅ Country tile "Indonesia": /country/indonesia → 200
+      ✅ Channel card "Nusantara Daily": /channel/nusantara-daily → 200 (Follow button visible)
+      ✅ "View Top Channels": /top → 200
+      ✅ Header "Trending": /trending → 200
+      ✅ "Submit Channel": /submit → 200
+      ✅ Footer "Privacy": /privacy → 200
+      
+      --- Auth regression ---
+      ✅ /dashboard unauth: Redirects to /login?next=/dashboard (307 → 200)
+      ✅ /admin unauth: Redirects to /login?next=/admin (307 → 200)
+      
+      --- API health ---
+      ✅ Status: 200
+      ✅ Service: wavelead
+      ✅ PASS
+      
+      OVERALL RESULT: ALL CHECKS PASS ✅
+      
+      CRITICAL FINDINGS:
+      1. ✅ CSS 404 fix VERIFIED on deployed preview - CSS returns 200 with correct content-type and size
+      2. ✅ All 7 viewports render correctly with proper styling (green brand, typography, layout)
+      3. ✅ All 8 CTA navigation flows work correctly (200 status, expected content)
+      4. ✅ Auth regression tests pass (protected routes redirect correctly)
+      5. ✅ Backend health check passes (service=wavelead)
+      6. ⚠️  Minor: CORS wildcard present on CSS file (access-control-allow-origin: *)
+      7. ⚠️  Minor: React hydration mismatch warning in console (non-blocking)
+      
+      CONCLUSION:
+      The CSS 404 bug fix is SUCCESSFUL and VERIFIED on the deployed preview.
+      All styling is applied correctly across all viewports (desktop, tablet, mobile).
+      All navigation flows work correctly. Auth protection is intact. Backend is healthy.
+      The application is fully functional with no blocking issues.
+      
+      NOTE: output: 'standalone' is still present in next.config.js line 3, but the fix
+      worked because clearing .next/ cache forced a clean dev build. Consider removing
+      this setting for dev environment to prevent future collisions.
+
 
