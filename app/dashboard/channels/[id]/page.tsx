@@ -71,6 +71,8 @@ export default async function OwnerChannelPage({ params }: { params: Promise<Par
               <Link href={`/channel/${channel.slug}`} className="text-primary underline">View public profile</Link>
               <span aria-hidden className="text-muted-foreground">·</span>
               <Link href={`/dashboard/channels/${channel.id}/analytics`} className="text-primary underline">Open analytics</Link>
+              <span aria-hidden className="text-muted-foreground">·</span>
+              <Link href={`/dashboard/channels/${channel.id}/promote`} className="text-primary underline">Promote channel</Link>
             </div>
           </div>
         </div>

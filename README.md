@@ -77,6 +77,23 @@ via WaveLead).
 - Enrichment cache and rate limits
 - SSRF protection (allowlisted hosts, no private IPs, no arbitrary redirects)
 
+### Promote Channel / Sponsored Discovery (M05.1)
+- Verified channel owners can promote their own approved channels
+- WaveLead-owned advertising inventory (not a channel-owner marketplace)
+- Objectives: **Increase Visibility** or **Drive Follow Intent**
+- Sponsored placements: Search, Homepage, Category, Country, Related Channels
+  (Trending and Top Channels are **never** paid — organic-only)
+- Contextual targeting only: country / language / category (no behavioural or
+  sensitive-attribute targeting)
+- Admin-controlled CPM rate cards; per-country override + global fallback
+- Rate snapshot on submission (later admin edits never rewrite history)
+- Frequency cap: rolling 24 h, max 3 impressions per campaign per anon session
+- Atomic budget/impression accounting (no overspend under concurrency)
+- Signed 15-minute attribution tokens, session-bound (no `?campaign_id=` trust)
+- Sponsored candidates are returned as a **separate `sponsored[]` array**;
+  organic ranking (`items[]`, WaveScore, Trending, Top) is provably untouched
+- Every sponsored card is clearly labelled `Sponsored`
+
 ---
 
 ## 3. Product Flow
@@ -89,7 +106,7 @@ Discover  →  Search / Browse  →  Channel Profile  →  Follow on WhatsApp
 ### Channel Owner
 ```
 Submit / Claim  →  Verify Ownership  →  Manage Channel
-               →  View Analytics    →  Grow
+               →  View Analytics    →  Promote Channel  →  Grow
 ```
 
 ---
@@ -250,6 +267,9 @@ Submit → pending_review
 /dashboard/channels                 Owned channels list
 /dashboard/channels/[id]            Manage single channel
 /dashboard/channels/[id]/analytics  Owner analytics dashboard
+/dashboard/channels/[id]/promote    Create a promotion (M05.1)
+/dashboard/promotions               My promotions
+/dashboard/promotions/[id]          Campaign detail + reporting
 /dashboard/claims                   My claim requests
 ```
 
@@ -262,6 +282,9 @@ Submit → pending_review
 /admin/claims/[id]                Single claim detail
 /admin/channel-changes            Owner change-request queue
 /admin/homepage                   Homepage slot curation
+/admin/promotions                 Campaign review queue (M05.1)
+/admin/promotions/[id]            Campaign detail + approve/reject
+/admin/promotion-rates            CPM rate cards (M05.1)
 ```
 
 ### SEO
@@ -286,9 +309,12 @@ All routes are served by `app/api/[[...path]]/route.ts` and prefixed with `/api`
 | **Claims (owner)**      | `/claims/eligibility/:slug`, `/claims/:slug`, resubmit, cancel     |
 | **Owner (self)**        | `/me/channels[/:id]`, `PATCH`, `/change-request`, `/me/claims`     |
 | **Owner Analytics**     | `/owner/channels/:id/analytics/{overview,timeseries,sources,...}`  |
+| **Promotions (owner)**  | `/owner/promotions[/:id[/submit|pause|resume|cancel|report]]`     |
 | **Moderation**          | `/admin/channels[/:id[/approve|reject]]`, homepage slot CRUD       |
 | **Claim Moderation**    | `/admin/claims[/:id[/approve|reject|request-info]]`                |
 | **Change Moderation**   | `/admin/channel-changes[/:id[/approve|reject]]`                    |
+| **Promotion Review**    | `/admin/promotions[/:id[/approve|reject]]`, `/admin/promotion-rates` |
+| **Sponsored Tracking**  | `/track/sponsored/{impression,profile-view}` (signed token only)   |
 | **Admin Analytics**     | `POST /admin/analytics/rollup` (dry_run + force)                   |
 | **Health**              | `GET /health` — returns commit SHA + branch + commit time          |
 
@@ -370,18 +396,22 @@ Hit `GET /api/health` to confirm which commit is actually running:
 | M03       | Ownership & Trust                              | Complete |
 | M04       | Owner Analytics & Growth Intelligence          | Complete |
 | M05.0     | Smart Channel Import                           | Complete |
-| M05.1     | Promote Channel / Sponsored Discovery          | Next     |
+| M05.1     | Promote Channel / Sponsored Discovery          | Complete |
+| M06       | Payments / Billing / Marketplace               | Not started |
 
 ---
 
 ## 14. Current Limitations
 
-- Promote Channel / Sponsored Discovery not shipped until M05.1
-- Billing and subscriptions are not yet shipped
+- **No payment capture yet.** M05.1 campaigns run as WaveLead-approved internal
+  delivery budgets; real card/wallet checkout ships in M06.
+- Billing, invoicing, and subscriptions are not yet shipped
 - No confirmed WhatsApp follower attribution — WaveLead measures follow **intent**, not confirmed follows on WhatsApp
 - No private WhatsApp analytics (WaveLead does not have access to any private WhatsApp data)
 - No ownership transfer or dispute-center workflow
 - No team or agency accounts (single-owner model)
+- No channel-owner marketplace / sponsorship rate cards / brand-to-channel booking
+- No custom ad creatives — sponsored cards reuse the channel's approved public profile
 - No native mobile app
 - In-memory rate limiter and enrichment cache — swap for Redis for multi-instance production
 
@@ -389,9 +419,9 @@ Hit `GET /api/health` to confirm which commit is actually running:
 
 ## 15. Roadmap
 
-**Next:** M05.1 — Promote Channel / Sponsored Discovery
+**Next:** M06 — Payments, Billing & Real-money Campaign Funding
 
 **Future:**
-- Campaign delivery
-- Campaign analytics
+- Channel Sponsorship Marketplace (brand → channel bookings, payouts, settlement)
+- Campaign auction / bidding models
 - Monetization and subscriptions

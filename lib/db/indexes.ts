@@ -97,5 +97,27 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { section: 1, channel_id: 1 }, unique: true, name: 'uniq_section_channel' },
       { key: { section: 1, active: 1, priority: 1 }, name: 'section_priority' },
     ]),
+    // ---------- M05.1 Promote Channel / Sponsored Discovery ----------
+    db.collection(COLLECTIONS.PROMOTION_CAMPAIGNS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { owner_user_id: 1, created_at: -1 }, name: 'by_owner_time' },
+      { key: { channel_id: 1, status: 1 }, name: 'by_channel_status' },
+      { key: { status: 1, start_at: 1 }, name: 'status_start' },
+      { key: { status: 1, end_at: 1 }, name: 'status_end' },
+    ]),
+    db.collection(COLLECTIONS.PROMOTION_RATE_CARDS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { placement: 1, country_code: 1, active: 1 }, name: 'lookup' },
+      { key: { seed_key: 1 }, sparse: true, name: 'by_seed_key' },
+    ]),
+    db.collection(COLLECTIONS.CAMPAIGN_IMPRESSION_DEDUP).createIndexes([
+      { key: { campaign_id: 1, anonymous_session_id: 1 }, unique: true, name: 'uniq_campaign_session' },
+      { key: { expires_at: 1 }, expireAfterSeconds: 0, name: 'ttl_expires_at' },
+    ]),
+    db.collection(COLLECTIONS.CAMPAIGN_DAILY_METRICS).createIndexes([
+      { key: { campaign_id: 1, date: 1, placement: 1 }, unique: true, name: 'uniq_campaign_date_placement' },
+      { key: { campaign_id: 1, date: 1 }, name: 'campaign_date' },
+      { key: { date: -1 }, name: 'by_date' },
+    ]),
   ]);
 }

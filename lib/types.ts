@@ -220,6 +220,7 @@ export interface EventRecord {
   user_id: string | null;
   channel_id: string | null;
   campaign_id: string | null;
+  traffic_type: 'organic' | 'sponsored';
   source: AcquisitionSource | null;
   placement: string | null;
   referrer: string | null;
@@ -321,4 +322,159 @@ export interface SessionPayload {
 export interface Actor {
   session: SessionPayload;
   user: PublicUser;
+}
+
+// =====================================================================
+// M05.1 — Promote Channel / Sponsored Discovery
+// =====================================================================
+
+export type TrafficType = 'organic' | 'sponsored';
+
+export type SponsoredPlacement =
+  | 'sponsored_search'
+  | 'sponsored_homepage'
+  | 'sponsored_category'
+  | 'sponsored_country'
+  | 'sponsored_related_channel';
+
+export const SPONSORED_PLACEMENTS: readonly SponsoredPlacement[] = [
+  'sponsored_search',
+  'sponsored_homepage',
+  'sponsored_category',
+  'sponsored_country',
+  'sponsored_related_channel',
+] as const;
+
+// Map sponsored placement → canonical organic acquisition source.
+// Sponsored placements NEVER map to trending or top.
+export const PLACEMENT_TO_SOURCE: Record<SponsoredPlacement, AcquisitionSource> = {
+  sponsored_search: 'search',
+  sponsored_homepage: 'homepage',
+  sponsored_category: 'category',
+  sponsored_country: 'country',
+  sponsored_related_channel: 'related_channel',
+};
+
+export type CampaignObjective = 'visibility' | 'follow_intent';
+export const CAMPAIGN_OBJECTIVES: readonly CampaignObjective[] = ['visibility', 'follow_intent'] as const;
+
+export type PromotionCampaignStatus =
+  | 'draft'
+  | 'pending_review'
+  | 'approved'
+  | 'scheduled'
+  | 'active'
+  | 'paused'
+  | 'completed'
+  | 'rejected'
+  | 'cancelled';
+
+export type PromotionRejectionReason =
+  | 'invalid_targeting'
+  | 'invalid_budget'
+  | 'channel_not_eligible'
+  | 'placement_unavailable'
+  | 'policy_concern'
+  | 'duplicate_or_test'
+  | 'other';
+
+export interface PromotionRateSnapshotItem {
+  placement: SponsoredPlacement;
+  pricing_model: 'cpm';
+  cpm_usd_minor: number;
+  rate_card_id: string;
+  country_code: string | null;
+  resolved_at: Date;
+}
+
+export interface PromotionTargeting {
+  countries: string[];       // ISO 3166-1 alpha-2, uppercase; [] means any
+  languages: string[];       // ISO 639-1, lowercase;         [] means any
+  categories: string[];      // category slugs;               [] means any
+}
+
+export interface PromotionCampaign {
+  id: string;
+
+  owner_user_id: string;
+  channel_id: string;
+
+  name: string;
+  objective: CampaignObjective;
+
+  placements: SponsoredPlacement[];
+  targeting: PromotionTargeting;
+
+  budget_total_usd_minor: number;
+  budget_daily_usd_minor: number | null;
+
+  start_at: Date;
+  end_at: Date;
+
+  status: PromotionCampaignStatus;
+
+  // Snapshot of resolved rates at submission time. Later admin rate changes
+  // must not retroactively alter historical campaign economics.
+  rate_snapshot: PromotionRateSnapshotItem[] | null;
+
+  delivered_impressions: number;
+  estimated_spend_usd_minor: number;
+
+  created_at: Date;
+  updated_at: Date;
+
+  submitted_at: Date | null;
+
+  reviewed_at: Date | null;
+  reviewed_by: string | null;
+  rejection_reason: PromotionRejectionReason | null;
+  rejection_notes: string | null;
+
+  activated_at: Date | null;
+  paused_at: Date | null;
+  completed_at: Date | null;
+  cancelled_at: Date | null;
+}
+
+export interface PromotionRateCard {
+  id: string;
+  placement: SponsoredPlacement;
+  country_code: string | null;   // null = global fallback
+  pricing_model: 'cpm';
+  cpm_usd_minor: number;
+  active: boolean;
+  effective_from: Date;
+  effective_to: Date | null;
+  is_fixture: boolean;           // marks QA/seeded default rate
+  seed_key: string | null;
+  created_at: Date;
+  updated_at: Date;
+  created_by: string | null;
+}
+
+export interface CampaignImpressionDedup {
+  campaign_id: string;
+  anonymous_session_id: string;
+  impression_count: number;
+  window_started_at: Date;
+  last_impression_at: Date;
+  expires_at: Date;
+  created_at: Date;
+  updated_at: Date;
+}
+
+// Per (campaign, date, placement) daily rollup for sponsored performance.
+export interface CampaignDailyMetric {
+  id: string;
+  campaign_id: string;
+  channel_id: string;
+  date: string;                             // YYYY-MM-DD UTC
+  placement: SponsoredPlacement;
+  sponsored_impressions: number;
+  sponsored_profile_views: number;
+  unique_sponsored_profile_views: number;
+  follow_clicks: number;
+  unique_follow_intents: number;
+  spend_usd_minor: number;
+  last_aggregated_at: Date;
 }

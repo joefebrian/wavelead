@@ -82,11 +82,19 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
     }
     if (route === '/discovery/home' && method === 'GET') {
       const { discoveryService } = await import('@/lib/services/discoveryService');
-      return applyCors(ok(await discoveryService.getHomepageBundle()), request);
+      const bundle = await discoveryService.getHomepageBundle();
+      const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
+      const anonId = request.cookies.get('wl_anon_id')?.value || null;
+      const country = (request.headers.get('x-vercel-ip-country') || request.headers.get('cf-ipcountry') || null);
+      const sponsored = await promotionDeliveryService.selectCandidates({
+        placement: 'sponsored_homepage', anonymous_session_id: anonId, country_code: country,
+      }, 1).catch(() => []);
+      return applyCors(ok({ ...bundle, sponsored }), request);
     }
     if (route === '/channels/rising' && method === 'GET') {
       const { discoveryService } = await import('@/lib/services/discoveryService');
       const limit = Math.min(parseInt(new URL(request.url).searchParams.get('limit') || '6', 10) || 6, 24);
+      // Rising = trending. NO sponsored inventory here.
       return applyCors(ok({ items: await discoveryService.getRising(limit) }), request);
     }
     if (route === '/channels/top' && method === 'GET') {
@@ -94,6 +102,7 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const sp = new URL(request.url).searchParams;
       const country = sp.get('country') || undefined;
       const limit = Math.min(parseInt(sp.get('limit') || '10', 10) || 10, 50);
+      // Top = organic ranking. NO sponsored inventory here.
       return applyCors(ok({ items: await discoveryService.getTop({ country, limit }) }), request);
     }
     if (route === '/channels' && method === 'GET') {
@@ -106,7 +115,35 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
         limit: Math.min(parseInt(sp.get('limit') || '24', 10) || 24, 60),
         skip: Math.max(parseInt(sp.get('skip') || '0', 10) || 0, 0),
       });
-      return applyCors(ok(result), request);
+      // Sponsored delivery — separate array, never mutates organic result.
+      // - `q` present → sponsored_search
+      // - `category` present → sponsored_category
+      // - `country` present → sponsored_country
+      // - `sort=trending|top` → NO sponsored inventory
+      const sort = sp.get('sort');
+      const q = sp.get('q');
+      const category = sp.get('category');
+      const country = sp.get('country');
+      let placement: 'sponsored_search' | 'sponsored_category' | 'sponsored_country' | null = null;
+      if (sort !== 'trending' && sort !== 'top') {
+        if (q) placement = 'sponsored_search';
+        else if (category) placement = 'sponsored_category';
+        else if (country) placement = 'sponsored_country';
+      }
+      let sponsored: unknown[] = [];
+      if (placement) {
+        const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
+        const anonId = request.cookies.get('wl_anon_id')?.value || null;
+        const ipCountry = (request.headers.get('x-vercel-ip-country') || request.headers.get('cf-ipcountry') || null);
+        sponsored = await promotionDeliveryService.selectCandidates({
+          placement,
+          anonymous_session_id: anonId,
+          country_code: country || ipCountry,
+          category_slug: category,
+          search_query: q,
+        }, 1).catch(() => []);
+      }
+      return applyCors(ok({ ...result, sponsored }), request);
     }
     if (route === '/channels/featured' && method === 'GET') {
       return applyCors(ok({ items: await channelService.getFeatured(6) }), request);
@@ -117,7 +154,18 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
     if (path.length === 2 && path[0] === 'channels' && method === 'GET') {
       const c = await channelService.getPublicBySlug(path[1]);
       if (!c) return applyCors(fail(404, 'Channel not found'), request);
-      return applyCors(ok({ channel: c }), request);
+      // Related sponsored candidates — never self-promote.
+      const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
+      const anonId = request.cookies.get('wl_anon_id')?.value || null;
+      const ipCountry = (request.headers.get('x-vercel-ip-country') || request.headers.get('cf-ipcountry') || null);
+      const sponsored = await promotionDeliveryService.selectCandidates({
+        placement: 'sponsored_related_channel',
+        anonymous_session_id: anonId,
+        country_code: c.country_code || ipCountry,
+        category_slug: (c as unknown as { category_slug?: string }).category_slug || null,
+        exclude_channel_id: c.id,
+      }, 1).catch(() => []);
+      return applyCors(ok({ channel: c, sponsored }), request);
     }
 
     // ---------- ADMIN (role resolved from DB, never JWT) ----------
@@ -369,6 +417,161 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       else if (type === 'channel_profile_view') trackingService.recordProfileView(base);
       else return applyCors(fail(400, 'Unsupported event_type'), request);
       return applyCors(ok({ tracked: true }), request);
+    }
+
+    // ---------- M05.1 PROMOTE CHANNEL / SPONSORED DISCOVERY ----------
+    // Owner endpoints
+    if (route === '/owner/promotions' && method === 'GET') {
+      const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+      return applyCors(ok({ items: await promotionCampaignService.listForOwner(await resolveActor(request)) }), request);
+    }
+    if (route === '/owner/promotions' && method === 'POST') {
+      const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+      const camp = await promotionCampaignService.create(await resolveActor(request), await safeJson(request));
+      return applyCors(ok({ campaign: camp }), request);
+    }
+    if (path.length === 3 && path[0] === 'owner' && path[1] === 'promotions' && method === 'GET') {
+      const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+      return applyCors(ok({ campaign: await promotionCampaignService.getForOwner(await resolveActor(request), path[2]) }), request);
+    }
+    if (path.length === 3 && path[0] === 'owner' && path[1] === 'promotions' && method === 'PATCH') {
+      const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+      return applyCors(ok({ campaign: await promotionCampaignService.patch(await resolveActor(request), path[2], await safeJson(request)) }), request);
+    }
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'promotions' && path[3] === 'submit' && method === 'POST') {
+      const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+      return applyCors(ok({ campaign: await promotionCampaignService.submit(await resolveActor(request), path[2]) }), request);
+    }
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'promotions' && path[3] === 'pause' && method === 'POST') {
+      const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+      return applyCors(ok({ campaign: await promotionCampaignService.pause(await resolveActor(request), path[2]) }), request);
+    }
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'promotions' && path[3] === 'resume' && method === 'POST') {
+      const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+      return applyCors(ok({ campaign: await promotionCampaignService.resume(await resolveActor(request), path[2]) }), request);
+    }
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'promotions' && path[3] === 'cancel' && method === 'POST') {
+      const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+      return applyCors(ok({ campaign: await promotionCampaignService.cancel(await resolveActor(request), path[2]) }), request);
+    }
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'promotions' && path[3] === 'report' && method === 'GET') {
+      const { promotionReportingService } = await import('@/lib/services/promotion/reportingService');
+      return applyCors(ok(await promotionReportingService.forOwner(await resolveActor(request), path[2])), request);
+    }
+    // Admin endpoints
+    if (route === '/admin/promotions' && method === 'GET') {
+      const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+      const status = new URL(request.url).searchParams.get('status') || undefined;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return applyCors(ok({ items: await promotionCampaignService.listForAdmin(await resolveActor(request), status as any) }), request);
+    }
+    if (path.length === 3 && path[0] === 'admin' && path[1] === 'promotions' && method === 'GET') {
+      const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+      return applyCors(ok({ campaign: await promotionCampaignService.getForAdmin(await resolveActor(request), path[2]) }), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'promotions' && path[3] === 'approve' && method === 'POST') {
+      const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+      return applyCors(ok({ campaign: await promotionCampaignService.approve(await resolveActor(request), path[2]) }), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'promotions' && path[3] === 'reject' && method === 'POST') {
+      const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+      return applyCors(ok({ campaign: await promotionCampaignService.reject(await resolveActor(request), path[2], await safeJson(request)) }), request);
+    }
+    // Rate cards (admin/super_admin)
+    if (route === '/admin/promotion-rates' && method === 'GET') {
+      const actor = await resolveActor(request); requireRole(actor, ROLES.ADMIN);
+      const { promotionRateCardRepo } = await import('@/lib/repositories/promotionRepo');
+      return applyCors(ok({ items: await promotionRateCardRepo.list() }), request);
+    }
+    if (route === '/admin/promotion-rates' && method === 'POST') {
+      const actor = await resolveActor(request); requireRole(actor, ROLES.ADMIN);
+      const { rateCardUpsertSchema } = await import('@/lib/validation/promotion');
+      const parsed = rateCardUpsertSchema.safeParse(await safeJson(request));
+      if (!parsed.success) return applyCors(fail(400, parsed.error.issues[0]?.message || 'Invalid rate'), request);
+      const { promotionRateCardRepo } = await import('@/lib/repositories/promotionRepo');
+      const now = new Date();
+      const { v4: uuidv4 } = await import('uuid');
+      const doc = {
+        id: uuidv4(),
+        placement: parsed.data.placement,
+        country_code: parsed.data.country_code,
+        pricing_model: 'cpm' as const,
+        cpm_usd_minor: parsed.data.cpm_usd_minor,
+        active: parsed.data.active,
+        effective_from: parsed.data.effective_from ? new Date(parsed.data.effective_from) : now,
+        effective_to: parsed.data.effective_to ? new Date(parsed.data.effective_to) : null,
+        is_fixture: false,
+        seed_key: null,
+        created_at: now,
+        updated_at: now,
+        created_by: actor.user.id,
+      };
+      return applyCors(ok({ card: await promotionRateCardRepo.insert(doc) }), request);
+    }
+    if (path.length === 2 && path[0] === 'admin' && path[1] === 'promotion-rates' && method === 'PATCH') {
+      const actor = await resolveActor(request); requireRole(actor, ROLES.ADMIN);
+      const body = await safeJson(request);
+      const { promotionRateCardRepo } = await import('@/lib/repositories/promotionRepo');
+      const patch: Record<string, unknown> = {};
+      if (typeof body.active === 'boolean') patch.active = body.active;
+      if (typeof body.cpm_usd_minor === 'number') patch.cpm_usd_minor = body.cpm_usd_minor;
+      if (body.effective_to !== undefined) patch.effective_to = body.effective_to ? new Date(String(body.effective_to)) : null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await promotionRateCardRepo.update(String(body.id), patch as any);
+      return applyCors(ok({ updated: true }), request);
+    }
+    // Sponsored impression acknowledgement.
+    // Client calls after the sponsored card is actually rendered/visible.
+    // Enforces frequency cap, budget, and creates the paid impression event.
+    if (route === '/track/sponsored/impression' && method === 'POST') {
+      const body = await safeJson(request);
+      const token = String(body?.attribution_token || '');
+      const anonId = request.cookies.get('wl_anon_id')?.value || null;
+      const { verifyAttributionToken } = await import('@/lib/services/promotion/attributionTokenService');
+      const v = verifyAttributionToken(token, { anonymous_session_id: anonId });
+      if (!v.valid) return applyCors(ok({ recorded: false, reason: v.reason }), request);
+      const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
+      const ack = await promotionDeliveryService.acknowledgeImpression({
+        campaign_id: v.payload.campaign_id,
+        placement: v.payload.placement,
+        anonymous_session_id: anonId,
+        country_code: (request.headers.get('x-vercel-ip-country') || request.headers.get('cf-ipcountry') || null),
+      });
+      if (!ack.recorded) return applyCors(ok({ recorded: false, reason: ack.reason }), request);
+      // Record the sponsored channel impression event.
+      const { trackingService } = await import('@/lib/services/trackingService');
+      trackingService.recordChannelImpression({
+        channelId: v.payload.channel_id,
+        anonymousSessionId: anonId,
+        userId: null,
+        source: v.payload.source,
+        placement: v.payload.placement,
+        campaignId: v.payload.campaign_id,
+        trafficType: 'sponsored',
+        countryCode: (request.headers.get('x-vercel-ip-country') || request.headers.get('cf-ipcountry') || null),
+      });
+      return applyCors(ok({ recorded: true, unit_spend_usd_minor: ack.unit_spend_usd_minor }), request);
+    }
+    // Sponsored profile view acknowledgement.
+    if (route === '/track/sponsored/profile-view' && method === 'POST') {
+      const body = await safeJson(request);
+      const token = String(body?.attribution_token || '');
+      const anonId = request.cookies.get('wl_anon_id')?.value || null;
+      const { verifyAttributionToken } = await import('@/lib/services/promotion/attributionTokenService');
+      const v = verifyAttributionToken(token, { anonymous_session_id: anonId });
+      if (!v.valid) return applyCors(ok({ recorded: false, reason: v.reason }), request);
+      const { trackingService } = await import('@/lib/services/trackingService');
+      trackingService.recordProfileView({
+        channelId: v.payload.channel_id,
+        anonymousSessionId: anonId,
+        userId: null,
+        source: v.payload.source,
+        placement: v.payload.placement,
+        campaignId: v.payload.campaign_id,
+        trafficType: 'sponsored',
+        countryCode: (request.headers.get('x-vercel-ip-country') || request.headers.get('cf-ipcountry') || null),
+      });
+      return applyCors(ok({ recorded: true }), request);
     }
 
     // ---------- M04 ADMIN ROLLUP TRIGGER ----------

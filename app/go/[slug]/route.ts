@@ -96,16 +96,33 @@ export async function GET(request: NextRequest, ctx: Ctx): Promise<NextResponse>
     ownHosts.add(new URL(request.url).hostname.toLowerCase().replace(/^www\./, ''));
     const { normalizeReferrerDomain, normalizeSource } = await import('@/lib/services/trackingService');
     const refDomain = normalizeReferrerDomain(referrer, ownHosts);
-    // Attribution precedence: explicit source query param (canonical only) →
-    // referrer-inferred external → direct.
+    // Attribution precedence:
+    //   1. valid signed sponsored attribution token (wl_at) → sponsored
+    //   2. explicit source query param (canonical only) → organic
+    //   3. referrer-inferred external → external / direct
     let source = normalizeSource(sp.get('source'));
     if (source === 'other') source = refDomain ? 'external' : 'direct';
+    let placement: string | null = sp.get('placement');
+    let campaignId: string | null = null;
+    let trafficType: 'organic' | 'sponsored' = 'organic';
+    const wlAt = sp.get('wl_at');
+    if (wlAt) {
+      const { verifyAttributionToken } = await import('@/lib/services/promotion/attributionTokenService');
+      const v = verifyAttributionToken(wlAt, { anonymous_session_id: anonId });
+      // Only credit paid attribution if the token also matches this channel.
+      if (v.valid && v.payload.channel_id === channel.id) {
+        source = v.payload.source;
+        placement = v.payload.placement;
+        campaignId = v.payload.campaign_id;
+        trafficType = 'sponsored';
+      }
+    }
     trackingService.recordFollowClick({
       channelId: channel.id,
       anonymousSessionId: anonId,
       userId: session?.userId ?? null,
       source,
-      placement: sp.get('placement'),
+      placement,
       referrer,
       referrerDomain: refDomain,
       searchQuery: sp.get('q'),
@@ -113,7 +130,8 @@ export async function GET(request: NextRequest, ctx: Ctx): Promise<NextResponse>
       pagePath: sp.get('from'),
       countryCode: request.headers.get('x-vercel-ip-country') || request.headers.get('cf-ipcountry') || null,
       deviceType: detectDeviceType(request.headers.get('user-agent')),
-      campaignId: sp.get('campaign_id'),
+      campaignId,
+      trafficType,
     });
   } catch (err) {
     console.error('[wavelead] follow_click tracking threw (ignored):', err);

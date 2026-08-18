@@ -5,6 +5,7 @@ import CategoryPills from '@/components/discovery/CategoryPills';
 import SectionHeader from '@/components/discovery/SectionHeader';
 import ChannelCard from '@/components/discovery/ChannelCard';
 import EmptyState from '@/components/discovery/EmptyState';
+import SponsoredCard from '@/components/promo/SponsoredCard';
 import OwnerGrowthCta from '@/components/discovery/OwnerGrowthCta';
 import TopChannelsCountryPicker from '@/components/discovery/TopChannelsCountryPicker';
 import { discoveryService, type CategoryWithCount, type CountryWithCount } from '@/lib/services/discoveryService';
@@ -30,6 +31,11 @@ export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
   const bundle = await discoveryService.getHomepageBundle();
+  // M05.1: fetch a sponsored homepage candidate. Kept separate from organic.
+  const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
+  const sponsored = await promotionDeliveryService.selectCandidates({
+    placement: 'sponsored_homepage', anonymous_session_id: null, country_code: null,
+  }, 1).catch(() => []);
   const topCategories: CategoryWithCount[] = bundle.categories
     .slice()
     .sort((a, b) => b.channel_count - a.channel_count)
@@ -53,6 +59,7 @@ export default async function HomePage() {
           />
           {bundle.popular.length === 0 ? <EmptyState /> : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {sponsored[0] && <SponsoredCard data={sponsored[0]} sourcePath="/" />}
               {bundle.popular.map((c) => <ChannelCard key={c.id} channel={c} />)}
             </div>
           )}

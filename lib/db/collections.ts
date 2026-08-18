@@ -15,6 +15,10 @@ export const COLLECTIONS = {
   REPORTS: 'reports',
   AUDIT_LOGS: 'audit_logs',
   HOMEPAGE_SLOTS: 'homepage_slots',
+  PROMOTION_CAMPAIGNS: 'promotion_campaigns',
+  PROMOTION_RATE_CARDS: 'promotion_rate_cards',
+  CAMPAIGN_IMPRESSION_DEDUP: 'campaign_impression_dedup',
+  CAMPAIGN_DAILY_METRICS: 'campaign_daily_metrics',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

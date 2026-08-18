@@ -80,6 +80,7 @@ export interface BaseTrackInput {
   deviceType?: string | null;
   pagePath?: string | null;
   campaignId?: string | null;
+  trafficType?: 'organic' | 'sponsored';
   metadata?: Record<string, unknown>;
 }
 
@@ -91,6 +92,7 @@ function buildEvent(type: EventType, input: BaseTrackInput): EventRecord {
     user_id: input.userId,
     channel_id: input.channelId,
     campaign_id: input.campaignId ?? null,
+    traffic_type: input.trafficType === 'sponsored' && input.campaignId ? 'sponsored' : 'organic',
     source: normalizeSource(input.source),
     placement: input.placement ? String(input.placement).slice(0, 60) : null,
     referrer: input.referrer ? String(input.referrer).slice(0, 500) : null,

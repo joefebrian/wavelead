@@ -118,7 +118,34 @@ export async function runSeed({ force = false }: { force?: boolean } = {}): Prom
   }
 
   if (summary.categories === 0 && summary.channels === 0) summary.skipped = true;
+  await seedPromotionRateCards();
   return summary;
+}
+
+// ----- M05.1: Idempotent QA fixture: $2.00 CPM global rate per placement.
+// Production admins can override per placement + country via /admin/promotion-rates.
+async function seedPromotionRateCards(): Promise<void> {
+  const { promotionRateCardRepo } = await import('@/lib/repositories/promotionRepo');
+  const { SPONSORED_PLACEMENTS } = await import('@/lib/types');
+  const now = new Date();
+  for (const placement of SPONSORED_PLACEMENTS) {
+    const seed_key = `m051_default_global_${placement}`;
+    await promotionRateCardRepo.upsertBySeedKey(seed_key, {
+      id: `seed-${placement}`,
+      placement,
+      country_code: null,
+      pricing_model: 'cpm',
+      cpm_usd_minor: 200, // $2.00 CPM QA fixture
+      active: true,
+      effective_from: now,
+      effective_to: null,
+      is_fixture: true,
+      seed_key,
+      created_at: now,
+      updated_at: now,
+      created_by: 'seed',
+    });
+  }
 }
 
 export const SEED_METADATA = {
