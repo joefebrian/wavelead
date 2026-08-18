@@ -8,6 +8,7 @@ import { resolveActor, requireRole, ROLES } from '@/lib/auth/rbac';
 import { ok, fail, handleServiceError } from '@/lib/utils/response';
 import { applyCors } from '@/lib/utils/cors';
 import { rateLimit, clientKey } from '@/lib/auth/rateLimit';
+import { getVersionInfo } from '@/lib/utils/version';
 
 async function safeJson(request: NextRequest): Promise<Record<string, unknown>> {
   try { return await request.json(); } catch { return {}; }
@@ -26,7 +27,17 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
 
   try {
     if (route === '/health' && method === 'GET') {
-      return applyCors(ok({ status: 'ok', service: 'wavelead', time: new Date().toISOString() }), request);
+      const v = getVersionInfo();
+      return applyCors(ok({
+        status: 'ok',
+        service: 'wavelead',
+        time: new Date().toISOString(),
+        env: process.env.NODE_ENV || 'unknown',
+        version: v.commitShort,
+        commit: v.commit,
+        commitTime: v.commitTime,
+        branch: v.branch,
+      }), request);
     }
 
     // ---------- AUTH ----------
