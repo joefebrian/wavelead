@@ -119,5 +119,23 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { campaign_id: 1, date: 1 }, name: 'campaign_date' },
       { key: { date: -1 }, name: 'by_date' },
     ]),
+    // ---------- M06.0 Payments / Campaign Funding ----------
+    db.collection(COLLECTIONS.PAYMENT_FUNDING_ORDERS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      // Partial-filter unique so multiple in-flight rows can coexist with provider_order_id=null.
+      { key: { provider_order_id: 1 }, unique: true, name: 'uniq_provider_order', partialFilterExpression: { provider_order_id: { $type: 'string' } } },
+      { key: { campaign_id: 1, created_at: -1 }, name: 'by_campaign' },
+      { key: { owner_user_id: 1, status: 1 }, name: 'by_owner_status' },
+    ]),
+    db.collection(COLLECTIONS.CAMPAIGN_FUNDING_LEDGER).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { campaign_id: 1, created_at: 1 }, name: 'by_campaign_time' },
+      { key: { funding_id: 1, entry_type: 1 }, name: 'by_funding_type' },
+      { key: { idempotency_key: 1 }, unique: true, sparse: true, name: 'uniq_idempotency' },
+    ]),
+    db.collection(COLLECTIONS.PAYMENT_WEBHOOK_EVENTS).createIndexes([
+      { key: { provider_event_id: 1 }, unique: true, name: 'uniq_event' },
+      { key: { received_at: -1 }, name: 'received' },
+    ]),
   ]);
 }

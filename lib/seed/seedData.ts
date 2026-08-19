@@ -119,7 +119,35 @@ export async function runSeed({ force = false }: { force?: boolean } = {}): Prom
 
   if (summary.categories === 0 && summary.channels === 0) summary.skipped = true;
   await seedPromotionRateCards();
+  await grandfatherPreM06Campaigns();
   return summary;
+}
+
+// ----- M06.0: mark pre-existing already-approved campaigns as `legacy_waived`
+// so they keep serving after M06 gating goes live. Idempotent: only inserts a
+// waiver funding row when NO funding row exists yet for the campaign.
+async function grandfatherPreM06Campaigns(): Promise<void> {
+  const { promotionCampaignRepo } = await import('@/lib/repositories/promotionRepo');
+  const { paymentFundingOrderRepo } = await import('@/lib/repositories/paymentRepo');
+  const { v4: uuidv4 } = await import('uuid');
+  const camps = await promotionCampaignRepo.list({
+    status: { $in: ['approved', 'scheduled', 'active', 'paused'] },
+  } as unknown as Record<string, unknown>);
+  const now = new Date();
+  for (const c of camps) {
+    const existing = await paymentFundingOrderRepo.listForCampaign(c.id);
+    if (existing.length > 0) continue;
+    await paymentFundingOrderRepo.insert({
+      id: uuidv4(), campaign_id: c.id, owner_user_id: c.owner_user_id,
+      provider: 'paypal', provider_order_id: null, provider_capture_id: null,
+      currency: 'USD', amount_minor: 0, amount_captured_minor: 0, amount_refunded_minor: 0,
+      amount_usd_micros: 0,
+      status: 'legacy_waived',
+      approve_url: null, return_url: null, cancel_url: null,
+      paid_at: null, cancelled_at: null, refunded_at: null,
+      created_at: now, updated_at: now,
+    });
+  }
 }
 
 // ----- M05.1: Idempotent QA fixture: $2.00 CPM global rate per placement.

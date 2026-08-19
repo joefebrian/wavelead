@@ -3602,3 +3602,39 @@ agent_communication:
       RECOMMENDATION:
       ===============
       Main agent should summarize and finish. M05.1 is ready for production deployment.
+
+# ==================================================================================
+# M06.0 — PAYMENT PROVIDER REVISION (PayPal Sandbox) — PHASE 1 BACKEND VALIDATION
+# ==================================================================================
+
+M06.0 PHASE 1 BACKEND VALIDATION
+================================
+PayPal mode:                       SANDBOX
+Client ID:                         AVAILABLE (server-side only)
+Client Secret:                     AVAILABLE (server-side only, NOT rotated yet — user pending)
+Webhook ID:                        MISSING (user has one, not yet delivered to server)
+Secrets server-side only:          YES  (no NEXT_PUBLIC_PAYPAL_* leaks; verified via grep)
+Sandbox connectivity:              PASS (OAuth token OK, expires_in≈31000s)
+Targeted tests:                    PASS 15/15 (tests/m060.test.ts)
+TypeScript (tsc --noEmit):         PASS
+Order creation smoke:              PASS ($20.00 USD sandbox order created, has approve_url)
+Webhook code:                      PASS (invalid signature → 400; dedup via event-id at repo layer)
+Sandbox webhook E2E:               PENDING WEBHOOK ID (route wired; live delivery not yet tested)
+Amount tampering protection:       PASS (server sets amount from campaign.budget_total_usd_minor; client input ignored)
+Cross-owner protection:            PASS (owner-only funding — 403 on mismatch)
+Duplicate webhook idempotency:     PASS (10-way parallel; exactly 1 ledger credit)
+Backend testing-agent runs:        0  (per user credit-efficiency protocol)
+External PayPal API calls:         3  (1 OAuth + 1 order-create smoke + 1 secondary OAuth inside adapter)
+
+FIXES APPLIED THIS PHASE:
+  1. `tests/m060.test.ts`: switched to per-request random X-Forwarded-For to bypass signup rate limit (5/60s).
+  2. `tests/m060.test.ts`: aligned error assertions with HttpError.status (was expecting statusCode).
+  3. `tests/m060.test.ts`: refactored duplicate-webhook-idempotency case to exercise repo/service layer directly (mock provider cannot be injected into a separately-running Next.js server process).
+  4. `lib/db/indexes.ts`: replaced sparse-unique on `provider_order_id` with partialFilterExpression `{ provider_order_id: { $type: 'string' } }` — sparse still blocks multiple null-valued docs; partial filter fixes that.
+  5. `scripts/paypal_sandbox_smoke.mjs`: added one-shot connectivity + order-creation smoke; secrets loaded from `.env` and never printed.
+
+BLOCKERS FOR PHASE 2:
+  - P0: `PAYPAL_WEBHOOK_ID` must be pushed to server env before we can validate live webhook delivery from PayPal Sandbox.
+  - P0: `PAYPAL_CLIENT_SECRET` should be rotated (was leaked in chat during handoff) and the new value pushed via Emergent Secrets.
+
+READY FOR M06.0 PHASE 2: NO (blocked on WEBHOOK ID + rotated secret)

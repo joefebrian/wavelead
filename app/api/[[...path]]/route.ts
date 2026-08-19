@@ -419,6 +419,85 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ tracked: true }), request);
     }
 
+    // ---------- M06.0 PAYMENTS / CAMPAIGN FUNDING ----------
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'promotions' && path[3] === 'funding' && method === 'POST') {
+      const { campaignFundingService } = await import('@/lib/services/payments/campaignFundingService');
+      const f = await campaignFundingService.createFundingForCampaign(await resolveActor(request), path[2]);
+      return applyCors(ok({ funding: { id: f.id, status: f.status, approve_url: f.approve_url, amount_minor: f.amount_minor, currency: f.currency } }), request);
+    }
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'promotions' && path[3] === 'funding-summary' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+      await promotionCampaignService.getForOwner(actor, path[2]); // enforces ownership
+      const { campaignFundingService } = await import('@/lib/services/payments/campaignFundingService');
+      return applyCors(ok(await campaignFundingService.fundingSummary(path[2])), request);
+    }
+    if (path.length === 3 && path[0] === 'payments' && path[1] === 'funding' && method === 'GET') {
+      const { campaignFundingService } = await import('@/lib/services/payments/campaignFundingService');
+      return applyCors(ok({ funding: await campaignFundingService.getFunding(await resolveActor(request), path[2]) }), request);
+    }
+    if (path.length === 4 && path[0] === 'payments' && path[1] === 'funding' && path[3] === 'capture' && method === 'POST') {
+      // Buyer-return capture. Cross-owner isolation: only the funding owner (or admin) may trigger.
+      const actor = await resolveActor(request);
+      const { campaignFundingService } = await import('@/lib/services/payments/campaignFundingService');
+      await campaignFundingService.getFunding(actor, path[2]); // authz guard
+      const funding = await campaignFundingService.captureAndFinalize(path[2]);
+      return applyCors(ok({ funding: { id: funding.id, status: funding.status } }), request);
+    }
+    // PayPal webhook. Public endpoint. Verifies signature via PayPal API.
+    if (route === '/payments/paypal/webhook' && method === 'POST') {
+      const raw_body = await request.text();
+      const headers: Record<string, string> = {};
+      request.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
+      const { getPaymentProvider } = await import('@/lib/services/payments/providerFactory');
+      const provider = getPaymentProvider();
+      const v = await provider.verifyWebhook({ headers, raw_body });
+      if (!v.valid) {
+        // Never leak reason to caller \u2014 200 with generic body to avoid replay pings.
+        return applyCors(fail(400, 'invalid_webhook'), request);
+      }
+      const { paymentWebhookEventRepo } = await import('@/lib/repositories/paymentRepo');
+      const { v4: uuidv4 } = await import('uuid');
+      const { inserted } = await paymentWebhookEventRepo.recordIfAbsent({
+        id: uuidv4(), provider: 'paypal', provider_event_id: v.event_id!, event_type: v.event_type!,
+        raw_payload: JSON.parse(raw_body || '{}'), processed: false, processed_at: null, process_error: null,
+        received_at: new Date(),
+      });
+      if (!inserted) {
+        // Duplicate delivery \u2014 already recorded, safe to ack.
+        return applyCors(ok({ recorded: true, duplicate: true }), request);
+      }
+      try {
+        const { campaignFundingService } = await import('@/lib/services/payments/campaignFundingService');
+        const resource = (v.resource || {}) as Record<string, unknown>;
+        if (v.event_type === 'PAYMENT.CAPTURE.COMPLETED') {
+          // PayPal capture resource carries supplementary_data.related_ids.order_id
+          const orderId = extractPayPalOrderId(resource);
+          const captureId = String(resource.id || '');
+          const amtVal = ((resource.amount || {}) as { value?: string }).value;
+          const amt_minor = amtVal ? Math.round(parseFloat(amtVal) * 100) : 0;
+          if (orderId && captureId && amt_minor > 0) {
+            await campaignFundingService.finalizePaidByProviderOrderId(orderId, captureId, amt_minor);
+          }
+        } else if (v.event_type === 'PAYMENT.CAPTURE.REFUNDED' || v.event_type === 'PAYMENT.CAPTURE.REVERSED') {
+          const orderId = extractPayPalOrderId(resource);
+          const amtVal = ((resource.amount || {}) as { value?: string }).value;
+          const amt_minor = amtVal ? Math.round(parseFloat(amtVal) * 100) : 0;
+          const refundRef = String(resource.id || '');
+          if (orderId && refundRef && amt_minor > 0) {
+            await campaignFundingService.recordRefund(orderId, amt_minor, refundRef);
+          }
+        }
+        // CHECKOUT.ORDER.APPROVED and PAYMENT.CAPTURE.DENIED are audit-only; the
+        // capture flow (return callback) is the source of truth for pending\u2192paid.
+        await paymentWebhookEventRepo.markProcessed(v.event_id!, true, null);
+      } catch (err) {
+        await paymentWebhookEventRepo.markProcessed(v.event_id!, false, (err as Error).message.slice(0, 500));
+        return applyCors(fail(500, 'processing_failed'), request);
+      }
+      return applyCors(ok({ recorded: true }), request);
+    }
+
     // ---------- M05.1 PROMOTE CHANNEL / SPONSORED DISCOVERY ----------
     // Owner endpoints
     if (route === '/owner/promotions' && method === 'GET') {
@@ -599,3 +678,19 @@ export const POST = handler;
 export const PUT = handler;
 export const PATCH = handler;
 export const DELETE = handler;
+
+// Extract PayPal Order id from a PAYMENT.CAPTURE.* webhook resource.
+// PayPal puts it in `supplementary_data.related_ids.order_id` on captures
+// and `supplementary_data.related_ids.capture_id + ... .order_id` on refunds.
+// Falls back to walking the `links` array (self/up/order) as a last resort.
+function extractPayPalOrderId(resource: Record<string, unknown>): string | null {
+  const sup = resource.supplementary_data as { related_ids?: { order_id?: string } } | undefined;
+  if (sup?.related_ids?.order_id) return sup.related_ids.order_id;
+  const links = (resource.links || []) as Array<{ rel?: string; href?: string }>;
+  const up = links.find((l) => l.rel === 'up' && typeof l.href === 'string');
+  if (up?.href) {
+    const m = up.href.match(/\/orders\/([^/]+)/);
+    if (m) return m[1];
+  }
+  return null;
+}

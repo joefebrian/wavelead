@@ -478,3 +478,87 @@ export interface CampaignDailyMetric {
   spend_usd_minor: number;
   last_aggregated_at: Date;
 }
+
+// =====================================================================
+// M06.0 — Payments / Campaign Funding
+// =====================================================================
+
+// Funding lifecycle (provider-neutral):
+//   created           — internal record exists, no provider order yet
+//   checkout_created  — provider order created, buyer has not approved
+//   pending           — buyer approved but capture not yet confirmed
+//   paid              — capture confirmed AND campaign_funding_ledger posted
+//   failed            — capture explicitly failed
+//   cancelled         — buyer cancelled or order voided
+//   partially_refunded / refunded — reversal path
+//   legacy_waived     — pre-M06 campaigns migrated in-place; no payment required
+export type FundingStatus =
+  | 'created'
+  | 'checkout_created'
+  | 'pending'
+  | 'paid'
+  | 'failed'
+  | 'cancelled'
+  | 'partially_refunded'
+  | 'refunded'
+  | 'legacy_waived';
+
+export interface PaymentFundingOrder {
+  id: string;
+  campaign_id: string;
+  owner_user_id: string;
+  provider: 'paypal' | 'stripe' | 'mock';
+  provider_order_id: string | null;
+  provider_capture_id: string | null;
+  currency: string;                    // ISO 4217
+  amount_minor: number;                // funding request in payment-currency minor units
+  amount_captured_minor: number;
+  amount_refunded_minor: number;
+  amount_usd_micros: number;           // frozen conversion to internal ad ledger currency
+  status: FundingStatus;
+  approve_url: string | null;          // buyer redirect target (safe for client)
+  return_url: string | null;
+  cancel_url: string | null;
+  paid_at: Date | null;
+  cancelled_at: Date | null;
+  refunded_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+// Immutable double-entry ledger row. Positive entries credit the campaign;
+// negative-signed reversal rows record refunds. Balance is derived by summing
+// all rows for a campaign (never stored directly).
+export type LedgerEntryType =
+  | 'funding_credit'    // paid capture → +amount
+  | 'spend_debit'       // future: reserved for delivery spend
+  | 'refund_debit'      // refund → -amount
+  | 'refund_reversal';  // reversal of a refund → +amount
+
+export interface CampaignFundingLedgerEntry {
+  id: string;
+  campaign_id: string;
+  funding_id: string | null;           // link to the funding order (nullable for adjustments)
+  entry_type: LedgerEntryType;
+  direction: 'credit' | 'debit';
+  amount_usd_micros: number;           // absolute value; sign is derived from direction
+  balance_after_usd_micros: number | null;   // optional snapshot for auditing
+  provider_reference: string | null;   // e.g. capture id / refund id
+  idempotency_key: string;             // unique — deduplicates concurrent postings
+  metadata: Record<string, unknown>;
+  created_at: Date;
+}
+
+// Persistence log for verified provider webhooks. Provider event id is the
+// idempotency key — duplicate deliveries never mutate business state twice.
+export interface PaymentWebhookEvent {
+  id: string;
+  provider: 'paypal' | 'stripe' | 'mock';
+  provider_event_id: string;
+  event_type: string;
+  raw_payload: Record<string, unknown>;
+  processed: boolean;
+  processed_at: Date | null;
+  process_error: string | null;
+  received_at: Date;
+}

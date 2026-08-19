@@ -98,10 +98,14 @@ export const promotionDeliveryService = {
     const now = new Date();
     const rawCamps = await loadEligibleCampaigns(ctx.placement);
     const candidates: CandidateWithChannel[] = [];
+    const { campaignFundingService } = await import('@/lib/services/payments/campaignFundingService');
     for (const raw of rawCamps) {
       const camp = await reconcileCampaign(raw, now);
       if (camp.status !== 'active') continue;
       if (camp.estimated_spend_usd_minor >= camp.budget_total_usd_minor) continue;
+      // M06.0: campaigns can only deliver after they are funded (or waived).
+      const funding = await campaignFundingService.fundingSummary(camp.id);
+      if (!funding.funded) continue;
       const ch = await channelRepo.findById(camp.channel_id);
       if (!ch || ch.status !== 'approved') continue;
       const vs = (ch as unknown as { verification_status?: string }).verification_status;
