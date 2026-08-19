@@ -92,6 +92,18 @@ async function seedActiveCampaign(ownerId: string, channelId: string, opts: {
     activated_at: now, paused_at: null, completed_at: null, cancelled_at: null,
   };
   await promotionCampaignRepo.insert(camp);
+  // M06.0 delivery gate: an "active" M05.1 test fixture also needs a funding
+  // row (legacy_waived) or delivery will skip it.
+  const { paymentFundingOrderRepo } = await import('@/lib/repositories/paymentRepo');
+  await paymentFundingOrderRepo.insert({
+    id: uuidv4(), campaign_id: camp.id, owner_user_id: ownerId,
+    provider: 'paypal', provider_order_id: null, provider_capture_id: null,
+    currency: 'USD', amount_minor: 0, amount_captured_minor: 0, amount_refunded_minor: 0,
+    amount_usd_micros: 0, status: 'legacy_waived',
+    approve_url: null, return_url: null, cancel_url: null,
+    paid_at: null, cancelled_at: null, refunded_at: null,
+    created_at: now, updated_at: now,
+  });
   return camp;
 }
 

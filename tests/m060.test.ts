@@ -140,6 +140,109 @@ afterAll(async () => {
   });
 });
 
+describe('M06.0.6 — Phase 2 (Fund UX): client tampering, race, lifecycle', () => {
+  it('client-supplied amount/currency in funding request body is ignored — server uses campaign budget', async () => {
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    // Even if a caller passed { amount_minor: 1, currency: 'IDR' } the service
+    // takes ZERO user input — the interface accepts only (actor, campaign_id).
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    expect(f.amount_minor).toBe(2000);
+    expect(f.currency).toBe('USD');
+    const call = mock.createCalls.find((c: any) => c.funding_id === f.id) as any;
+    expect(call.amount_minor).toBe(2000);
+    expect(call.currency).toBe('USD');
+  });
+
+  it('browser-return query strings (?status=paid) cannot mark funding paid — only server capture can', async () => {
+    // We hit the browser-return route directly with a bogus success-looking
+    // query on the funding endpoint. The route ignores query state entirely
+    // and calls captureAndFinalize which needs a real provider capture. With
+    // the mock provider set to `failed`, the funding must stay unpaid despite
+    // the client saying paid.
+    mock.captureResult = 'failed';
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    const finalOrder = await campaignFundingService.captureAndFinalize(f.id);
+    expect(finalOrder.status).not.toBe('paid');
+    const summary = await campaignFundingService.fundingSummary(camp.id);
+    expect(summary.funded).toBe(false);
+  });
+
+  it('captureFundingOrder is an idempotent alias — 20 concurrent calls, exactly 1 ledger credit', async () => {
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    await Promise.all(Array.from({ length: 20 }, () => campaignFundingService.captureFundingOrder(f.id)));
+    const ledger = await campaignFundingLedgerRepo.list({ campaign_id: camp.id });
+    const credits = ledger.filter((l) => l.entry_type === 'funding_credit');
+    expect(credits.length).toBe(1);
+    const balance = await campaignFundingLedgerRepo.balanceMicros(camp.id);
+    expect(balance).toBe(20_000_000);
+    const finalOrder = await paymentFundingOrderRepo.findById(f.id);
+    expect(finalOrder!.status).toBe('paid');
+  });
+
+  it('browser-return + CHECKOUT.ORDER.APPROVED webhook race → single capture, single ledger row', async () => {
+    // Simulates the CHECKOUT.ORDER.APPROVED webhook branch calling
+    // captureFundingOrderByProviderOrderId at nearly the same time as the
+    // browser-return route calling captureFundingOrder(funding_id).
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    const results = await Promise.all([
+      campaignFundingService.captureFundingOrder(f.id),
+      campaignFundingService.captureFundingOrderByProviderOrderId(f.provider_order_id!),
+      campaignFundingService.captureFundingOrder(f.id),
+      campaignFundingService.captureFundingOrderByProviderOrderId(f.provider_order_id!),
+    ]);
+    expect(results.every((r) => r && r.status === 'paid')).toBe(true);
+    const ledger = await campaignFundingLedgerRepo.list({ campaign_id: camp.id });
+    expect(ledger.filter((l) => l.entry_type === 'funding_credit').length).toBe(1);
+  });
+
+  it('funded approved campaign within schedule → auto-reconciled to active', async () => {
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    await campaignFundingService.captureAndFinalize(f.id);
+    const reloaded = await promotionCampaignRepo.findById(camp.id);
+    expect(reloaded!.status).toBe('active');
+    expect(reloaded!.activated_at).toBeTruthy();
+  });
+
+  it('funded approved campaign with future start_at → auto-reconciled to scheduled (not active yet)', async () => {
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    // Push start_at into the future.
+    const future = new Date(Date.now() + 3600_000);
+    await promotionCampaignRepo.update(camp.id, { start_at: future });
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    await campaignFundingService.captureAndFinalize(f.id);
+    const reloaded = await promotionCampaignRepo.findById(camp.id);
+    expect(reloaded!.status).toBe('scheduled');
+  });
+
+  it('funded approved campaign whose end_at already passed → reconciled to completed (not active)', async () => {
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    // Fund BEFORE moving end_at back — reconcile happens on capture using the current window.
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    // Simulate an approved-but-stale campaign whose window closed while checkout was open.
+    await promotionCampaignRepo.update(camp.id, { end_at: new Date(Date.now() - 1000) });
+    await campaignFundingService.captureAndFinalize(f.id);
+    const reloaded = await promotionCampaignRepo.findById(camp.id);
+    expect(reloaded!.status).toBe('completed');
+    // And such an expired campaign must NOT deliver even though it's funded.
+    const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
+    const cands = await promotionDeliveryService.selectCandidates({
+      placement: 'sponsored_search', anonymous_session_id: `s-${Date.now()}`,
+    }, 50);
+    expect(cands.find((c) => c.campaign_id === camp.id)).toBeUndefined();
+  });
+});
+
 describe('M06.0.1 — Funding creation authz + amount enforcement', () => {
   it('happy path: owner funds own approved campaign; amount = campaign budget', async () => {
     const owner = await signup();

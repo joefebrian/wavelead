@@ -432,6 +432,25 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const { campaignFundingService } = await import('@/lib/services/payments/campaignFundingService');
       return applyCors(ok(await campaignFundingService.fundingSummary(path[2])), request);
     }
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'promotions' && path[3] === 'funding-orders' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+      await promotionCampaignService.getForOwner(actor, path[2]); // enforces ownership
+      const { paymentFundingOrderRepo } = await import('@/lib/repositories/paymentRepo');
+      const rows = await paymentFundingOrderRepo.listForCampaign(path[2]);
+      // Never leak provider-raw responses or captured amounts on other users.
+      const items = rows.map((r) => ({
+        id: r.id, status: r.status,
+        amount_minor: r.amount_minor,
+        amount_captured_minor: r.amount_captured_minor,
+        amount_refunded_minor: r.amount_refunded_minor,
+        currency: r.currency,
+        approve_url: r.approve_url,
+        provider_order_id: r.provider_order_id,
+        created_at: r.created_at,
+      }));
+      return applyCors(ok({ items }), request);
+    }
     if (path.length === 3 && path[0] === 'payments' && path[1] === 'funding' && method === 'GET') {
       const { campaignFundingService } = await import('@/lib/services/payments/campaignFundingService');
       return applyCors(ok({ funding: await campaignFundingService.getFunding(await resolveActor(request), path[2]) }), request);
@@ -479,6 +498,13 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
           if (orderId && captureId && amt_minor > 0) {
             await campaignFundingService.finalizePaidByProviderOrderId(orderId, captureId, amt_minor);
           }
+        } else if (v.event_type === 'CHECKOUT.ORDER.APPROVED') {
+          // Buyer approved on PayPal side. Trigger the same idempotent capture
+          // pipeline as the browser-return route — either race can win.
+          const orderId = String(resource.id || '');
+          if (orderId) {
+            try { await campaignFundingService.captureFundingOrderByProviderOrderId(orderId); } catch { /* server-side capture may race with return-callback; the ledger guard dedupes */ }
+          }
         } else if (v.event_type === 'PAYMENT.CAPTURE.REFUNDED' || v.event_type === 'PAYMENT.CAPTURE.REVERSED') {
           const orderId = extractPayPalOrderId(resource);
           const amtVal = ((resource.amount || {}) as { value?: string }).value;
@@ -488,8 +514,8 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
             await campaignFundingService.recordRefund(orderId, amt_minor, refundRef);
           }
         }
-        // CHECKOUT.ORDER.APPROVED and PAYMENT.CAPTURE.DENIED are audit-only; the
-        // capture flow (return callback) is the source of truth for pending\u2192paid.
+        // PAYMENT.CAPTURE.DENIED is audit-only; the capture flow already marks
+        // the funding as failed when PayPal declines the instrument.
         await paymentWebhookEventRepo.markProcessed(v.event_id!, true, null);
       } catch (err) {
         await paymentWebhookEventRepo.markProcessed(v.event_id!, false, (err as Error).message.slice(0, 500));

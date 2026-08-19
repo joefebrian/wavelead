@@ -172,8 +172,24 @@ export class PayPalPaymentProvider implements PaymentProvider {
         };
       }>;
       message?: string;
+      name?: string;
+      details?: Array<{ issue?: string; description?: string }>;
     };
     if (!res.ok) {
+      // ORDER_ALREADY_CAPTURED (422) — either the return callback and the webhook
+      // both raced to capture, or a retry hit an already-captured order. Fall back
+      // to retrieval so the ledger still gets its one authoritative record.
+      const alreadyCaptured = res.status === 422 && (j.details || []).some((d) => d.issue === 'ORDER_ALREADY_CAPTURED');
+      if (alreadyCaptured) {
+        return await this.retrievePayment({ provider_order_id: input.provider_order_id }).then((r) => ({
+          provider_order_id: r.provider_order_id,
+          provider_capture_id: r.provider_capture_id,
+          internal_status: r.internal_status,
+          amount_captured_minor: r.amount_minor,
+          currency: r.currency,
+          raw: r.raw,
+        }));
+      }
       // 422 UNPROCESSABLE_ENTITY (INSTRUMENT_DECLINED, PAYER_ACTION_REQUIRED, etc.) is a failed capture, not an infra error.
       return {
         provider_order_id: input.provider_order_id,

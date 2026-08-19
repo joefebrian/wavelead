@@ -8,6 +8,7 @@ import { promotionCampaignRepo } from '@/lib/repositories/promotionRepo';
 import { paymentFundingOrderRepo, campaignFundingLedgerRepo } from '@/lib/repositories/paymentRepo';
 import { getPaymentProvider } from './providerFactory';
 import { HttpError, ROLES, rankOf } from '@/lib/auth/rbac';
+import { reconcileCampaign } from '@/lib/services/promotion/campaignStateService';
 import type { Actor, PaymentFundingOrder, PromotionCampaign } from '@/lib/types';
 
 // $1.00 = 1,000,000 USD micros. Payment currency USD; conversion is exact until
@@ -118,6 +119,28 @@ export const campaignFundingService = {
   },
 
   /**
+   * Public alias for use by both the browser-return route AND the
+   * CHECKOUT.ORDER.APPROVED webhook branch. Same idempotent single source of
+   * truth for turning a checkout into a paid funding order — never split this
+   * business logic across call sites.
+   */
+  async captureFundingOrder(funding_id: string): Promise<PaymentFundingOrder> {
+    return this.captureAndFinalize(funding_id);
+  },
+
+  /**
+   * Look up funding by provider order id and drive the same capture pipeline.
+   * Used by the CHECKOUT.ORDER.APPROVED webhook, which only knows the PayPal
+   * order id. Safe to call concurrently with the browser-return capture; the
+   * transition guard + ledger unique-index dedup the second caller.
+   */
+  async captureFundingOrderByProviderOrderId(provider_order_id: string): Promise<PaymentFundingOrder | null> {
+    const f = await paymentFundingOrderRepo.findByProviderOrderId(provider_order_id);
+    if (!f) return null;
+    return this.captureAndFinalize(f.id);
+  },
+
+  /**
    * Webhook-driven finalize. Same code path as return-callback capture; the
    * ledger idempotency key ensures only one credit is ever posted per funding.
    */
@@ -196,5 +219,11 @@ async function finalizePaid(f: PaymentFundingOrder, provider_capture_id: string,
     f.id, ['created', 'checkout_created', 'pending'], 'paid',
     { provider_capture_id, amount_captured_minor, paid_at: now },
   );
+  // Campaign lifecycle reconciliation. approved+funded within schedule → active;
+  // future start_at → scheduled; end_at passed → completed. Safe & idempotent.
+  const camp = await promotionCampaignRepo.findById(f.campaign_id);
+  if (camp) {
+    try { await reconcileCampaign(camp, now); } catch { /* best-effort; delivery gate re-checks anyway */ }
+  }
   return (await paymentFundingOrderRepo.findById(f.id))!;
 }

@@ -3,12 +3,14 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { promotionCampaignService } from '@/lib/services/promotion/campaignService';
 import { promotionReportingService } from '@/lib/services/promotion/reportingService';
+import { campaignFundingService } from '@/lib/services/payments/campaignFundingService';
+import { paymentFundingOrderRepo } from '@/lib/repositories/paymentRepo';
 import CampaignActions from './CampaignActions';
+import FundingSection from './FundingSection';
 
 export const metadata: Metadata = { title: 'Campaign — WaveLead', robots: { index: false, follow: false } };
 export const dynamic = 'force-dynamic';
@@ -25,6 +27,22 @@ export default async function PromotionDetailPage({ params }: { params: Promise<
   let camp; try { camp = await promotionCampaignService.getForOwner(actor, id); } catch { notFound(); }
   const report = await promotionReportingService.forOwner(actor, id);
   const o = report.overall;
+  const fundingSummary = await campaignFundingService.fundingSummary(camp.id);
+  const fundingOrders = await paymentFundingOrderRepo.listForCampaign(camp.id);
+  const latestOrder = fundingOrders[0] || null;
+  // Sanitize funding order for the client — never leak provider-internal
+  // metadata such as raw PayPal responses.
+  const latestOrderPublic = latestOrder ? {
+    id: latestOrder.id,
+    status: latestOrder.status,
+    amount_minor: latestOrder.amount_minor,
+    amount_captured_minor: latestOrder.amount_captured_minor,
+    amount_refunded_minor: latestOrder.amount_refunded_minor,
+    currency: latestOrder.currency,
+    approve_url: latestOrder.approve_url,
+    provider_order_id: latestOrder.provider_order_id,
+    created_at: latestOrder.created_at instanceof Date ? latestOrder.created_at.toISOString() : String(latestOrder.created_at),
+  } : null;
 
   return (
     <>
@@ -38,6 +56,15 @@ export default async function PromotionDetailPage({ params }: { params: Promise<
           </div>
           <CampaignActions id={camp.id} status={camp.status} />
         </div>
+
+        <FundingSection
+          campaignId={camp.id}
+          campaignStatus={camp.status}
+          budgetMinor={camp.budget_total_usd_minor}
+          estimatedSpendMinor={camp.estimated_spend_usd_minor}
+          initialSummary={fundingSummary}
+          latestOrder={latestOrderPublic}
+        />
 
         <section className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-3">
           <Kpi label="Sponsored impressions" value={o.sponsored_impressions.toLocaleString()} />

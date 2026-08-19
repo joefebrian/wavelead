@@ -3664,3 +3664,69 @@ Secrets pushed into /app/.env, Nextjs restarted, re-smoked:
        the local invalid-webhook branch (webhook_id_not_configured).
 
 READY FOR M06.0 PHASE 2 (Fund Campaign UI): YES
+
+# ==================================================================================
+# M06.0 — PHASE 2 (FUND CAMPAIGN OWNER UX) VALIDATION
+# ==================================================================================
+
+SECRET ROTATION:
+  New secret installed securely:      YES (currently in .env; user rotating one more time via Emergent Secrets)
+  OAuth smoke:                        PASS (expires_in ≈ 30467s)
+  Secret exposed:                     NO (server-side only; not in NEXT_PUBLIC_*; not in logs)
+
+OWNER FUNDING UI  (/dashboard/promotions/[id])
+  Fund CTA:                           PASS ("Fund Campaign with PayPal — $20.00" visible on approved+unfunded)
+  Awaiting-payment state:             PASS (Continue-to-PayPal + "I've completed payment" retry)
+  Processing state:                   PASS (server-side pending; check-status retry)
+  Funded state:                       PASS (Budget / Spent / Remaining tiles + Funded badge)
+  Failed/retry state:                 PASS (Try Again reopens a fresh order)
+  Cancelled state:                    PASS (Fund again CTA)
+  Legacy-waived state:                PASS ("Legacy Campaign — payment requirement waived")
+  Refund/partial-refund state:        PASS (badge + tiles reflect authoritative state)
+
+PAYPAL:
+  Order creation:                     PASS (server derives amount from campaign; client body ignored)
+  Server amount enforcement:          PASS (createFundingForCampaign takes only actor + campaign_id)
+  Approval redirect:                  PASS (approve_url returned to client, client redirected)
+  Server capture:                     PASS (captureFundingOrder — single idempotent service)
+  Capture idempotency:                PASS (20-way concurrent → 1 ledger credit)
+  Browser/webhook race:               PASS (return + CHECKOUT.ORDER.APPROVED webhook race → 1 credit; also covered by ORDER_ALREADY_CAPTURED fallback to retrievePayment)
+
+SECURITY:
+  Client status tampering:            PASS (?status=paid ignored; return handler POSTs only funding_id; server is authority)
+  Cross-owner:                        PASS (403 on funding creation; funding/getFunding gate on ownership)
+  Client amount tampering:            PASS (interface accepts no amount/currency; server derives from campaign.budget_total_usd_minor)
+  Webhook verification:               PASS (invalid signature → 400; sandbox laxity known; downstream requires orderId+captureId+amt_minor>0)
+
+LIFECYCLE:
+  Funded → active:                    PASS (approved + funded + in-window → active; activated_at set)
+  Funded → scheduled:                 PASS (approved + funded + future start_at → scheduled)
+  Expired → blocked:                  PASS (end_at passed → completed; not delivered)
+
+TARGETED TESTS:              22/22 (tests/m060.test.ts)
+REGRESSION (M05.1):          33/33 (tests/m051.test.ts) — seedActiveCampaign helper updated to add legacy_waived funding row
+TypeScript:                  PASS (tsc --noEmit)
+
+Responsive smoke (localhost):
+  390:                         PASS — Fund CTA full-width; no overflow; readable stat tiles
+  768:                         PASS — Budget/Required stack 2-col; CTA readable; no overflow
+  1440:                        PASS — 2-col stat tiles; CTA prominent; no overflow
+
+Return-URL defense (browser query ?funding=<bogus>&status=paid):
+  URL stripped:                YES (router.replace removes funding+status)
+  Funded badge shown:          NO (server-authoritative — bogus id → "Funding order not found")
+  Error message shown:         YES
+
+External PayPal API calls:  2  (1 OAuth + 1 order-create smoke; no live sandbox order approve/capture — that belongs to Phase 3 controlled QA)
+Agent runs:                 Backend 0, Frontend 0
+
+READY FOR PHASE 3:           YES
+
+Files touched in Phase 2:
+  - lib/services/payments/campaignFundingService.ts   (captureFundingOrder alias + captureFundingOrderByProviderOrderId + reconcileCampaign after finalizePaid)
+  - lib/services/payments/paypalProvider.ts            (ORDER_ALREADY_CAPTURED → retrievePayment fallback)
+  - app/api/[[...path]]/route.ts                       (webhook CHECKOUT.ORDER.APPROVED branch + GET funding-orders endpoint)
+  - app/dashboard/promotions/[id]/page.tsx             (funding summary + latest order + FundingSection mount)
+  - app/dashboard/promotions/[id]/FundingSection.tsx   (new; funding UX per state)
+  - tests/m060.test.ts                                 (+7 Phase 2 targeted tests; 22/22 total)
+  - tests/m051.test.ts                                 (seedActiveCampaign now inserts legacy_waived row for M06 delivery gate)
