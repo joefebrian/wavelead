@@ -12,6 +12,21 @@ import type { Category, Channel, PublicChannel } from '@/lib/types';
 
 const sanitize = sanitizeChannel;
 
+// M06 release hardening: hide obvious test/dev fixture channels from all
+// public discovery surfaces. Test fixtures use slugs starting with `test-`
+// and names starting with `Test `. We match at the discovery boundary (not
+// at insert) so previously-created rows are also hidden without deleting
+// their history. Financial ledger data is never touched by this filter.
+const PUBLIC_TEST_FIXTURE_EXCLUSION = {
+  slug: { $not: { $regex: '^test-', $options: 'i' } },
+  name: { $not: { $regex: '^Test ', $options: 'i' } },
+} as const;
+
+/** Merge the public-safe filter with a caller-supplied filter. */
+function publicFilter<T>(base: T): T {
+  return { ...(base as Record<string, unknown>), ...PUBLIC_TEST_FIXTURE_EXCLUSION } as unknown as T;
+}
+
 export interface CategoryWithCount extends Category { channel_count: number; }
 export interface CountryWithCount { code: string; slug: string; name: string; flag: string; channel_count: number; }
 
@@ -33,7 +48,7 @@ export const discoveryService = {
     return fillSection('popular', limit, async () => {
       // Fallback: featured then follower_count. Approved only.
       const items = await channelRepo.list({
-        filter: { status: 'approved' },
+        filter: publicFilter({ status: 'approved' }),
         sort: { is_featured: -1, follower_count: -1 },
         limit: limit * 2,
       });
@@ -45,7 +60,7 @@ export const discoveryService = {
     return fillSection('new_noteworthy', limit, async () => {
       // Fallback: newest active approved channels.
       const items = await channelRepo.list({
-        filter: { status: 'approved', activity_level: 'active' },
+        filter: publicFilter({ status: 'approved', activity_level: 'active' }),
         sort: { published_at: -1, is_featured: -1 },
         limit: limit * 2,
       });
@@ -56,7 +71,7 @@ export const discoveryService = {
   async getFeatured(limit = 6): Promise<PublicChannel[]> {
     return fillSection('featured', limit, async () => {
       const items = await channelRepo.list({
-        filter: { status: 'approved', is_featured: true },
+        filter: publicFilter({ status: 'approved', is_featured: true }),
         sort: { follower_count: -1 },
         limit: limit * 2,
       });
@@ -87,7 +102,7 @@ export const discoveryService = {
       getCollection<Channel>(COLLECTIONS.CHANNELS),
     ]);
     const agg = await coll.aggregate<{ _id: string; count: number }>([
-      { $match: { status: 'approved' } },
+      { $match: publicFilter({ status: 'approved' }) },
       { $group: { _id: '$category_id', count: { $sum: 1 } } },
     ]).toArray();
     const byCat = new Map<string, number>(agg.map((r) => [r._id, r.count]));
@@ -97,7 +112,7 @@ export const discoveryService = {
   async getCountryCounts(): Promise<CountryWithCount[]> {
     const coll = await getCollection<Channel>(COLLECTIONS.CHANNELS);
     const agg = await coll.aggregate<{ _id: string; count: number }>([
-      { $match: { status: 'approved' } },
+      { $match: publicFilter({ status: 'approved' }) },
       { $group: { _id: '$country_code', count: { $sum: 1 } } },
     ]).toArray();
     const byCode = new Map<string, number>(agg.map((r) => [r._id, r.count]));
@@ -119,7 +134,7 @@ export const discoveryService = {
 
   async getStats() {
     const coll = await getCollection<Channel>(COLLECTIONS.CHANNELS);
-    const totalApproved = await coll.countDocuments({ status: 'approved' });
+    const totalApproved = await coll.countDocuments(publicFilter({ status: 'approved' }));
     return { totalApproved };
   },
 };

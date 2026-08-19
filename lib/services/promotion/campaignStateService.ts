@@ -33,10 +33,14 @@ export async function recordAudit(
 
 /**
  * Deterministically compute the next status for a campaign given the current
- * moment. Never reactivates cancelled/rejected/completed campaigns. Never
- * auto-resumes paused campaigns. Both time and budget are considered.
+ * moment. See `reconcileCampaign` for the async funding-aware wrapper.
+ *
+ * M06 hardening: an `approved` campaign will NOT auto-transition to
+ * `active`/`scheduled` unless it is funded. `funded` is decided by the caller
+ * (delivered as an argument) so this function remains pure/synchronous.
+ * The delivery path independently re-checks funding.
  */
-export function computeNextStatus(c: PromotionCampaign, now: Date): PromotionCampaignStatus {
+export function computeNextStatus(c: PromotionCampaign, now: Date, funded = true): PromotionCampaignStatus {
   const terminal: PromotionCampaignStatus[] = ['cancelled', 'rejected', 'completed'];
   if (terminal.includes(c.status)) return c.status;
   if (c.status === 'paused') {
@@ -44,20 +48,35 @@ export function computeNextStatus(c: PromotionCampaign, now: Date): PromotionCam
     return 'paused';
   }
   if (c.status === 'draft' || c.status === 'pending_review') return c.status;
-  // From here: approved/scheduled/active.
+  // From here: approved / scheduled / active.
   if (c.end_at <= now) return 'completed';
   if (c.estimated_spend_usd_minor >= c.budget_total_usd_minor) return 'completed';
+  // Funding gate. `approved` is the "waiting-for-money" holding pen.
+  if (!funded) return 'approved';
   if (c.start_at > now) return 'scheduled';
   return 'active';
 }
 
 /**
  * Applies the computed transition if it differs from the stored status.
- * Writes at most one PROMOTION_ACTIVATED or PROMOTION_COMPLETED audit event
- * per state change (idempotent).
+ * Funding awareness: consults the campaign funding service (paid + legacy
+ * waiver) to decide whether the campaign is fundable-active or should stay
+ * `approved`. Never re-fetches for terminal statuses.
  */
 export async function reconcileCampaign(c: PromotionCampaign, now: Date = new Date()): Promise<PromotionCampaign> {
-  const next = computeNextStatus(c, now);
+  let funded = true;
+  const activeTerminal: PromotionCampaignStatus[] = ['approved', 'scheduled', 'active', 'paused'];
+  if (activeTerminal.includes(c.status)) {
+    try {
+      const { campaignFundingService } = await import('@/lib/services/payments/campaignFundingService');
+      const summary = await campaignFundingService.fundingSummary(c.id);
+      funded = summary.funded;
+    } catch {
+      // Fall back to the on-campaign counter if the funding service fails.
+      funded = (c.funded_amount_usd_micros ?? 0) > 0;
+    }
+  }
+  const next = computeNextStatus(c, now, funded);
   if (next === c.status) return c;
   const patch: Partial<PromotionCampaign> = {};
   if (next === 'active' && !c.activated_at) patch.activated_at = now;

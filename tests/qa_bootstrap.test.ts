@@ -10,6 +10,8 @@ import { MongoClient } from 'mongodb';
 import { v4 as uuidv4 } from 'uuid';
 
 const BASE = 'http://localhost:3000/api';
+// Per-file client IP so we don't collide with other tests' rate-limit buckets.
+const CLIENT_IP = `10.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}`;
 
 async function withDb<T>(fn: (db: import('mongodb').Db) => Promise<T>): Promise<T> {
   const client = new MongoClient(process.env.MONGO_URL || 'mongodb://localhost:27017');
@@ -17,7 +19,14 @@ async function withDb<T>(fn: (db: import('mongodb').Db) => Promise<T>): Promise<
   try { return await fn(client.db(process.env.DB_NAME || 'wavelead')); } finally { await client.close(); }
 }
 async function api<T = unknown>(path: string, init: RequestInit = {}) {
-  const res = await fetch(`${BASE}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...(init.headers || {}) } });
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Forwarded-For': CLIENT_IP,
+      ...(init.headers || {}),
+    },
+  });
   let body: { ok?: boolean; data?: T; error?: string } = {};
   try { body = await res.json(); } catch {}
   return { status: res.status, body, setCookie: res.headers.get('set-cookie') };

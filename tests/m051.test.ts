@@ -295,6 +295,22 @@ describe('M05.1.3 — Campaign create / authz', () => {
     expect(submit.status).toBe(200);
     expect(submit.body.data!.campaign.status).toBe('pending_review');
     expect(submit.body.data!.campaign.rate_snapshot).toHaveLength(2);
+    // M06 hardening: approve only lands `approved` (unfunded). This test's
+    // intent is the full ACTIVE-lifecycle path, so we install a deterministic
+    // funding fixture (legacy_waived) BEFORE approve. The approve handler then
+    // reconciles funded+in-window → active.
+    const { paymentFundingOrderRepo } = await import('@/lib/repositories/paymentRepo');
+    const nowFund = new Date();
+    await paymentFundingOrderRepo.insert({
+      id: uuidv4(), campaign_id: id, owner_user_id: owner.userId,
+      provider: 'paypal', provider_order_id: null, provider_capture_id: null,
+      currency: 'USD', amount_minor: 0, amount_captured_minor: 0, amount_refunded_minor: 0,
+      amount_usd_micros: 0, status: 'legacy_waived',
+      approve_url: null, return_url: null, cancel_url: null,
+      paid_at: null, cancelled_at: null, refunded_at: null,
+      created_at: nowFund, updated_at: nowFund,
+    });
+    await promotionCampaignRepo.incrementFundedAmount(id, 10_000 * 10_000);
     const approve = await api<{ campaign: PromotionCampaign }>(`/admin/promotions/${id}/approve`, { method: 'POST', headers: { Cookie: admin.cookie } });
     expect(approve.status).toBe(200);
     expect(approve.body.data!.campaign.status).toBe('active');

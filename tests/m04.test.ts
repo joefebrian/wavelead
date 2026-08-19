@@ -75,8 +75,8 @@ async function createOwnedApprovedChannel(ownerId: string) {
   const key = `0029M04${Math.random().toString(36).slice(2, 12)}xyz`;
   const doc = {
     id,
-    slug: `test-${id}`,
-    name: `M04 Test Channel ${id}`,
+    slug: `m04-${id}`,
+    name: `M04 Channel ${id}`,
     whatsapp_url: `https://whatsapp.com/channel/${key}`,
     short_description: 'm04 test seed',
     description: null,

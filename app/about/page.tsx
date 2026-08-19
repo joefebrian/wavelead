@@ -18,7 +18,7 @@ export default function AboutPage() {
         </p>
         <div className="mt-8 space-y-6 text-sm leading-relaxed">
           <p>WaveLead is an <strong>independent</strong> platform. We are not owned by, endorsed by or affiliated with WhatsApp or Meta.</p>
-          <p>Our public directory is free for readers forever. Channel owners can eventually access analytics, promotion and verified profiles through WaveLead Pro.</p>
+          <p>Our public directory is free for readers forever. Channel owners can grow their audiences using WaveLead's follow-intent analytics, verified profiles, and channel promotion (funded via PayPal in USD today; local Indonesian rupiah checkout is coming soon).</p>
           <p>We take a strict privacy stance: we never store WhatsApp user identities and never use unofficial APIs.</p>
         </div>
         <div className="mt-10 wh-card p-6">

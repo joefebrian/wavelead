@@ -247,23 +247,34 @@ export const promotionCampaignService = {
     const vs = (ch as unknown as { verification_status?: string }).verification_status;
     if (vs !== 'verified' && vs !== 'official') throw new HttpError(400, 'Channel is no longer verified');
     const now = new Date();
+    // M06 hardening: approval always lands in `approved` (unfunded). Funding
+    // (or reconciliation of an existing legacy waiver) is what transitions the
+    // campaign to `active` / `scheduled`. This prevents the previous mismatch
+    // where an approved-in-window campaign was flipped straight to `active`
+    // and then rejected by `createFundingForCampaign` (which whitelists only
+    // approved/scheduled/paused as fundable).
     let nextStatus: PromotionCampaignStatus;
     if (camp.end_at <= now) {
-      // Already-expired campaign shouldn’t briefly activate.
+      // Already-expired campaign shouldn’t ever activate.
       nextStatus = 'completed';
-    } else if (camp.start_at <= now) {
-      nextStatus = 'active';
     } else {
-      nextStatus = 'scheduled';
+      nextStatus = 'approved';
     }
     await promotionCampaignRepo.setStatus(id, nextStatus, {
       reviewed_at: now,
       reviewed_by: actor.user.id,
-      activated_at: nextStatus === 'active' ? now : null,
+      activated_at: null,
       completed_at: nextStatus === 'completed' ? now : null,
     });
     await recordAudit(actor.user.id, 'PROMOTION_APPROVED', id, { status: 'pending_review' }, { status: nextStatus });
-    if (nextStatus === 'active') await recordAudit(actor.user.id, 'PROMOTION_ACTIVATED', id, null, { activated_at: now });
+    // If this campaign has a legacy waiver (grandfathered pre-M06 free run),
+    // reconcile now so the deterministic active/scheduled transition happens
+    // synchronously. For paid campaigns, reconcile becomes a no-op (approved
+    // stays approved until funding lands).
+    try {
+      const fresh = await promotionCampaignRepo.findById(id);
+      if (fresh) await reconcileCampaign(fresh, now);
+    } catch { /* best effort */ }
     return (await promotionCampaignRepo.findById(id))!;
   },
 

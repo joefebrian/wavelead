@@ -58,8 +58,8 @@ async function createApprovedChannel(overrides: Record<string, unknown> = {}) {
   const key = `0029TEST${Math.random().toString(36).slice(2, 12)}xyz`;
   const doc = {
     id,
-    slug: `test-${id}`,
-    name: `Test Channel ${id}`,
+    slug: `m03-${id}`,
+    name: `M03 Channel ${id}`,
     whatsapp_url: `https://whatsapp.com/channel/${key}`,
     short_description: 'seed for M03 tests',
     description: null,

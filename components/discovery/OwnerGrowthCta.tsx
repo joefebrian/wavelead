@@ -21,7 +21,7 @@ export default function OwnerGrowthCta() {
           </div>
           <div className="md:col-span-2 grid gap-3">
             <Perk icon={<TrendingUp className="h-4 w-4" />} label="Discoverability across search and categories" />
-            <Perk icon={<BarChart3 className="h-4 w-4" />} label="Follow Intent analytics (coming soon)" />
+          <Perk icon={<BarChart3 className="h-4 w-4" />} label="Follow-intent analytics" />
             <Perk icon={<Sparkles className="h-4 w-4" />} label="Featured slots & promotion" />
           </div>
         </div>

@@ -10,8 +10,8 @@ export const metadata: Metadata = { title: 'Pricing' };
 interface Plan { name: string; price: string; blurb: string; features: string[]; cta: string; href: string; highlight?: boolean; }
 
 const PLANS: Plan[] = [
-  { name: 'Free', price: '$0', blurb: 'Discovery & basic ownership.', cta: 'Get started', href: '/signup', features: ['Public directory access', 'Claim one channel', 'Basic profile listing'] },
-  { name: 'Pro', price: 'Coming soon', blurb: 'Analytics, growth & promotion.', cta: 'Notify me', href: '/signup', highlight: true, features: ['Follow-intent analytics', 'WaveScore insights', 'Promotion & featured slots', 'Verified badge'] },
+  { name: 'Free', price: '$0', blurb: 'Discovery, analytics, promotion & ownership — all free today.', cta: 'Get started', href: '/signup', features: ['Public directory access', 'Claim & manage your channel', 'Follow-intent analytics dashboard', 'Promote channel (pay per campaign, USD via PayPal)', 'Verified badge on approval'] },
+  { name: 'Pro', price: 'Later', blurb: 'A future bundled subscription with discounted promotion.', cta: 'Notify me', href: '/signup', highlight: true, features: ['Everything in Free', 'Discounted promotion rates', 'Advanced growth tools (planned)', 'Priority support (planned)'] },
   { name: 'Enterprise', price: 'Custom', blurb: 'For brands, publishers & networks.', cta: 'Contact sales', href: '/about', features: ['Bulk channel management', 'Custom growth partnership', 'API access (planned)', 'Dedicated support'] },
 ];
 
@@ -22,7 +22,7 @@ export default function PricingPage() {
       <main className="container py-16">
         <div className="max-w-2xl mx-auto text-center">
           <h1 className="text-4xl md:text-5xl font-bold">Simple, creator-friendly pricing</h1>
-          <p className="text-muted-foreground mt-4">Discovery is always free. Paid plans launch alongside analytics in a later milestone.</p>
+          <p className="text-muted-foreground mt-4">Discovery is always free. Follow-intent analytics, verified profiles, and channel promotion (via PayPal) are already shipped. Pro subscription plans and local IDR checkout are coming soon.</p>
         </div>
         <div className="mt-12 grid gap-4 md:grid-cols-3">
           {PLANS.map((plan) => (
@@ -40,7 +40,7 @@ export default function PricingPage() {
             </div>
           ))}
         </div>
-        <p className="mt-10 text-center text-xs text-muted-foreground">Pricing shown is directional. Live billing and Pro features arrive in a future milestone.</p>
+        <p className="mt-10 text-center text-xs text-muted-foreground">Pricing shown is directional. Pro subscription bundling is coming soon; today's Promote Channel capacity is billed per campaign in USD via PayPal.</p>
       </main>
       <Footer />
     </>

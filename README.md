@@ -477,31 +477,50 @@ Hit `GET /api/health` to confirm which commit is actually running:
 | M04       | Owner Analytics & Growth Intelligence          | Complete |
 | M05.0     | Smart Channel Import                           | Complete |
 | M05.1     | Promote Channel / Sponsored Discovery          | Complete |
-| M06       | Payments / Billing / Marketplace               | Not started |
+| M06.0     | Payments, Campaign Funding & Ledger            | Complete |
+| M06.1     | Indonesia Currency & Local Payment Readiness   | Complete |
 
 ---
 
 ## 14. Current Limitations
 
-- **No payment capture yet.** M05.1 campaigns run as WaveLead-approved internal
-  delivery budgets; real card/wallet checkout ships in M06.
-- Billing, invoicing, and subscriptions are not yet shipped
-- No confirmed WhatsApp follower attribution — WaveLead measures follow **intent**, not confirmed follows on WhatsApp
-- No private WhatsApp analytics (WaveLead does not have access to any private WhatsApp data)
+- **PayPal Sandbox only.** Real production-live payment merchant readiness is not
+  claimed; PayPal integration ships against the Sandbox environment. Live
+  card/wallet checkout at scale requires separate go-live steps not in scope.
+- **No local IDR checkout yet.** Owner UI displays the IDR equivalent of the
+  campaign budget and shows a "Local Payment — Coming Soon" panel, but no
+  local payment provider (Xendit/Midtrans/QRIS/VA/e-wallet) is integrated.
+  PayPal USD remains the only actionable funding option.
+- **No subscriptions / Pro plans.** Per-campaign funding is live; recurring
+  subscription billing is a future milestone.
+- **No confirmed WhatsApp follower attribution** — WaveLead measures follow
+  **intent**, not confirmed follows on WhatsApp
+- **No private WhatsApp analytics** (WaveLead does not have access to any
+  private WhatsApp data)
 - No ownership transfer or dispute-center workflow
 - No team or agency accounts (single-owner model)
-- No channel-owner marketplace / sponsorship rate cards / brand-to-channel booking
-- No custom ad creatives — sponsored cards reuse the channel's approved public profile
+- No channel-owner marketplace / sponsorship rate cards / brand-to-channel
+  booking (deferred to the Sponsorship Marketplace milestone)
+- No custom ad creatives — sponsored cards reuse the channel's approved
+  public profile
 - No native mobile app
-- In-memory rate limiter and enrichment cache — swap for Redis for multi-instance production
+- In-memory rate limiter and enrichment cache — swap for Redis for
+  multi-instance production
+- No live FX API — USD/IDR conversion rate is admin-managed
 
 ---
 
 ## 15. Roadmap
 
-**Next:** M06 — Payments, Billing & Real-money Campaign Funding
+**Next:** M07 — Brand / Sponsorship Marketplace Foundation
 
 **Future:**
-- Channel Sponsorship Marketplace (brand → channel bookings, payouts, settlement)
+- Live local IDR payment provider integration (Xendit / Midtrans / hosted
+  checkout with QRIS, VA, e-wallets)
+- Automated FX rate provider (upstream market-rate feed)
+- Subscriptions / Pro plans (monthly billing)
+- Multi-currency global FX (SGD / MYR / THB / PHP / EUR / JPY)
+- Channel-owner marketplace / brand-to-channel bookings, payouts,
+  settlement, tax invoicing
 - Campaign auction / bidding models
-- Monetization and subscriptions
+- Native mobile app
