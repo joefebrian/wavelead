@@ -6,6 +6,8 @@ import ChannelCard from '@/components/discovery/ChannelCard';
 import CategoryPills from '@/components/discovery/CategoryPills';
 import SectionHeader from '@/components/discovery/SectionHeader';
 import EmptyState from '@/components/discovery/EmptyState';
+import SponsoredCard from '@/components/promo/SponsoredCard';
+import { loadOneSponsored, shouldRenderSponsored } from '@/lib/services/promotion/deliveryHelpers';
 import type { Metadata } from 'next';
 
 interface SP { q?: string; category?: string; country?: string; sort?: string; }
@@ -29,6 +31,11 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
     channelService.listPublic({ q, category, country, sort, limit: 30 }),
     discoveryService.getCategoryCounts().then((rows) => rows.slice(0, 12)),
   ]);
+  // Sponsored search — only when there's a query. Site-wide Trending / Top
+  // pages have their own routes and never call this branch.
+  const sponsored = (q && sort !== 'trending')
+    ? await loadOneSponsored({ placement: 'sponsored_search', search_query: q, category_slug: category || null, country_code: country || null })
+    : [];
 
   return (
     <>
@@ -56,6 +63,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
             <EmptyState title="No channels match your search" message="Try a broader keyword, or explore all channels." />
           ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {sponsored[0] && shouldRenderSponsored(result.items.length) && <SponsoredCard data={sponsored[0]} sourcePath="/search" />}
               {result.items.map((c) => <ChannelCard key={c.id} channel={c} />)}
             </div>
           )}

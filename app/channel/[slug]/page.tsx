@@ -4,6 +4,8 @@ import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import SectionHeader from '@/components/discovery/SectionHeader';
 import ChannelCard from '@/components/discovery/ChannelCard';
+import SponsoredCard from '@/components/promo/SponsoredCard';
+import { loadOneSponsored } from '@/lib/services/promotion/deliveryHelpers';
 import { Button } from '@/components/ui/button';
 import { channelService } from '@/lib/services/channelService';
 import { categoryRepo } from '@/lib/repositories/categoryRepo';
@@ -45,6 +47,13 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
     resolveActorFromCookies(),
     channelRepo.findById(channel.id),
   ]);
+  // Sponsored related channel — never self-promote (server enforces exclude).
+  const sponsored = await loadOneSponsored({
+    placement: 'sponsored_related_channel',
+    exclude_channel_id: channel.id,
+    country_code: channel.country_code,
+    category_slug: (category as unknown as { slug?: string })?.slug || null,
+  });
 
   const country = countryByCode(channel.country_code);
   const followers = channel.follower_count > 0 ? `${Number(channel.follower_count).toLocaleString()} followers` : 'Followers not verified';
@@ -148,10 +157,11 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
           <Stat label="Category" value={category?.name || '—'} icon={null} />
         </section>
 
-        {related.length > 0 && (
+        {(related.length > 0 || sponsored[0]) && (
           <section className="container py-8">
             <SectionHeader title="Similar channels" subtitle="Others in this category worth a look." />
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {sponsored[0] && <SponsoredCard data={sponsored[0]} sourcePath={`/channel/${channel.slug}`} />}
               {related.map((c) => <ChannelCard key={c.id} channel={c} />)}
             </div>
           </section>

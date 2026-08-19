@@ -5,6 +5,8 @@ import ChannelCard from '@/components/discovery/ChannelCard';
 import CategoryPills from '@/components/discovery/CategoryPills';
 import SectionHeader from '@/components/discovery/SectionHeader';
 import EmptyState from '@/components/discovery/EmptyState';
+import SponsoredCard from '@/components/promo/SponsoredCard';
+import { loadOneSponsored, shouldRenderSponsored } from '@/lib/services/promotion/deliveryHelpers';
 import { channelService } from '@/lib/services/channelService';
 import { categoryRepo } from '@/lib/repositories/categoryRepo';
 import { discoveryService } from '@/lib/services/discoveryService';
@@ -34,6 +36,10 @@ export default async function CategoryPage({ params }: { params: Promise<Params>
     channelService.listPublic({ category: slug, sort: 'top', limit: 30 }),
     discoveryService.getCategoryCounts().then((rows) => rows.slice(0, 12)),
   ]);
+  // Note: sort='top' means organic top ranking within THIS category. Sponsored
+  // category slots are allowed here (the M05.1 "no sponsored on Top / Trending"
+  // rule refers to the SITE-wide Top / Trending pages, not category ranking).
+  const sponsored = await loadOneSponsored({ placement: 'sponsored_category', category_slug: slug });
 
   return (
     <>
@@ -54,6 +60,7 @@ export default async function CategoryPage({ params }: { params: Promise<Params>
             <EmptyState title="No channels here yet" message="Be the first to submit a channel to this category." ctaHref="/submit" ctaLabel="Submit a Channel" />
           ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {sponsored[0] && shouldRenderSponsored(result.items.length) && <SponsoredCard data={sponsored[0]} sourcePath={`/category/${slug}`} />}
               {result.items.map((c) => <ChannelCard key={c.id} channel={c} />)}
             </div>
           )}

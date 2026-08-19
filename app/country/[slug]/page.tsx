@@ -4,6 +4,8 @@ import Footer from '@/components/layout/Footer';
 import ChannelCard from '@/components/discovery/ChannelCard';
 import SectionHeader from '@/components/discovery/SectionHeader';
 import EmptyState from '@/components/discovery/EmptyState';
+import SponsoredCard from '@/components/promo/SponsoredCard';
+import { loadOneSponsored, shouldRenderSponsored } from '@/lib/services/promotion/deliveryHelpers';
 import { channelService } from '@/lib/services/channelService';
 import { countryBySlug } from '@/lib/constants/countries';
 import type { Metadata } from 'next';
@@ -24,6 +26,7 @@ export default async function CountryPage({ params }: { params: Promise<Params> 
   const country = countryBySlug(slug);
   if (!country) notFound();
   const result = await channelService.listPublic({ country: country.code, sort: 'top', limit: 30 });
+  const sponsored = await loadOneSponsored({ placement: 'sponsored_country', country_code: country.code });
 
   return (
     <>
@@ -45,6 +48,7 @@ export default async function CountryPage({ params }: { params: Promise<Params> 
             <EmptyState title="No channels here yet" message="Be the first to submit a channel from this country." ctaHref="/submit" ctaLabel="Submit a Channel" />
           ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {sponsored[0] && shouldRenderSponsored(result.items.length) && <SponsoredCard data={sponsored[0]} sourcePath={`/country/${slug}`} />}
               {result.items.map((c) => <ChannelCard key={c.id} channel={c} />)}
             </div>
           )}
