@@ -4149,3 +4149,120 @@ spent     =    200,000 micros
 refunded  = 19,800,000 micros
 remaining =          0 micros
 Exact:   20,000,000 − 200,000 − 19,800,000 = 0  ✓
+
+===============================================================================
+M06.0 RESPONSIVE COMPLETION PASS — VIEWPORTS 390/430/1024/1440 ONLY
+===============================================================================
+
+Test Date: 2026-08-19
+Testing Agent: testing
+Git Commit: 92d88bf (92d88bfeca14d7bb1bc6356ae02b452588338262)
+
+SCOPE:
+------
+READ-ONLY visual/layout audit for viewports 390px, 430px, 1024px, 1440px.
+Viewports 375px, 768px, 1920px already covered by previous testing.
+NO DB mutations, NO payment creation, NO PayPal calls.
+
+TEST RESULTS:
+-------------
+
+PUBLIC SURFACES (UNAUTHENTICATED) — 12/12 PASS
+  ✅ Homepage (/)
+    - 390px: PASS (no overflow, 0 sponsored)
+    - 430px: PASS (no overflow, 0 sponsored)
+    - 1024px: PASS (no overflow, 0 sponsored)
+    - 1440px: PASS (no overflow, 0 sponsored)
+  
+  ✅ Search (/search?q=finance)
+    - 390px: PASS (no overflow, 0 sponsored)
+    - 430px: PASS (no overflow, 0 sponsored)
+    - 1024px: PASS (no overflow, 0 sponsored)
+    - 1440px: PASS (no overflow, 0 sponsored)
+  
+  ✅ Channel Profile (/channel/qa-verified-channel)
+    - 390px: PASS (no overflow)
+    - 430px: PASS (no overflow)
+    - 1024px: PASS (no overflow)
+    - 1440px: PASS (no overflow)
+
+OWNER SURFACES (AUTHENTICATED AS qa-owner@wavelead.dev) — 12/12 PASS
+  ✅ Dashboard Promotions (/dashboard/promotions)
+    - 390px: PASS (no overflow)
+    - 430px: PASS (no overflow)
+    - 1024px: PASS (no overflow)
+    - 1440px: PASS (no overflow)
+  
+  ✅ Dashboard Billing (/dashboard/billing)
+    - 390px: PASS (no overflow)
+    - 430px: PASS (no overflow)
+    - 1024px: PASS (no overflow)
+    - 1440px: PASS (no overflow)
+  
+  ✅ Channel Promote (/dashboard/channels/28dead24-973b-4c7d-989f-cc23d65910bc/promote)
+    - 390px: PASS (no overflow)
+    - 430px: PASS (no overflow)
+    - 1024px: PASS (no overflow)
+    - 1440px: PASS (no overflow)
+
+ADMIN SURFACES (AUTHENTICATED AS qa-admin@wavelead.dev) — 16/16 PASS
+  ✅ Admin Payments List (/admin/payments)
+    - 390px: PASS (no overflow)
+    - 430px: PASS (no overflow)
+    - 1024px: PASS (no overflow)
+    - 1440px: PASS (no overflow)
+  
+  ✅ Admin Payment Detail (/admin/payments/3f5c3ef7-4fc4-4541-a854-aa19164f82f3)
+    - 390px: PASS (no overflow)
+    - 430px: PASS (no overflow)
+    - 1024px: PASS (no overflow)
+    - 1440px: PASS (no overflow)
+  
+  ✅ Admin Ledger (/admin/ledger)
+    - 390px: PASS (no overflow)
+    - 430px: PASS (no overflow)
+    - 1024px: PASS (no overflow)
+    - 1440px: PASS (no overflow)
+  
+  ✅ Admin Payment Health (/admin/payment-health)
+    - 390px: PASS (no overflow)
+    - 430px: PASS (no overflow)
+    - 1024px: PASS (no overflow)
+    - 1440px: PASS (no overflow)
+
+VERIFICATION CHECKLIST:
+-----------------------
+✅ No horizontal overflow (scrollWidth <= clientWidth + 2px tolerance)
+✅ No broken navigation (Header/Footer present on all pages)
+✅ No blocking console errors (only Fast Refresh logs observed)
+✅ QA personas authenticated successfully
+✅ All surfaces accessible at all 4 viewports
+✅ Sponsored labels: 0 found (expected - no active campaigns in test data)
+✅ Money values: Present on admin surfaces (verified by locator count)
+✅ Status badges: Present on admin surfaces (verified by locator count)
+✅ Tables: Present on admin surfaces (verified by locator count)
+✅ Mobile viewports (390, 430): No overflow detected
+✅ Tablet viewport (1024): No overflow detected
+✅ Desktop viewport (1440): No overflow detected
+
+NOTES:
+------
+- No sponsored items visible on public surfaces (expected - no active campaigns)
+- Money values and status badges detected on admin surfaces via text locators
+- Tables detected on admin surfaces (count > 0 on relevant pages)
+- Login flow worked correctly for both QA Owner and QA Admin personas
+- All pages rendered without horizontal overflow at all tested viewports
+- No screenshots captured (only failures trigger screenshots per protocol)
+
+OVERALL VERDICT:
+----------------
+✅ RESPONSIVE-COMPLETE
+
+Total tests: 40 (12 public + 12 owner + 16 admin)
+Passed: 40
+Failed: 0
+Errors: 0
+
+All viewports (390px, 430px, 1024px, 1440px) PASS across all surfaces.
+Combined with previous testing (375px, 768px, 1920px), full responsive
+matrix is now complete.
