@@ -10,20 +10,24 @@ export const metadata: Metadata = { title: 'Admin · Ledger' };
 export const dynamic = 'force-dynamic';
 function usd(m: number) { return `$${(m / 1_000_000).toFixed(6)}`; }
 
-export default async function AdminLedgerPage({ searchParams }: { searchParams: Promise<{ campaign_id?: string; transaction_type?: string }> }) {
+export default async function AdminLedgerPage({ searchParams }: { searchParams: Promise<{ campaign_id?: string; transaction_type?: string; limit?: string }> }) {
   const actor = await resolveActorFromCookies();
   if (!actor || rankOf(actor.user.role) < rankOf(ROLES.ADMIN)) redirect('/');
   const q = await searchParams;
   const filter: Record<string, unknown> = {};
   if (q.campaign_id) filter.campaign_id = q.campaign_id;
   if (q.transaction_type) filter.transaction_type = q.transaction_type;
-  const rows = await ledgerRepo.list(filter);
+  const limit = Math.min(Math.max(parseInt(q.limit || '200', 10) || 200, 1), 1000);
+  // Push the limit down to MongoDB — never load thousands of rows into memory
+  // just to slice them on the server.
+  const rows = await ledgerRepo.list(filter, { limit, sort: { created_at: -1 } });
+  const truncated = rows.length >= limit;
   return (
     <div className="min-h-screen flex flex-col">
       <Header />
       <main className="container mx-auto px-4 py-6 max-w-6xl flex-1">
         <h1 className="text-2xl font-bold mb-1">Ledger</h1>
-        <p className="text-sm text-muted-foreground mb-6">Read-only. Corrections require reversal transactions.</p>
+        <p className="text-sm text-muted-foreground mb-6">Read-only. Corrections require reversal transactions. Showing up to {limit} rows{truncated ? ' — apply a filter to narrow, or raise ?limit=' : ''}.</p>
         <form className="flex flex-wrap gap-2 mb-4 text-sm">
           <input name="campaign_id" placeholder="campaign_id" defaultValue={q.campaign_id || ''} className="rounded-md border px-3 py-2 bg-background" />
           <select name="transaction_type" defaultValue={q.transaction_type || ''} className="rounded-md border px-3 py-2 bg-background">
@@ -32,6 +36,7 @@ export default async function AdminLedgerPage({ searchParams }: { searchParams: 
             <option value="spend_debit">spend_debit</option>
             <option value="refund_debit">refund_debit</option>
           </select>
+          <input name="limit" type="number" min={1} max={1000} placeholder="limit (max 1000)" defaultValue={q.limit || ''} className="rounded-md border px-3 py-2 bg-background w-40" />
           <button className="rounded-md border px-3 py-2 bg-primary text-primary-foreground">Filter</button>
           <Link href="/admin/ledger" className="rounded-md border px-3 py-2">Reset</Link>
         </form>

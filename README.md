@@ -94,6 +94,41 @@ via WaveLead).
   organic ranking (`items[]`, WaveScore, Trending, Top) is provably untouched
 - Every sponsored card is clearly labelled `Sponsored`
 
+### Payments, Campaign Funding & Ledger (M06.0)
+- **PayPal Sandbox-backed** payment provider integration (Stripe parked; no
+  live production payments yet; no additional providers)
+- **Campaign-specific funding**: each promoted campaign is funded via its own
+  PayPal order; campaign delivery is gated on `funded_amount >= budget`
+- **USD micros accounting** throughout — `$1.00 = 1,000,000 micros`,
+  strict integer math, never floating point
+- **Immutable double-entry ledger**: every money movement (funding, spend,
+  refund) posts one balanced transaction (`sum(debits) == sum(credits)`);
+  rows are append-only, deduplicated by a unique `idempotency_key`
+- **Sponsored spend accounting**: each accepted qualifying impression posts
+  a spend debit at the campaign's CPM rate snapshot
+  (e.g. 100 impressions × $2 CPM → 200,000 micros)
+- **Refund workflow**: owner cancels → server computes unused refundable
+  amount from the ledger → admin executes provider refund; owners cannot
+  hit the provider directly; refunds are amount-tamper-proof (re-verified
+  from ledger at execute time), idempotent (PayPal-Request-Id + state
+  machine + ledger idempotency), and the `provider_refund_id` is persisted
+  on the payment record and surfaced in the admin payment detail
+- **Reconciliation service**: idempotent payment reconciliation that never
+  downgrades a terminal-successful funding row from a stale/late event
+- **Owner billing UI** (`/dashboard/billing`, `/dashboard/billing/[id]`):
+  payment list + detail with campaign funding summary
+- **Admin payment operations** (`/admin/payments`, `/admin/payments/[id]`):
+  cross-tenant payment list, ledger reconciliation view, refund actions,
+  safe provider references only
+- **Read-only ledger viewer** (`/admin/ledger`): filter by campaign or
+  transaction type; no arbitrary financial editing
+- **Payment health dashboard** (`/admin/payment-health`): pending/failed
+  payments, pending/failed refunds, webhook processing failures, ledger
+  integrity issue count, reconciliation-needed records
+- Not yet: IDR/FX, subscriptions, wallet, marketplace/creator payouts,
+  additional payment providers, sponsorship marketplace, tax invoice engine
+  (all deferred to later milestones)
+
 ---
 
 ## 3. Product Flow

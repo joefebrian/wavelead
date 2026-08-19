@@ -12,6 +12,8 @@
 // Invariant per campaign:    funded − spent − refunded == remaining_balance.
 import { v4 as uuidv4 } from 'uuid';
 import { ledgerRepo } from '@/lib/repositories/ledgerRepo';
+import { getCollection } from '@/lib/db/mongo';
+import { COLLECTIONS } from '@/lib/db/collections';
 import type { LedgerTransaction, LedgerAccount, LedgerPosting, LedgerTransactionType } from '@/lib/types';
 
 export const MICROS_PER_USD = 1_000_000;
@@ -202,11 +204,76 @@ export const ledgerService = {
       else seenKeys.set(t.idempotency_key, t.id);
     }
     // Per-campaign non-negative remaining balance.
-    const campaigns = new Set(rows.map((r) => r.campaign_id));
-    for (const cid of campaigns) {
-      const b = await this.campaignBalances(cid);
-      if (b.remaining_usd_micros < 0) issues.push({ kind: 'negative_remaining', detail: `campaign=${cid} remaining=${b.remaining_usd_micros}` });
+    // OPTIMIZATION: when scanning the whole ledger, avoid re-fetching per
+    // campaign (was O(N × campaigns) with a live query per campaign). Reuse
+    // the already-loaded `rows` to compute balances in-memory.
+    if (filter.campaign_id) {
+      const b = await this.campaignBalances(filter.campaign_id);
+      if (b.remaining_usd_micros < 0) issues.push({ kind: 'negative_remaining', detail: `campaign=${filter.campaign_id} remaining=${b.remaining_usd_micros}` });
+    } else {
+      const balByCid = new Map<string, { funded: number; spent: number; refunded: number }>();
+      for (const t of rows) {
+        const cur = balByCid.get(t.campaign_id) || { funded: 0, spent: 0, refunded: 0 };
+        if (t.transaction_type === 'funding_credit') cur.funded += t.amount_usd_micros;
+        else if (t.transaction_type === 'spend_debit') cur.spent += t.amount_usd_micros;
+        else if (t.transaction_type === 'refund_debit') cur.refunded += t.amount_usd_micros;
+        balByCid.set(t.campaign_id, cur);
+      }
+      for (const [cid, b] of balByCid) {
+        const remaining = b.funded - b.spent - b.refunded;
+        if (remaining < 0) issues.push({ kind: 'negative_remaining', detail: `campaign=${cid} remaining=${remaining}` });
+      }
     }
     return issues;
+  },
+
+  /** Cheap integrity signal: aggregation-based, no client-side row scan.
+   * Uses MongoDB `$facet` to compute all invariant checks in a single
+   * round-trip and returns a count. Safe to call from a dashboard render
+   * even with hundreds of thousands of rows. */
+  async checkIntegrityCount(filter: { campaign_id?: string } = {}): Promise<number> {
+    const c = await getCollection<LedgerTransaction>(COLLECTIONS.LEDGER_TRANSACTIONS);
+    const match = filter.campaign_id ? { campaign_id: filter.campaign_id } : {};
+    const pipeline = [
+      { $match: match },
+      {
+        $facet: {
+          unbalanced: [
+            {
+              $addFields: {
+                dr: { $sum: { $map: { input: { $filter: { input: '$postings', cond: { $eq: ['$$this.direction', 'debit'] } } }, in: '$$this.amount_usd_micros' } } },
+                cr: { $sum: { $map: { input: { $filter: { input: '$postings', cond: { $eq: ['$$this.direction', 'credit'] } } }, in: '$$this.amount_usd_micros' } } },
+              },
+            },
+            { $match: { $expr: { $ne: ['$dr', '$cr'] } } },
+            { $count: 'n' },
+          ],
+          dup_keys: [
+            { $group: { _id: '$idempotency_key', n: { $sum: 1 } } },
+            { $match: { n: { $gt: 1 } } },
+            { $count: 'n' },
+          ],
+          per_campaign: [
+            { $unwind: '$postings' },
+            {
+              $group: {
+                _id: '$campaign_id',
+                funded: { $sum: { $cond: [{ $eq: ['$transaction_type', 'funding_credit'] }, '$amount_usd_micros', 0] } },
+                spent: { $sum: { $cond: [{ $eq: ['$transaction_type', 'spend_debit'] }, '$amount_usd_micros', 0] } },
+                refunded: { $sum: { $cond: [{ $eq: ['$transaction_type', 'refund_debit'] }, '$amount_usd_micros', 0] } },
+              },
+            },
+            { $addFields: { remaining: { $subtract: [{ $subtract: ['$funded', '$spent'] }, '$refunded'] } } },
+            { $match: { remaining: { $lt: 0 } } },
+            { $count: 'n' },
+          ],
+        },
+      },
+    ];
+    const [agg] = await c.aggregate(pipeline).toArray();
+    const unbalanced = (agg?.unbalanced?.[0]?.n as number | undefined) ?? 0;
+    const dup = (agg?.dup_keys?.[0]?.n as number | undefined) ?? 0;
+    const negCamp = (agg?.per_campaign?.[0]?.n as number | undefined) ?? 0;
+    return unbalanced + dup + negCamp;
   },
 };

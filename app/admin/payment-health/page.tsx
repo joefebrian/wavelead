@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 import type { Metadata } from 'next';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
@@ -23,7 +24,10 @@ export default async function PaymentHealthPage() {
   const refunds_failed = refunds.filter(r => r.status === 'failed').length;
   const webhookColl = await getCollection<{ processed?: boolean; process_error?: string | null }>(COLLECTIONS.PAYMENT_WEBHOOK_EVENTS);
   const webhook_failed = await webhookColl.countDocuments({ processed: true, process_error: { $ne: null } });
-  const integrity = await ledgerService.checkIntegrity();
+  // Integrity: run a bounded check to avoid overwhelming the dev-server RSC
+  // stream. For a lightweight per-page signal we only need "is anything wrong
+  // right now?" — the full report is available via the /admin/ledger deep dive.
+  const integrityCount = await ledgerService.checkIntegrityCount();
   const reconciliation_needed = all.filter(f => f.status === 'pending' && f.provider_order_id).length;
 
   const cards = [
@@ -32,7 +36,7 @@ export default async function PaymentHealthPage() {
     { label: 'Refunds pending', value: refunds_pending, tone: refunds_pending > 0 ? 'warn' : 'ok' },
     { label: 'Refunds failed', value: refunds_failed, tone: refunds_failed > 0 ? 'critical' : 'ok' },
     { label: 'Webhook processing failures', value: webhook_failed, tone: webhook_failed > 0 ? 'warn' : 'ok' },
-    { label: 'Ledger integrity issues', value: integrity.length, tone: integrity.length > 0 ? 'critical' : 'ok' },
+    { label: 'Ledger integrity issues', value: integrityCount, tone: integrityCount > 0 ? 'critical' : 'ok' },
     { label: 'Reconciliation needed', value: reconciliation_needed, tone: reconciliation_needed > 0 ? 'warn' : 'ok' },
   ];
   return (
@@ -49,12 +53,14 @@ export default async function PaymentHealthPage() {
             </div>
           ))}
         </div>
-        {integrity.length > 0 && (
+        {integrityCount > 0 && (
           <section className="mt-6 wh-card p-5 border-red-300">
-            <h2 className="font-semibold text-red-700">Ledger integrity issues</h2>
-            <ul className="mt-2 text-sm space-y-1">
-              {integrity.map((i, idx) => <li key={idx}>[{i.kind}] {i.detail}</li>)}
-            </ul>
+            <h2 className="font-semibold text-red-700">Ledger integrity issues detected</h2>
+            <p className="mt-2 text-sm">
+              {integrityCount} issue{integrityCount === 1 ? '' : 's'} found. Use the{' '}
+              <Link href="/admin/ledger" className="underline text-primary">ledger</Link> to inspect
+              individual transactions and drill into affected campaigns.
+            </p>
           </section>
         )}
       </main>

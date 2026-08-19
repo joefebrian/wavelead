@@ -21,9 +21,11 @@ export const ledgerRepo = {
       throw err;
     }
   },
-  async list(filter: Filter<LedgerTransaction> = {}): Promise<LedgerTransaction[]> {
+  async list(filter: Filter<LedgerTransaction> = {}, opts: { limit?: number; sort?: Sort } = {}): Promise<LedgerTransaction[]> {
     const c = await getCollection<LedgerTransaction>(COLLECTIONS.LEDGER_TRANSACTIONS);
-    return stripIds(await c.find(filter).sort({ created_at: 1 } as Sort).toArray()) as LedgerTransaction[];
+    const cursor = c.find(filter).sort(opts.sort ?? ({ created_at: 1 } as Sort));
+    if (opts.limit && opts.limit > 0) cursor.limit(opts.limit);
+    return stripIds(await cursor.toArray()) as LedgerTransaction[];
   },
   async listForCampaign(campaign_id: string): Promise<LedgerTransaction[]> {
     return this.list({ campaign_id });
