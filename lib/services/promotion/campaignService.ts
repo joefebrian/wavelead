@@ -169,11 +169,20 @@ export const promotionCampaignService = {
     const camp = await promotionCampaignRepo.findById(id);
     if (!camp) throw new HttpError(404, 'Campaign not found');
     assertOwnerOf(actor, camp);
-    const cancellable: PromotionCampaignStatus[] = ['draft', 'pending_review', 'scheduled', 'paused', 'rejected'];
-    if (!cancellable.includes(camp.status)) throw new HttpError(400, `Cannot cancel from ${camp.status}. Pause first.`);
+    // M06.0 Phase 4: owners can cancel from any non-terminal state so they
+    // can recover unused funds. Delivery stops immediately because the
+    // atomicDeliverImpression gate filters on status='active'.
+    const cancellable: PromotionCampaignStatus[] = ['draft', 'pending_review', 'approved', 'scheduled', 'active', 'paused', 'rejected'];
+    if (!cancellable.includes(camp.status)) throw new HttpError(400, `Cannot cancel from ${camp.status}`);
     const now = new Date();
     await promotionCampaignRepo.setStatus(id, 'cancelled', { cancelled_at: now });
     await recordAudit(actor.user.id, 'PROMOTION_CANCELLED', id, { status: camp.status }, { status: 'cancelled' });
+    // Auto-create pending refund request if there are unused funds. Owner
+    // does NOT execute the provider refund — admin/super_admin must.
+    try {
+      const { refundService } = await import('@/lib/services/payments/refundService');
+      await refundService.requestRefundForCancelledCampaign(actor, id);
+    } catch { /* refund request creation is best-effort; admin can also open one */ }
     return (await promotionCampaignRepo.findById(id))!;
   },
 

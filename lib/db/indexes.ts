@@ -148,5 +148,12 @@ export async function ensureIndexes(db: Db): Promise<void> {
       // TTL: cleanup 7d after last write to keep the collection small.
       { key: { created_at: 1 }, expireAfterSeconds: 604_800, name: 'ttl_created_at' },
     ]),
+    db.collection(COLLECTIONS.PAYMENT_REFUNDS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { funding_order_id: 1, status: 1 }, name: 'by_funding' },
+      { key: { campaign_id: 1, created_at: -1 }, name: 'by_campaign_time' },
+      { key: { owner_user_id: 1, created_at: -1 }, name: 'by_owner_time' },
+      { key: { provider_refund_id: 1 }, unique: true, name: 'uniq_provider_refund', partialFilterExpression: { provider_refund_id: { $type: 'string' } } },
+    ]),
   ]);
 }

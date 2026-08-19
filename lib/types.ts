@@ -613,3 +613,38 @@ export interface LedgerTransaction {
   metadata: Record<string, unknown>;
   created_at: Date;
 }
+
+// ============================================================================
+// M06.0 Phase 4 — Refund workflow
+// ============================================================================
+export type RefundStatus =
+  | 'none'                 // no refund; used only conceptually
+  | 'eligible'             // system computed refundable > 0; nothing requested yet
+  | 'pending'              // refund_request created by owner cancel; awaits admin exec
+  | 'processing'           // admin dispatched to provider; provider async
+  | 'partially_refunded'   // provider confirmed partial amount
+  | 'refunded'             // provider confirmed full refundable amount
+  | 'failed';
+
+export interface PaymentRefund {
+  id: string;
+  funding_order_id: string;
+  campaign_id: string;
+  owner_user_id: string;
+  provider: 'paypal' | 'stripe' | 'mock';
+  provider_refund_id: string | null;
+  requested_amount_minor: number;      // owner-requested (== unused refundable at request time)
+  requested_amount_usd_micros: number;
+  actual_refunded_amount_minor: number;
+  actual_refunded_usd_micros: number;
+  status: RefundStatus;
+  requested_by_user_id: string;        // usually the owner cancelling
+  executed_by_user_id: string | null;  // admin who ran the provider call
+  reason: string | null;
+  requested_at: Date;
+  processed_at: Date | null;
+  failed_at: Date | null;
+  failure_reason: string | null;
+  created_at: Date;
+  updated_at: Date;
+}

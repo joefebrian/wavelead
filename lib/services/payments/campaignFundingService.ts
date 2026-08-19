@@ -14,7 +14,7 @@ import type { Actor, PaymentFundingOrder, PromotionCampaign } from '@/lib/types'
 
 // $1.00 = 1,000,000 USD micros. Payment currency USD; conversion is exact until
 // M06.1 adds FX. Amount(minor) × 10_000 = amount(micros).
-function minorToMicros(minor: number): number { return minor * 10_000; }
+export function minorToMicros(minor: number): number { return minor * 10_000; }
 
 function assertOwner(actor: Actor | null, camp: PromotionCampaign): void {
   if (!actor) throw new HttpError(401, 'Authentication required');

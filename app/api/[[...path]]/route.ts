@@ -463,6 +463,190 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const funding = await campaignFundingService.captureAndFinalize(path[2]);
       return applyCors(ok({ funding: { id: funding.id, status: funding.status } }), request);
     }
+    // ---------- M06.0 Phase 4 — OWNER BILLING ----------
+    if (route === '/owner/billing' && method === 'GET') {
+      const actor = await resolveActor(request);
+      if (!actor) return applyCors(fail(401, 'Authentication required'), request);
+      const { paymentFundingOrderRepo } = await import('@/lib/repositories/paymentRepo');
+      const rows = await paymentFundingOrderRepo.list({ owner_user_id: actor.user.id });
+      const { promotionCampaignRepo } = await import('@/lib/repositories/promotionRepo');
+      const items = await Promise.all(rows.map(async (r) => {
+        const camp = await promotionCampaignRepo.findById(r.campaign_id);
+        return {
+          id: r.id, provider: r.provider, status: r.status,
+          amount_minor: r.amount_minor, amount_captured_minor: r.amount_captured_minor,
+          amount_refunded_minor: r.amount_refunded_minor, currency: r.currency,
+          created_at: r.created_at, paid_at: r.paid_at,
+          campaign_id: r.campaign_id, campaign_name: camp?.name || null,
+          provider_reference: r.provider_order_id ? r.provider_order_id.slice(0, 12) + '…' : null,
+        };
+      }));
+      return applyCors(ok({ items }), request);
+    }
+    if (path.length === 3 && path[0] === 'owner' && path[1] === 'billing' && method === 'GET') {
+      const actor = await resolveActor(request);
+      if (!actor) return applyCors(fail(401, 'Authentication required'), request);
+      const { paymentFundingOrderRepo } = await import('@/lib/repositories/paymentRepo');
+      const f = await paymentFundingOrderRepo.findById(path[2]);
+      if (!f || f.owner_user_id !== actor.user.id) return applyCors(fail(404, 'Payment not found'), request);
+      const { promotionCampaignRepo } = await import('@/lib/repositories/promotionRepo');
+      const { paymentRefundRepo } = await import('@/lib/repositories/paymentRefundRepo');
+      const camp = await promotionCampaignRepo.findById(f.campaign_id);
+      const refunds = await paymentRefundRepo.list({ funding_order_id: f.id });
+      return applyCors(ok({
+        payment: {
+          id: f.id, provider: f.provider, status: f.status, currency: f.currency,
+          amount_minor: f.amount_minor, amount_captured_minor: f.amount_captured_minor,
+          amount_refunded_minor: f.amount_refunded_minor,
+          paid_at: f.paid_at, created_at: f.created_at,
+          campaign_id: f.campaign_id, campaign_name: camp?.name || null,
+          provider_reference: f.provider_order_id ? f.provider_order_id.slice(0, 12) + '…' : null,
+          provider_capture_reference: f.provider_capture_id ? f.provider_capture_id.slice(0, 12) + '…' : null,
+        },
+        refunds: refunds.map((r) => ({
+          id: r.id, status: r.status,
+          requested_amount_minor: r.requested_amount_minor,
+          actual_refunded_amount_minor: r.actual_refunded_amount_minor,
+          requested_at: r.requested_at, processed_at: r.processed_at,
+          reason: r.reason,
+        })),
+      }), request);
+    }
+    // ---------- M06.0 Phase 4 — ADMIN PAYMENTS / REFUNDS / LEDGER / HEALTH ----------
+    if (route === '/admin/payments' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const { rankOf, ROLES } = await import('@/lib/auth/rbac');
+      if (!actor || rankOf(actor.user.role) < rankOf(ROLES.ADMIN)) return applyCors(fail(403, 'Admin privileges required'), request);
+      const { paymentFundingOrderRepo } = await import('@/lib/repositories/paymentRepo');
+      const rows = await paymentFundingOrderRepo.list({});
+      const items = rows.map((r) => ({
+        id: r.id, provider: r.provider, status: r.status,
+        amount_minor: r.amount_minor, amount_captured_minor: r.amount_captured_minor,
+        amount_refunded_minor: r.amount_refunded_minor, currency: r.currency,
+        campaign_id: r.campaign_id, owner_user_id: r.owner_user_id,
+        created_at: r.created_at, paid_at: r.paid_at,
+      }));
+      return applyCors(ok({ items }), request);
+    }
+    if (path.length === 3 && path[0] === 'admin' && path[1] === 'payments' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const { rankOf, ROLES } = await import('@/lib/auth/rbac');
+      if (!actor || rankOf(actor.user.role) < rankOf(ROLES.ADMIN)) return applyCors(fail(403, 'Admin privileges required'), request);
+      const { paymentFundingOrderRepo } = await import('@/lib/repositories/paymentRepo');
+      const f = await paymentFundingOrderRepo.findById(path[2]);
+      if (!f) return applyCors(fail(404, 'Payment not found'), request);
+      const { promotionCampaignRepo } = await import('@/lib/repositories/promotionRepo');
+      const { paymentRefundRepo } = await import('@/lib/repositories/paymentRefundRepo');
+      const { refundService } = await import('@/lib/services/payments/refundService');
+      const camp = await promotionCampaignRepo.findById(f.campaign_id);
+      const refunds = await paymentRefundRepo.list({ funding_order_id: f.id });
+      const refundability = await refundService.computeRefundability(f.campaign_id);
+      return applyCors(ok({
+        payment: {
+          id: f.id, provider: f.provider, status: f.status, currency: f.currency,
+          amount_minor: f.amount_minor, amount_captured_minor: f.amount_captured_minor,
+          amount_refunded_minor: f.amount_refunded_minor,
+          paid_at: f.paid_at, created_at: f.created_at,
+          campaign_id: f.campaign_id, campaign_name: camp?.name || null,
+          owner_user_id: f.owner_user_id,
+          provider_order_reference: f.provider_order_id,
+          provider_capture_reference: f.provider_capture_id,
+        },
+        refundability,
+        refunds: refunds.map((r) => ({
+          id: r.id, status: r.status,
+          requested_amount_minor: r.requested_amount_minor,
+          actual_refunded_amount_minor: r.actual_refunded_amount_minor,
+          provider_refund_id: r.provider_refund_id,
+          requested_at: r.requested_at, processed_at: r.processed_at,
+          failed_at: r.failed_at, failure_reason: r.failure_reason,
+          reason: r.reason,
+        })),
+      }), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'payments' && path[3] === 'reconcile' && method === 'POST') {
+      const actor = await resolveActor(request);
+      const { rankOf, ROLES } = await import('@/lib/auth/rbac');
+      if (!actor || rankOf(actor.user.role) < rankOf(ROLES.ADMIN)) return applyCors(fail(403, 'Admin privileges required'), request);
+      const { paymentReconciliationService } = await import('@/lib/services/payments/paymentReconciliationService');
+      const out = await paymentReconciliationService.reconcileFundingOrder(path[2]);
+      return applyCors(ok(out), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'payments' && path[3] === 'refunds' && method === 'POST') {
+      // Admin opens a new refund request for a funding order (rare path — the
+      // usual path is owner cancel auto-creates). Body may include a reason.
+      const actor = await resolveActor(request);
+      const { rankOf, ROLES } = await import('@/lib/auth/rbac');
+      if (!actor || rankOf(actor.user.role) < rankOf(ROLES.ADMIN)) return applyCors(fail(403, 'Admin privileges required'), request);
+      const { paymentFundingOrderRepo } = await import('@/lib/repositories/paymentRepo');
+      const f = await paymentFundingOrderRepo.findById(path[2]);
+      if (!f) return applyCors(fail(404, 'Payment not found'), request);
+      const { refundService } = await import('@/lib/services/payments/refundService');
+      // Build synthetic owner actor for the request (executed_by set to admin later).
+      const ownerActor = { user: { id: f.owner_user_id, role: 'user' }, session: null } as unknown as import('@/lib/types').Actor;
+      const refund = await refundService.requestRefundForCancelledCampaign(ownerActor, f.campaign_id);
+      return applyCors(ok({ refund }), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'refunds' && path[3] === 'execute' && method === 'POST') {
+      const actor = await resolveActor(request);
+      const { refundService } = await import('@/lib/services/payments/refundService');
+      const r = await refundService.executeRefund(actor, path[2]);
+      return applyCors(ok({ refund: r }), request);
+    }
+    if (route === '/admin/ledger' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const { rankOf, ROLES } = await import('@/lib/auth/rbac');
+      if (!actor || rankOf(actor.user.role) < rankOf(ROLES.ADMIN)) return applyCors(fail(403, 'Admin privileges required'), request);
+      const { ledgerRepo } = await import('@/lib/repositories/ledgerRepo');
+      const filter: Record<string, unknown> = {};
+      const url = new URL(request.url);
+      const campaignId = url.searchParams.get('campaign_id');
+      const type = url.searchParams.get('transaction_type');
+      const idempKey = url.searchParams.get('idempotency_key');
+      if (campaignId) filter.campaign_id = campaignId;
+      if (type) filter.transaction_type = type;
+      if (idempKey) filter.idempotency_key = idempKey;
+      const rows = await ledgerRepo.list(filter);
+      return applyCors(ok({ items: rows.map((t) => {
+        const dr = t.postings.filter((p) => p.direction === 'debit').reduce((s, p) => s + p.amount_usd_micros, 0);
+        const cr = t.postings.filter((p) => p.direction === 'credit').reduce((s, p) => s + p.amount_usd_micros, 0);
+        return {
+          id: t.id, transaction_type: t.transaction_type, campaign_id: t.campaign_id,
+          idempotency_key: t.idempotency_key, funding_order_id: t.funding_order_id,
+          reference_event_id: t.reference_event_id, amount_usd_micros: t.amount_usd_micros,
+          postings: t.postings, debits_micros: dr, credits_micros: cr,
+          balanced: dr === cr, created_at: t.created_at,
+        };
+      })}), request);
+    }
+    if (route === '/admin/payment-health' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const { rankOf, ROLES } = await import('@/lib/auth/rbac');
+      if (!actor || rankOf(actor.user.role) < rankOf(ROLES.ADMIN)) return applyCors(fail(403, 'Admin privileges required'), request);
+      const { paymentFundingOrderRepo } = await import('@/lib/repositories/paymentRepo');
+      const { paymentRefundRepo } = await import('@/lib/repositories/paymentRefundRepo');
+      const { ledgerService } = await import('@/lib/services/ledger/ledgerService');
+      const { getCollection } = await import('@/lib/db/mongo');
+      const { COLLECTIONS } = await import('@/lib/db/collections');
+      const all = await paymentFundingOrderRepo.list({});
+      const pending = all.filter((f) => ['created', 'checkout_created', 'pending'].includes(f.status)).length;
+      const failed = all.filter((f) => f.status === 'failed').length;
+      const refunds = await paymentRefundRepo.list({});
+      const refunds_pending = refunds.filter((r) => ['pending', 'processing'].includes(r.status)).length;
+      const refunds_failed = refunds.filter((r) => r.status === 'failed').length;
+      const webhookColl = await getCollection<{ processed?: boolean; process_error?: string | null }>(COLLECTIONS.PAYMENT_WEBHOOK_EVENTS);
+      const webhook_failed = await webhookColl.countDocuments({ processed: true, process_error: { $ne: null } });
+      const integrity = await ledgerService.checkIntegrity();
+      const reconciliation_needed = all.filter((f) => f.status === 'pending' && f.provider_order_id).length;
+      return applyCors(ok({
+        pending_payments: pending,
+        failed_payments: failed,
+        refunds_pending, refunds_failed,
+        webhook_processing_failures: webhook_failed,
+        ledger_integrity_issues: integrity,
+        reconciliation_needed_count: reconciliation_needed,
+      }), request);
+    }
     // PayPal webhook. Public endpoint. Verifies signature via PayPal API.
     if (route === '/payments/paypal/webhook' && method === 'POST') {
       const raw_body = await request.text();

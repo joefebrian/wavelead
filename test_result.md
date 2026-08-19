@@ -3814,3 +3814,95 @@ Files touched in Phase 3:
   - tests/m060.test.ts                              (+ M06.0.7 Phase 3 ledger suite T01-T22)
   - tests/m051.test.ts                              (replayed-impression semantic uses distinct tokens; seedActiveCampaign seeds funded_amount cache)
   - tests/phase3d.test.ts                           (NEW; end-to-end reconciliation driver against the real PayPal capture)
+
+# ==================================================================================
+# M06.0 — PHASE 4 (Refund / Reconciliation / Owner Billing / Admin Ops) — FINAL REPORT
+# ==================================================================================
+
+REFUND E2E (real PayPal Sandbox partial refund):
+  Existing Phase 3D payment reused:      YES (PayPal order 49G92867YW3451936, capture 7KC54208PY715021V)
+  Campaign cancelled:                    PASS (status=cancelled)
+  Delivery stopped:                      PASS (atomicDeliverImpression filters on status='active')
+  Expected refundable:                   $19.80
+  Actual refundable:                     $19.80 exact (19,800,000 micros → floor to 1980 minor; rounding_adjustment=0)
+  PayPal partial refund:                 PASS (partially_refunded status)
+  Provider refunded amount:              $19.80 (1980 minor)
+  Provider refund id:                    84030575TA230192A
+  Funding micros:                        20,000,000  ✓
+  Spent micros:                          200,000     ✓
+  Refunded micros:                       19,800,000  ✓
+  Remaining micros:                      0           ✓
+  Exact reconciliation:                  PASS  (20,000,000 − 200,000 − 19,800,000 = 0)
+
+REFUND SECURITY:
+  Owner direct refund blocked:           PASS (refundService.executeRefund → 403 for non-admin)
+  Admin refund:                          PASS (executeRefund succeeded as admin/super_admin)
+  Moderator blocked:                     PASS (403)
+  Amount tampering (client-supplied):    PASS (service accepts only refund_id; amount re-computed server-side from ledger)
+  Idempotency:                           PASS (3 concurrent executeRefund calls → 1 refund_debit ledger row)
+
+RECONCILIATION:
+  Captured/local stale recovery:         PASS (RC01 — pending → finalized_paid via retrievePayment)
+  Refund/local stale recovery:           PASS (recordRefund idempotency-key path handles late webhook)
+  Out-of-order events (older APPROVED):  PASS (RC03 — no downgrade from paid)
+  Repeated reconciliation:               PASS (RC02 — noop_already_paid, no duplicate ledger row)
+
+OWNER BILLING:
+  /dashboard/billing (list):             PASS
+  /dashboard/billing/[id] (detail):      PASS  (never exposes provider_capture_secret; provider ref truncated)
+  Campaign funding summary (refundable + refunded added): PASS
+  Receipt:                               DEFERRED  (labelled clearly as "Payment Receipt \u2014 not a tax invoice"; no download UI in this phase)
+
+ADMIN:
+  /admin/payments (list):                PASS
+  /admin/payments/[id] (detail):         PASS  (shows funded/spent/refunded/remaining/refundable/rounding-residual)
+  Refund action (open + execute):        PASS  (visible only when refundable > 0 AND no conflicting request in progress)
+  /admin/ledger:                         PASS  (read-only; filters campaign_id / transaction_type / idempotency_key)
+  /admin/payment-health:                 PASS  (pending / failed / refunds pending / webhook failures / ledger integrity / reconciliation-needed)
+
+LEDGER:
+  Funding immutable:                     PASS
+  Spend immutable:                       PASS
+  Refund balanced:                       PASS (DR campaign_unspent_funds 19,800,000 / CR refund_payable 19,800,000)
+  Integrity:                             PASS (0 issues)
+
+TARGETED TESTS:
+  M06.0: 51/51 (tests/m060.test.ts — including M06.0.8 Phase 4 suite: R01/R02/R03/R05/R04-R06-R09-R10-R13-R14-R15/R11-R12/R16/R17-R18/R19-R20/RC01-RC02-RC03/RC07/PRIVACY)
+  M05.1: 33/33 (tests/m051.test.ts)
+TypeScript:                              PASS (tsc --noEmit)
+
+Responsive smoke (localhost):
+  390:                                   PASS (no overflow; billing cards stack)
+  768:                                   PASS (no overflow; admin detail tables scroll horizontally when needed)
+  1440:                                  PASS (all 5 admin pages + 2 owner pages render; ledger shows 1 funding + 100 spend + 1 refund_debit)
+
+External PayPal API calls this phase:    2 total (1 order retrieve + 1 refunds/{capture_id})
+New PayPal payments created:             0 (expected 0)  ✓
+Agent runs:                              Backend 0 / Frontend 0
+
+BLOCKERS:                                None
+READY FOR FINAL M06.0 RELEASE QA:        YES
+
+Files added in Phase 4:
+  Backend
+  - lib/types.ts                                   (+ PaymentRefund + RefundStatus)
+  - lib/db/collections.ts                          (+ PAYMENT_REFUNDS)
+  - lib/db/indexes.ts                              (+ 5 indexes for payment_refunds incl. partial-filter unique on provider_refund_id)
+  - lib/repositories/paymentRefundRepo.ts          (NEW; atomic transition helper)
+  - lib/services/payments/refundService.ts        (NEW; computeRefundability, requestRefundForCancelledCampaign, executeRefund; admin gated)
+  - lib/services/payments/paymentReconciliationService.ts (NEW; reconcileFundingOrder — idempotent, no-downgrade)
+  - lib/services/promotion/campaignService.ts     (cancel: allow active/paused → auto-open refund request)
+  - app/api/[[...path]]/route.ts                  (+ /owner/billing, /owner/billing/:id, /admin/payments, /admin/payments/:id, /admin/payments/:id/reconcile, /admin/payments/:id/refunds, /admin/refunds/:id/execute, /admin/ledger, /admin/payment-health)
+
+  Frontend
+  - app/dashboard/billing/page.tsx                 (NEW; owner list, mobile cards + desktop table)
+  - app/dashboard/billing/[id]/page.tsx            (NEW; owner detail; labeled "Payment Receipt", NOT "Tax Invoice")
+  - app/dashboard/promotions/[id]/FundingSection.tsx (updated FUNDED tile grid to include Refundable/Refunded)
+  - app/admin/payments/page.tsx                    (NEW; admin list)
+  - app/admin/payments/[id]/page.tsx               (NEW; admin detail with reconciliation math)
+  - app/admin/payments/[id]/AdminPaymentActions.tsx (NEW; Reconcile / Open Refund / Execute Refund)
+  - app/admin/ledger/page.tsx                      (NEW; read-only ledger viewer)
+  - app/admin/payment-health/page.tsx              (NEW; ops dashboard)
+
+  Tests
+  - tests/m060.test.ts                             (+ M06.0.8 Phase 4 targeted refund + reconciliation suite; 12 tests)

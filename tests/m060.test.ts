@@ -607,6 +607,226 @@ describe('M06.0.7 — Phase 3: Ledger, spend accounting, integrity', () => {
   });
 });
 
+describe('M06.0.8 — Phase 4: Refund workflow + Reconciliation', () => {
+  it('R01: owner cancellation of funded active campaign → status=cancelled, delivery stops immediately', async () => {
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    await campaignFundingService.captureAndFinalize(f.id);
+    // Confirm active + delivering.
+    const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+    const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
+    const beforeAck = await promotionDeliveryService.acknowledgeImpression({ campaign_id: camp.id, placement: 'sponsored_search', anonymous_session_id: 'r01-pre' });
+    expect(beforeAck.recorded).toBe(true);
+    // Owner cancels.
+    await promotionCampaignService.cancel({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    const c = await promotionCampaignRepo.findById(camp.id);
+    expect(c!.status).toBe('cancelled');
+    // Delivery must NOT bill anymore.
+    const afterAck = await promotionDeliveryService.acknowledgeImpression({ campaign_id: camp.id, placement: 'sponsored_search', anonymous_session_id: 'r01-post' });
+    expect(afterAck.recorded).toBe(false);
+  });
+
+  it('R02/R08: refundable = funded − spent − already_refunded; partial refund calc excludes delivered spend', async () => {
+    const { refundService } = await import('@/lib/services/payments/refundService');
+    const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    await campaignFundingService.captureAndFinalize(f.id);
+    // Deliver 10 imps = 20,000 micros.
+    for (let i = 0; i < 10; i++) {
+      await promotionDeliveryService.acknowledgeImpression({ campaign_id: camp.id, placement: 'sponsored_search', anonymous_session_id: `r02-${i}`, impression_event_id: `r02-${camp.id}-${i}` });
+    }
+    const rep = await refundService.computeRefundability(camp.id);
+    expect(rep.funded_usd_micros).toBe(20_000_000);
+    expect(rep.spent_usd_micros).toBe(20_000);
+    expect(rep.refundable_usd_micros).toBe(19_980_000);
+    expect(rep.refundable_amount_minor).toBe(1998); // $19.98 (floor)
+    expect(rep.rounding_adjustment_usd_micros).toBe(0);
+  });
+
+  it('R03: OWNER cannot directly execute provider refund (only requestRefundForCancelledCampaign)', async () => {
+    const { refundService } = await import('@/lib/services/payments/refundService');
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    await campaignFundingService.captureAndFinalize(f.id);
+    const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+    await promotionCampaignService.cancel({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    const refunds = await refundService.listForOwnerCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    const openRefund = refunds.find((r) => r.status === 'pending')!;
+    // Owner tries to execute — must be 403.
+    await expect(refundService.executeRefund({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, openRefund.id))
+      .rejects.toMatchObject({ status: 403 });
+  });
+
+  it('R05: MODERATOR cannot execute refund', async () => {
+    const { refundService } = await import('@/lib/services/payments/refundService');
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    await campaignFundingService.captureAndFinalize(f.id);
+    const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+    await promotionCampaignService.cancel({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    const refunds = await refundService.listForOwnerCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    await expect(refundService.executeRefund({ user: { id: 'mod-x', role: 'moderator' } as any, session: {} as any }, refunds[0].id))
+      .rejects.toMatchObject({ status: 403 });
+  });
+
+  it('R04/R06/R09/R10/R13/R14/R15: admin can execute; refund ledger balanced; funding & spend rows immutable; provider amount authoritative', async () => {
+    const { refundService } = await import('@/lib/services/payments/refundService');
+    const { ledgerRepo } = await import('@/lib/repositories/ledgerRepo');
+    const { ledgerService } = await import('@/lib/services/ledger/ledgerService');
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    await campaignFundingService.captureAndFinalize(f.id);
+    // Deliver some.
+    const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
+    for (let i = 0; i < 10; i++) {
+      await promotionDeliveryService.acknowledgeImpression({ campaign_id: camp.id, placement: 'sponsored_search', anonymous_session_id: `r04-${i}`, impression_event_id: `r04-${camp.id}-${i}` });
+    }
+    // Cancel + auto-request.
+    const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+    await promotionCampaignService.cancel({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    const requests = await refundService.listForOwnerCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    const req = requests.find((r) => r.status === 'pending')!;
+    expect(req.requested_amount_minor).toBe(1998); // $19.98 refundable (20 - 0.02)
+    // Snapshot ledger before refund.
+    const beforeRows = await ledgerRepo.listForCampaign(camp.id);
+    const fundingBefore = beforeRows.find((r) => r.transaction_type === 'funding_credit')!;
+    const spendBefore = beforeRows.filter((r) => r.transaction_type === 'spend_debit');
+    // Admin executes.
+    const result = await refundService.executeRefund({ user: { id: 'admin-x', role: 'admin' } as any, session: {} as any }, req.id);
+    expect(['refunded', 'partially_refunded']).toContain(result.status);
+    // Verify refund ledger row balances.
+    const afterRows = await ledgerRepo.listForCampaign(camp.id);
+    const refundRow = afterRows.find((r) => r.transaction_type === 'refund_debit')!;
+    expect(refundRow).toBeTruthy();
+    const dr = refundRow.postings.filter((p) => p.direction === 'debit').reduce((s, p) => s + p.amount_usd_micros, 0);
+    const cr = refundRow.postings.filter((p) => p.direction === 'credit').reduce((s, p) => s + p.amount_usd_micros, 0);
+    expect(dr).toBe(cr);
+    // Funding + spend ledger rows are UNCHANGED (immutability).
+    const fundingAfter = afterRows.find((r) => r.transaction_type === 'funding_credit')!;
+    expect(fundingAfter.id).toBe(fundingBefore.id);
+    expect(fundingAfter.amount_usd_micros).toBe(fundingBefore.amount_usd_micros);
+    const spendAfter = afterRows.filter((r) => r.transaction_type === 'spend_debit');
+    expect(spendAfter.length).toBe(spendBefore.length);
+    expect(spendAfter.map((r) => r.id).sort()).toEqual(spendBefore.map((r) => r.id).sort());
+    // Reconciliation equation.
+    const b = await ledgerService.campaignBalances(camp.id);
+    expect(b.funded_usd_micros - b.spent_usd_micros - b.refunded_usd_micros).toBe(b.remaining_usd_micros);
+  });
+
+  it('R11/R12: duplicate refund execute + duplicate refund idempotency-key are safe', async () => {
+    const { refundService } = await import('@/lib/services/payments/refundService');
+    const { ledgerRepo } = await import('@/lib/repositories/ledgerRepo');
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    await campaignFundingService.captureAndFinalize(f.id);
+    const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+    await promotionCampaignService.cancel({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    const requests = await refundService.listForOwnerCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    const req = requests.find((r) => r.status === 'pending')!;
+    await Promise.all([
+      refundService.executeRefund({ user: { id: 'admin-x', role: 'admin' } as any, session: {} as any }, req.id),
+      refundService.executeRefund({ user: { id: 'admin-x', role: 'admin' } as any, session: {} as any }, req.id),
+      refundService.executeRefund({ user: { id: 'admin-x', role: 'admin' } as any, session: {} as any }, req.id),
+    ]);
+    const rows = await ledgerRepo.listForCampaign(camp.id);
+    const refunds = rows.filter((r) => r.transaction_type === 'refund_debit');
+    expect(refunds.length).toBe(1);
+  });
+
+  it('R16: refunded campaign cannot resume paid delivery without new funding', async () => {
+    const { refundService } = await import('@/lib/services/payments/refundService');
+    const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    await campaignFundingService.captureAndFinalize(f.id);
+    const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+    await promotionCampaignService.cancel({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    const requests = await refundService.listForOwnerCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    await refundService.executeRefund({ user: { id: 'admin-x', role: 'admin' } as any, session: {} as any }, requests[0].id);
+    // Force campaign status back to active — delivery must STILL refuse because refunded funds are gone.
+    await promotionCampaignRepo.update(camp.id, { status: 'active' } as any);
+    const ack = await promotionDeliveryService.acknowledgeImpression({ campaign_id: camp.id, placement: 'sponsored_search', anonymous_session_id: 'r16' });
+    expect(ack.recorded).toBe(false); // budget_exhausted — refund consumed remaining funds
+  });
+
+  it('R17/R18: rounding floors safely, adjustment is explicit when refundable includes sub-cent micros', async () => {
+    const { refundService } = await import('@/lib/services/payments/refundService');
+    const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    await campaignFundingService.captureAndFinalize(f.id);
+    // Deliver 1 imp = 2,000 micros. Remaining = 19,998,000 micros.
+    // 19,998,000 / 10,000 = 1999.8 → floor to 1999 minor = $19.99. Rounding residual = 8,000 micros.
+    await promotionDeliveryService.acknowledgeImpression({ campaign_id: camp.id, placement: 'sponsored_search', anonymous_session_id: 'r17', impression_event_id: `r17-${camp.id}` });
+    const rep = await refundService.computeRefundability(camp.id);
+    expect(rep.refundable_usd_micros).toBe(19_998_000);
+    expect(rep.refundable_amount_minor).toBe(1999); // floor
+    expect(rep.rounding_adjustment_usd_micros).toBe(8000); // explicit residual
+  });
+
+  it('R19/R20: cross-owner access denied for payment detail + refund list', async () => {
+    const { refundService } = await import('@/lib/services/payments/refundService');
+    const owner1 = await signup(); const ch1 = await ensureChannel(owner1.userId);
+    const camp = await createApprovedCampaign(owner1.userId, ch1.id, 2000);
+    await campaignFundingService.captureAndFinalize((await campaignFundingService.createFundingForCampaign({ user: { id: owner1.userId, role: 'user' } as any, session: {} as any }, camp.id)).id);
+    const owner2 = await signup();
+    await expect(refundService.listForOwnerCampaign({ user: { id: owner2.userId, role: 'user' } as any, session: {} as any }, camp.id))
+      .rejects.toMatchObject({ status: 403 });
+  });
+
+  it('RC01/RC02/RC03: reconcileFundingOrder finalizes a stale pending; is idempotent on paid; never downgrades from paid', async () => {
+    const { paymentReconciliationService } = await import('@/lib/services/payments/paymentReconciliationService');
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    // Stub provider retrievePayment to return COMPLETED so reconcile can finalize.
+    (mock as any).retrievePayment = async () => ({ provider_order_id: f.provider_order_id!, internal_status: 'paid', amount_minor: 2000, currency: 'USD', provider_capture_id: `CAP-RC01-${f.id}`, raw: {} });
+    const r1 = await paymentReconciliationService.reconcileFundingOrder(f.id);
+    expect(['finalized_paid', 'no_change']).toContain(r1.action);
+    // Second reconcile should be idempotent — no downgrade.
+    const r2 = await paymentReconciliationService.reconcileFundingOrder(f.id);
+    expect(r2.action).toBe('noop_already_paid');
+    // Even if provider suddenly reports "pending" (older event), we don't downgrade.
+    (mock as any).retrievePayment = async () => ({ provider_order_id: f.provider_order_id!, internal_status: 'pending', amount_minor: 2000, currency: 'USD', provider_capture_id: null, raw: {} });
+    const r3 = await paymentReconciliationService.reconcileFundingOrder(f.id);
+    expect(r3.action).toBe('noop_already_paid');
+    const final = await paymentFundingOrderRepo.findById(f.id);
+    expect(final!.status).toBe('paid');
+  });
+
+  it('RC07: reconcile with unknown funding_id → 404', async () => {
+    const { paymentReconciliationService } = await import('@/lib/services/payments/paymentReconciliationService');
+    await expect(paymentReconciliationService.reconcileFundingOrder('does-not-exist'))
+      .rejects.toMatchObject({ status: 404 });
+  });
+
+  it('PRIVACY: refund and payment API responses never leak PayPal secret / raw provider payload', async () => {
+    // executeRefund's return shape excludes provider "raw"; verify.
+    const { refundService } = await import('@/lib/services/payments/refundService');
+    const owner = await signup(); const ch = await ensureChannel(owner.userId);
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
+    const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    await campaignFundingService.captureAndFinalize(f.id);
+    const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
+    await promotionCampaignService.cancel({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    const requests = await refundService.listForOwnerCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
+    const executed = await refundService.executeRefund({ user: { id: 'admin-x', role: 'admin' } as any, session: {} as any }, requests[0].id);
+    const s = JSON.stringify(executed);
+    expect(s).not.toContain(process.env.PAYPAL_CLIENT_SECRET || '__unset__');
+    expect(s).not.toContain('access_token');
+    expect(s).not.toContain('raw_body');
+  });
+});
+
 describe('M06.0.1 — Funding creation authz + amount enforcement', () => {
   it('happy path: owner funds own approved campaign; amount = campaign budget', async () => {
     const owner = await signup();

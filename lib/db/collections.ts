@@ -24,6 +24,7 @@ export const COLLECTIONS = {
   PAYMENT_WEBHOOK_EVENTS: 'payment_webhook_events',
   SPONSORED_IMPRESSION_DEDUP: 'sponsored_impression_dedup',
   LEDGER_TRANSACTIONS: 'ledger_transactions',
+  PAYMENT_REFUNDS: 'payment_refunds',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

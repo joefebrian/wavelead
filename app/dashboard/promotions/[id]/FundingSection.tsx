@@ -211,9 +211,12 @@ export default function FundingSection({ campaignId, campaignStatus, budgetMinor
 
       {/* FUNDED */}
       {isFunded && (
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3" data-testid="funding-state-funded">
-          <StatCell label="Campaign Funded" value={dollars(summary.total_paid_usd_minor)} tone="ok" />
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-4 gap-3" data-testid="funding-state-funded">
+          <StatCell label="Funded" value={dollars(summary.total_paid_usd_minor)} tone="ok" />
           <StatCell label="Spent" value={dollars(estimatedSpendMinor)} />
+          <StatCell label={((order?.amount_refunded_minor || 0) > 0) ? 'Refunded' : 'Refundable'} value={((order?.amount_refunded_minor || 0) > 0)
+              ? dollars(order?.amount_refunded_minor || 0)
+              : dollars(Math.max(0, Math.floor(((summary.balance_usd_micros || 0)) / 10_000) - estimatedSpendMinor))} />
           <StatCell label="Remaining" value={dollars(remainingAfterSpend)} />
         </div>
       )}
