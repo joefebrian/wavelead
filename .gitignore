@@ -88,3 +88,4 @@ credentials.json
 *.key
 .credentials
 .next/cache/webpack/server-production/0.pack
+memory/qa_credentials_ephemeral.txt
