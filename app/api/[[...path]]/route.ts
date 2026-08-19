@@ -67,6 +67,29 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ user }), request);
     }
 
+    // ---------- PREVIEW-ONLY QA BOOTSTRAP ----------
+    // Idempotent provisioning of the three canonical QA personas so a human
+    // reviewer can log in and exercise M06.0 flows. Passwords are read from
+    // Emergent Secrets env vars only; never returned in the response.
+    // Hard-gated to non-production + QA_SEED_ENABLED=true.
+    if (route === '/dev/qa-bootstrap') {
+      const { isQaBootstrapEnabled, runQaPersonaSeed } = await import('@/lib/seed/qaPersonaSeed');
+      const gate = isQaBootstrapEnabled();
+      if (!gate.enabled) {
+        return applyCors(fail(403, 'QA bootstrap disabled', { reason: gate.reason }), request);
+      }
+      if (method === 'GET') {
+        return applyCors(ok({ enabled: true, note: 'POST to provision QA personas.' }), request);
+      }
+      if (method === 'POST') {
+        const rl = rateLimit(clientKey(request, 'qa-bootstrap'), 5, 60_000);
+        if (!rl.allowed) return applyCors(fail(429, 'Too many QA bootstrap attempts', { retryAfter: rl.retryAfterSeconds }), request);
+        const result = await runQaPersonaSeed();
+        // Never include passwords in the response.
+        return applyCors(ok(result), request);
+      }
+    }
+
     // ---------- PUBLIC DISCOVERY ----------
     if (route === '/categories' && method === 'GET') {
       const withCounts = new URL(request.url).searchParams.get('withCounts');
