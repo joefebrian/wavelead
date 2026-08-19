@@ -518,14 +518,22 @@ export interface PaymentFundingOrder {
   id: string;
   campaign_id: string;
   owner_user_id: string;
-  provider: 'paypal' | 'stripe' | 'mock';
+  provider: 'paypal' | 'stripe' | 'mock' | 'local';
   provider_order_id: string | null;
   provider_capture_id: string | null;
-  currency: string;                    // ISO 4217
-  amount_minor: number;                // funding request in payment-currency minor units
+  // M06.1: generic per-provider identifiers. Optional / nullable to keep
+  // historical PayPal records structurally valid without a migration.
+  provider_session_id?: string | null;
+  provider_payment_id?: string | null;
+  provider_channel_code?: string | null;
+  currency: string;                    // ISO 4217 (payment currency for this order)
+  payment_currency?: string;           // M06.1: explicit payment-currency marker (mirrors `currency` for legacy)
+  amount_minor: number;                // funding request in payment-currency minor units (PayPal cents; IDR whole)
+  payment_amount_provider_units?: number; // M06.1: explicit provider-native amount (IDR uses whole units)
   amount_captured_minor: number;
   amount_refunded_minor: number;
   amount_usd_micros: number;           // frozen conversion to internal ad ledger currency
+  fx_quote_id?: string | null;         // M06.1: nullable link to locked USD/IDR quote (PayPal remains null)
   status: FundingStatus;
   approve_url: string | null;          // buyer redirect target (safe for client)
   return_url: string | null;
@@ -535,6 +543,46 @@ export interface PaymentFundingOrder {
   refunded_at: Date | null;
   created_at: Date;
   updated_at: Date;
+}
+
+// =============================================================================
+// M06.1 \u2014 USD/IDR FX support (display + future local-payment readiness)
+// =============================================================================
+// Rates are represented as `rate_scaled / 10^rate_scale`. Integer-safe.
+export interface FundingFxRate {
+  id: string;
+  base_currency: string;            // 'USD'
+  quote_currency: string;           // 'IDR'
+  rate_scaled: number;              // e.g. 16500 for 1 USD = 16500 IDR
+  rate_scale: number;               // e.g. 0 for the above; 4 for 16523.4567
+  source: 'admin' | 'automated';    // M06.1 uses 'admin'
+  active: boolean;                  // exactly one row per pair is active at a time
+  effective_from: Date;
+  effective_until: Date | null;
+  note: string | null;
+  created_by: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type FundingFxQuoteStatus = 'open' | 'expired' | 'consumed';
+
+// Immutable locked snapshot. Only `status` transitions; all other fields
+// are frozen at `locked_at`.
+export interface FundingFxQuote {
+  id: string;
+  campaign_id: string;
+  funding_order_id: string | null;   // populated later if the quote is consumed by a real funding
+  base_currency: string;             // 'USD'
+  quote_currency: string;            // 'IDR'
+  campaign_usd_micros: number;       // exact source-of-truth amount at quote time
+  rate_scaled: number;
+  rate_scale: number;
+  quoted_idr_amount: number;         // integer whole rupiah
+  source_rate_id: string;            // FK \u2192 funding_fx_rates.id
+  locked_at: Date;
+  expires_at: Date;
+  status: FundingFxQuoteStatus;
 }
 
 // Immutable double-entry ledger row. Positive entries credit the campaign;
@@ -631,7 +679,7 @@ export interface PaymentRefund {
   funding_order_id: string;
   campaign_id: string;
   owner_user_id: string;
-  provider: 'paypal' | 'stripe' | 'mock';
+  provider: 'paypal' | 'stripe' | 'mock' | 'local';
   provider_refund_id: string | null;
   requested_amount_minor: number;      // owner-requested (== unused refundable at request time)
   requested_amount_usd_micros: number;

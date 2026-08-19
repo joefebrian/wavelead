@@ -125,9 +125,54 @@ via WaveLead).
 - **Payment health dashboard** (`/admin/payment-health`): pending/failed
   payments, pending/failed refunds, webhook processing failures, ledger
   integrity issue count, reconciliation-needed records
-- Not yet: IDR/FX, subscriptions, wallet, marketplace/creator payouts,
-  additional payment providers, sponsorship marketplace, tax invoice engine
+- Not yet: subscriptions, wallet, marketplace/creator payouts, additional
+  payment providers, sponsorship marketplace, tax invoice engine
   (all deferred to later milestones)
+
+### Indonesia Currency & Local Payment Readiness (M06.1)
+- **Canonical accounting stays USD** — the ad ledger, campaign budget,
+  and sponsored spend continue in USD micros; **no IDR value is ever
+  written to a USD micros account**
+- **Admin-managed USD → IDR conversion rate** (`funding_fx_rates`
+  collection, append-only history) — no live FX API, no market-rate
+  feed, no spread engine
+- **Integer-safe fixed-point conversion**: rates are stored as
+  `rate_scaled / 10^rate_scale`; all arithmetic goes through `BigInt`.
+  Checkout uses CEIL rounding (never under-collect), refunds use FLOOR
+  (never over-refund). Any residual sub-rupiah delta is reported as an
+  explicit `fx_rounding_adjustment_micros`.
+- **Immutable locked FX quotes** (`funding_fx_quotes`) — once created,
+  a quote's rate/amount fields are frozen; only `status` can transition
+  (`open → expired / consumed`). A new active rate never re-prices
+  existing quotes.
+- **Owner IDR-equivalent display** on `/dashboard/promotions/[id]`:
+  campaign budget shown in dollars alongside the current Rupiah
+  equivalent; a **Local Payment "Coming Soon"** panel makes it clear
+  that no IDR checkout is actionable yet
+- **PayPal remains the only actionable funding option** — the Local
+  Payment button is intentionally disabled; no code path routes any
+  payment to a local provider in M06.1
+- **Provider capability metadata** — `PAYPAL_CAPABILITIES` /
+  `LOCAL_PAYMENT_CAPABILITIES` document what each provider supports
+  (currencies, refund/partial-refund, hosted checkout, async
+  confirmation). Business logic consults capabilities rather than
+  string-matching provider names, so a future local-payment adapter
+  can plug in without touching campaign business logic.
+- **Admin FX UI** (`/admin/fx-rates`, admin/super_admin only): view the
+  active rate, add + activate a new one, view retirement history.
+  Historical rate rows are never mutated in place.
+- **Payment health readiness signals** on `/admin/payment-health`:
+  PayPal `configured`, local payment `not_configured`, USD/IDR rate
+  presence. Missing local provider is informational only, never a
+  health error.
+- **Payment funding order schema** is now provider/currency-neutral
+  (`payment_currency`, `payment_amount_provider_units`, `fx_quote_id`,
+  `provider_session_id`, `provider_channel_code`), backward-compatible
+  with all M06.0 PayPal records
+- Not yet: Xendit / Midtrans / Stripe integration, QRIS / VA /
+  e-wallet checkouts, live FX API, global multi-currency, IDR
+  refunds, manual local refund workflow, subscriptions, wallet, tax
+  engine, marketplace payouts (all future milestones)
 
 ---
 

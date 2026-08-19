@@ -4266,3 +4266,92 @@ Errors: 0
 All viewports (390px, 430px, 1024px, 1440px) PASS across all surfaces.
 Combined with previous testing (375px, 768px, 1920px), full responsive
 matrix is now complete.
+
+===============================================================================
+M06.1 FINAL RELEASE QA — 2026-08-19 (main agent)
+===============================================================================
+
+SCOPE
+-----
+Indonesia Currency & Local Payment READINESS only (no Xendit integration,
+no external payment provider calls, no fake stub provider).
+
+CANONICAL TESTS
+---------------
+Full yarn test:               199/199 PASS
+  (M06.1: 24/24 new · all M02..M06.0 regression green)
+TypeScript:                   PASS (tsc --noEmit, 0 errors)
+Full yarn build:              PASS
+Responsive manual smoke:      390 · 768 · 1440 — /admin/fx-rates renders
+                              cleanly with no horizontal overflow; active
+                              rate "1 USD = Rp16.500" surfaced; rate history
+                              table paginates naturally
+
+CRITICAL M06.1 INVARIANTS VERIFIED
+----------------------------------
+1. $20 × 16,500 = Rp330,000 exactly ✓ (BigInt path, no residual)
+2. Integer-safe conversion (rejects float/negative/zero-rate) ✓
+3. No floating-point accounting anywhere in FX code path ✓
+4. Client cannot supply FX rate (server-only via fxAdminService) ✓
+5. Client cannot supply IDR amount (previewIdrForCampaign server-side) ✓
+6. Non-admin (owner + business) cannot manage FX (403) ✓
+7. Unauthenticated cannot create rate (401/403) ✓
+8. New active rate does NOT mutate existing locked quotes ✓
+9. Quote expiration is a controlled status transition ✓
+10. No quote funds a campaign (no such code path exists) ✓
+11. No IDR UI action can mark payment paid (Local Payment button disabled) ✓
+12. PayPal continues to work without any FX quote ✓
+13. Existing PayPal funding remains exact (M06.0 51/51 green) ✓
+14. USD micros ledger unchanged (phase3d canonical fixture 5/5 pass) ✓
+15. Historical PayPal payment currency stays USD (no destructive migration) ✓
+16. Missing local provider never triggers provider call (capability configured:false) ✓
+17. Local Payment CTA is aria-disabled + not-allowed cursor + "Coming Soon" label ✓
+18. Business role gains no owner funding permission (existing RBAC preserved) ✓
+
+REGRESSION
+----------
+M02 Discovery / Follow / UFI      : PASS (foundation + m02 test files)
+M03 Ownership / trust / cross-owner: PASS
+M04 Owner analytics / organic     : PASS
+M05.0 Smart Import                : PASS
+M05.1 Sponsored + attribution     : 33/33 PASS
+M06.0 Payment / ledger / refund   : 51/51 PASS (no new PayPal calls)
+M06.0 Phase 3D canonical fixture  : 5/5 PASS (identity intact)
+QA bootstrap RBAC                 : 12/12 PASS
+M06.1 FX + capabilities + RBAC    : 24/24 PASS
+
+M06.1 FILES ADDED
+-----------------
+lib/utils/idrFormat.ts                              (Rp330.000 formatter, USD micros formatter)
+lib/services/fx/fxConversion.ts                     (BigInt integer-safe USD→IDR)
+lib/services/fx/fxRateProvider.ts                   (interface + admin-managed impl)
+lib/services/fx/fxQuoteService.ts                   (immutable locked quote service)
+lib/services/fx/fxAdminService.ts                   (admin FX rate management)
+lib/services/payments/paymentProviderCapabilities.ts (PayPal + local capability metadata)
+lib/repositories/fundingFxRateRepo.ts               (append-only rate repo)
+lib/repositories/fundingFxQuoteRepo.ts              (immutable quote repo)
+lib/seed/qaFxRateSeed.ts                            (idempotent preview-only fixture)
+app/admin/fx-rates/page.tsx                         (admin UI)
+app/admin/fx-rates/AdminFxCreateForm.tsx            (client form)
+app/dashboard/promotions/[id]/IdrEquivalentPanel.tsx (owner IDR display + Coming Soon)
+tests/m061.test.ts                                  (24 targeted tests)
+
+M06.1 FILES UPDATED
+-------------------
+lib/db/collections.ts       (+ FUNDING_FX_RATES, FUNDING_FX_QUOTES)
+lib/types.ts                (+ FundingFxRate, FundingFxQuote types; payment_currency, fx_quote_id, provider_session_id fields on PaymentFundingOrder; 'local' added to provider union)
+app/api/[[...path]]/route.ts (+ /admin/fx-rates GET/POST, /admin/fx-rates/:id/deactivate POST, /fx/rate GET, /owner/campaigns/:id/fx-preview GET; payment-health payload includes provider readiness + fx snapshot; qa-bootstrap seeds FX fixture idempotently)
+app/dashboard/promotions/[id]/page.tsx (+ IdrEquivalentPanel)
+README.md                   (+ M06.1 section)
+
+BLOCKERS
+--------
+None.
+
+SECURITY POSTURE
+----------------
+- No new secret env vars introduced (no XENDIT_*)
+- FX rate values are server-authoritative; client-submitted rate_scaled goes through Zod-style validation with hard bounds
+- Local payment CTA is aria-disabled + type="button" with a not-allowed cursor; no click handler exists
+- Provider capability `local.configured=false` guarantees no code path routes to a non-existent provider
+- Ledger currency is protected: no code path writes IDR values into USD micros accounts

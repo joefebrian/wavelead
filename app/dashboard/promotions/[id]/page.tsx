@@ -11,6 +11,7 @@ import { campaignFundingService } from '@/lib/services/payments/campaignFundingS
 import { paymentFundingOrderRepo } from '@/lib/repositories/paymentRepo';
 import CampaignActions from './CampaignActions';
 import FundingSection from './FundingSection';
+import IdrEquivalentPanel from './IdrEquivalentPanel';
 
 export const metadata: Metadata = { title: 'Campaign — WaveLead', robots: { index: false, follow: false } };
 export const dynamic = 'force-dynamic';
@@ -65,6 +66,8 @@ export default async function PromotionDetailPage({ params }: { params: Promise<
           initialSummary={fundingSummary}
           latestOrder={latestOrderPublic}
         />
+
+        <IdrEquivalentPanel campaignId={camp.id} />
 
         <section className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-3">
           <Kpi label="Sponsored impressions" value={o.sponsored_impressions.toLocaleString()} />

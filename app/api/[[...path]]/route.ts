@@ -85,9 +85,68 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
         const rl = rateLimit(clientKey(request, 'qa-bootstrap'), 5, 60_000);
         if (!rl.allowed) return applyCors(fail(429, 'Too many QA bootstrap attempts', { retryAfter: rl.retryAfterSeconds }), request);
         const result = await runQaPersonaSeed();
+        // Also idempotently seed the QA USD/IDR fixture rate.
+        try {
+          const { seedQaFxRateIfEnabled } = await import('@/lib/seed/qaFxRateSeed');
+          const fx = await seedQaFxRateIfEnabled();
+          (result as unknown as Record<string, unknown>).fx_rate = fx.row
+            ? { id: fx.row.id, base_currency: fx.row.base_currency, quote_currency: fx.row.quote_currency, rate_scaled: fx.row.rate_scaled, rate_scale: fx.row.rate_scale, active: fx.row.active, seeded: fx.seeded }
+            : { seeded: false, reason: fx.reason };
+        } catch { /* seeding is best-effort; personas still returned */ }
         // Never include passwords in the response.
         return applyCors(ok(result), request);
       }
+    }
+
+    // ---------- M06.1 FX RATES ----------
+    if (route === '/admin/fx-rates') {
+      const actor = await resolveActor(request);
+      const { rankOf, ROLES } = await import('@/lib/auth/rbac');
+      if (!actor || rankOf(actor.user.role) < rankOf(ROLES.ADMIN)) return applyCors(fail(403, 'Admin privileges required'), request);
+      const { fxAdminService } = await import('@/lib/services/fx/fxAdminService');
+      if (method === 'GET') {
+        const rows = await fxAdminService.list();
+        const active = rows.find((r) => r.active) ?? null;
+        return applyCors(ok({ items: rows, active }), request);
+      }
+      if (method === 'POST') {
+        const body = (await request.json()) as { rate_scaled?: number; rate_scale?: number; note?: string };
+        const row = await fxAdminService.createAndActivate(actor, {
+          base_currency: 'USD', quote_currency: 'IDR',
+          rate_scaled: Number(body.rate_scaled), rate_scale: Number(body.rate_scale),
+          note: body.note,
+        });
+        return applyCors(ok({ rate: row }), request);
+      }
+    }
+    if (route.startsWith('/admin/fx-rates/') && path[2] === 'deactivate' && method === 'POST') {
+      const actor = await resolveActor(request);
+      const { rankOf, ROLES } = await import('@/lib/auth/rbac');
+      if (!actor || rankOf(actor.user.role) < rankOf(ROLES.ADMIN)) return applyCors(fail(403, 'Admin privileges required'), request);
+      const { fxAdminService } = await import('@/lib/services/fx/fxAdminService');
+      await fxAdminService.deactivate(actor, path[3]);
+      return applyCors(ok({ ok: true }), request);
+    }
+    // Public: current active USD→IDR display rate (safe to return — no secrets, no rates from third parties).
+    if (route === '/fx/rate' && method === 'GET') {
+      const { fxRateProvider } = await import('@/lib/services/fx/fxRateProvider');
+      const r = await fxRateProvider.getActiveRate('USD', 'IDR');
+      if (!r) return applyCors(ok({ active: null }), request);
+      return applyCors(ok({ active: { base_currency: r.base_currency, quote_currency: r.quote_currency, rate_scaled: r.rate_scaled, rate_scale: r.rate_scale, effective_from: r.effective_from } }), request);
+    }
+    // Owner: preview an IDR equivalent quote for an owned campaign (server-side conversion; no payment authority).
+    if (route.startsWith('/owner/campaigns/') && path[3] === 'fx-preview' && method === 'GET') {
+      const actor = await resolveActor(request);
+      if (!actor) return applyCors(fail(401, 'Unauthorized'), request);
+      const { promotionCampaignRepo } = await import('@/lib/repositories/promotionRepo');
+      const camp = await promotionCampaignRepo.findById(path[2]);
+      if (!camp) return applyCors(fail(404, 'Not found'), request);
+      const { rankOf, ROLES } = await import('@/lib/auth/rbac');
+      const isAdmin = rankOf(actor.user.role) >= rankOf(ROLES.ADMIN);
+      if (!isAdmin && camp.owner_user_id !== actor.user.id) return applyCors(fail(403, 'Forbidden'), request);
+      const { fxQuoteService } = await import('@/lib/services/fx/fxQuoteService');
+      const preview = await fxQuoteService.previewIdrForCampaign(camp.budget_total_usd_minor * 10000);
+      return applyCors(ok({ preview, campaign_usd_micros: camp.budget_total_usd_minor * 10000 }), request);
     }
 
     // ---------- PUBLIC DISCOVERY ----------
@@ -659,8 +718,12 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const refunds_failed = refunds.filter((r) => r.status === 'failed').length;
       const webhookColl = await getCollection<{ processed?: boolean; process_error?: string | null }>(COLLECTIONS.PAYMENT_WEBHOOK_EVENTS);
       const webhook_failed = await webhookColl.countDocuments({ processed: true, process_error: { $ne: null } });
-      const integrity = await ledgerService.checkIntegrity();
+      const integrity = await ledgerService.checkIntegrityCount();
       const reconciliation_needed = all.filter((f) => f.status === 'pending' && f.provider_order_id).length;
+      // M06.1: local payment provider readiness signals (informational, never a health error).
+      const { fxRateProvider } = await import('@/lib/services/fx/fxRateProvider');
+      const { PAYPAL_CAPABILITIES, LOCAL_PAYMENT_CAPABILITIES } = await import('@/lib/services/payments/paymentProviderCapabilities');
+      const activeFx = await fxRateProvider.getActiveRate('USD', 'IDR');
       return applyCors(ok({
         pending_payments: pending,
         failed_payments: failed,
@@ -668,6 +731,14 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
         webhook_processing_failures: webhook_failed,
         ledger_integrity_issues: integrity,
         reconciliation_needed_count: reconciliation_needed,
+        // M06.1 provider readiness (informational)
+        providers: {
+          paypal: { ...PAYPAL_CAPABILITIES, status: 'configured' },
+          local: { ...LOCAL_PAYMENT_CAPABILITIES, status: 'not_configured' },
+        },
+        fx: activeFx
+          ? { base: activeFx.base_currency, quote: activeFx.quote_currency, rate_scaled: activeFx.rate_scaled, rate_scale: activeFx.rate_scale, status: 'configured' }
+          : { status: 'missing' },
       }), request);
     }
     // PayPal webhook. Public endpoint. Verifies signature via PayPal API.
