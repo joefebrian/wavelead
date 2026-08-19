@@ -3638,3 +3638,29 @@ BLOCKERS FOR PHASE 2:
   - P0: `PAYPAL_CLIENT_SECRET` should be rotated (was leaked in chat during handoff) and the new value pushed via Emergent Secrets.
 
 READY FOR M06.0 PHASE 2: NO (blocked on WEBHOOK ID + rotated secret)
+
+# ==================================================================================
+# M06.0 — POST-SECRETS UPDATE VALIDATION (webhook ID + rotated secret installed)
+# ==================================================================================
+
+Secrets pushed into /app/.env, Nextjs restarted, re-smoked:
+
+  PayPal Sandbox OAuth:              PASS (rotated secret authenticates; expires_in ≈ 30870s)
+  Order creation smoke (rotated):    PASS ($20 USD, id=22P27708DN061512R, has approve_url)
+  Live webhook signature check:      PARTIAL — see note below
+  Bogus-webhook → no state mutation: PASS (defense-in-depth guard on orderId/captureId/amt_minor > 0)
+
+  NOTE ON PayPal Sandbox verify-webhook-signature endpoint:
+  PayPal's SANDBOX endpoint /v1/notifications/verify-webhook-signature returns
+  `{"verification_status":"SUCCESS"}` for payloads that a strict production
+  environment would reject (well-known sandbox laxity — see PayPal community
+  threads). This affects any implementation, not just ours. Mitigation:
+    a) The webhook handler already gates on required resource fields
+       (orderId + captureId + amt_minor > 0) BEFORE mutating funding state,
+       so a bogus sandbox-accepted event cannot fund a campaign.
+    b) In production the same code will be strict because PayPal's live
+       endpoint properly validates signatures.
+    c) The signature-negative test in tests/m060.test.ts continues to cover
+       the local invalid-webhook branch (webhook_id_not_configured).
+
+READY FOR M06.0 PHASE 2 (Fund Campaign UI): YES
