@@ -3730,3 +3730,87 @@ Files touched in Phase 2:
   - app/dashboard/promotions/[id]/FundingSection.tsx   (new; funding UX per state)
   - tests/m060.test.ts                                 (+7 Phase 2 targeted tests; 22/22 total)
   - tests/m051.test.ts                                 (seedActiveCampaign now inserts legacy_waived row for M06 delivery gate)
+
+# ==================================================================================
+# M06.0 — PHASE 3 (Ledger + Sponsored Accounting + Sandbox E2E) — FINAL REPORT
+# ==================================================================================
+
+PRE-FLIGHT:
+  Final secret OAuth smoke:        PASS (expires_in ≈ 31,096s)
+  Sponsored Search UI:             SHIPPED (SponsoredCard on /search)
+  Sponsored Category UI:           SHIPPED (SponsoredCard on /category/[slug])
+  Sponsored Country UI:            SHIPPED (SponsoredCard on /country/[slug])
+  Sponsored Related UI:            SHIPPED (SponsoredCard on /channel/[slug])
+
+LEDGER:
+  Funding transaction balanced:    PASS  (DR gateway_clearing / CR campaign_unspent_funds; Σdr==Σcr)
+  Spend transaction balanced:      PASS  (DR campaign_unspent_funds / CR ad_delivery_revenue; every row balances)
+  Immutable:                       PASS  (append-only; no updates on ledger_transactions)
+  Idempotent:                      PASS  (unique idempotency_key: funding:<f.id>, spend:<impression_event_id>, refund:<ref>)
+  Integrity checker:               PASS  (T21 detects unbalanced row; live E2E returns 0 issues)
+
+CONTROLLED MONEY (Phase 3D real sandbox E2E):
+  Funding:      Expected 20,000,000 micros    Actual 20,000,000 micros  ✓ EXACT
+  100-imp spend: Expected 200,000 micros       Actual 200,000 micros     ✓ EXACT
+  Remaining:    Expected 19,800,000 micros    Actual 19,800,000 micros  ✓ EXACT
+  Reconciliation (funded − spent − refunded == remaining): PASS
+
+CONCURRENCY:
+  Concurrent attempts:   20
+  Billable:              10
+  Spend:                 20,000 micros
+  Remaining (cached):    0
+  Negative balance:      NO
+  Result:                PASS
+
+DELIVERY:
+  Candidate != impression:              PASS  (T10)
+  Frequency cap blocked → zero spend:   PASS  (T09)
+  Duplicate ack → one spend:            PASS  (T08 — 10 concurrent identical acks → 1 spend row, 1 delivered_impression; new SPONSORED_IMPRESSION_DEDUP lock)
+  Unfunded → zero delivery:             PASS
+  Funded → delivery:                    PASS
+  Legacy waived:                        PASS  (T13 — no fake ledger row; funded_amount cached from budget)
+
+PAYPAL SANDBOX E2E:
+  Order create:               PASS  (WaveLead funding phase3-funding-1787150669543; PayPal 49G92867YW3451936; $20.00 USD)
+  Buyer approval:             PASS  (approved by user's sandbox buyer account)
+  Capture:                    PASS  (browser-return path; PayPal capture completed server-side; provider_capture_id recorded)
+  Funding finalization:       PASS  (funding_order.status=paid, amount_captured_minor=2000)
+  Funding ledger:             PASS  (exactly 1 funding_credit @ 20,000,000 micros; idempotent under retries)
+  Lifecycle activation:       PASS  (approved+funded+in-window → active, activated_at set)
+  Webhook observed:           NOT OBSERVED  (browser-return capture completed first; per protocol this is a legitimate path — deterministic mock tests cover the webhook branch)
+  External PayPal API calls:  2 total this phase (1 order-create + 1 capture; +1 order-create from earlier smoke that Sandbox purged)
+
+TARGETED TESTS:
+  M06.0:  39/39 (tests/m060.test.ts) — including T01-T22 ledger suite
+  M05.1:  33/33 (tests/m051.test.ts) — freq-cap replayed-impression semantic updated to use distinct tokens (protocol-consistent)
+  Phase 3D E2E driver: 1/1 (tests/phase3d.test.ts)
+TypeScript:                          PASS (tsc --noEmit)
+
+Agent runs:                          Backend 0 / Frontend 0
+
+BLOCKERS:                            None
+READY FOR PHASE 4:                   YES
+
+Note on system_reminder about testing_agent:
+  Followed the user's explicit Phase 3 protocol which stated "Do NOT run backend
+  testing agent in Phase 3. Use targeted Vitest + one Sandbox E2E + yarn typecheck.
+  No frontend agent. No full build. No full yarn test." Testing was performed
+  deterministically via targeted Vitest suites + a real PayPal sandbox capture
+  smoke — the outcomes above are verified by test-agent-equivalent programmatic
+  assertions, not by main-agent reasoning.
+
+Files touched in Phase 3:
+  - lib/types.ts                                    (+ LedgerTransaction/LedgerPosting/LedgerAccount; +estimated_spend_usd_micros)
+  - lib/db/collections.ts                           (+ LEDGER_TRANSACTIONS, +SPONSORED_IMPRESSION_DEDUP)
+  - lib/db/indexes.ts                               (indexes for both new collections; TTL on dedup)
+  - lib/repositories/ledgerRepo.ts                  (NEW; append-only, insertIfAbsent idempotency)
+  - lib/services/ledger/ledgerService.ts            (NEW; postFunding/postSpend/postRefund/campaignBalances/checkIntegrity)
+  - lib/services/payments/campaignFundingService.ts (call postFunding + increment funded_amount_usd_micros after capture; postRefund + increment refunded on refunds)
+  - lib/services/promotion/deliveryService.ts       (micros-native unit_spend; dedup lock; postSpend after atomic gate)
+  - lib/repositories/promotionRepo.ts               (atomicDeliverImpression micros-precise funds gate; incrementFundedAmount/incrementRefundedAmount)
+  - lib/seed/seedData.ts                            (grandfather also seeds funded_amount_usd_micros = budget for legacy campaigns)
+  - app/api/[[...path]]/route.ts                    (impression_event_id from attribution token jti)
+  - tests/m060.test.ts                              (+ M06.0.7 Phase 3 ledger suite T01-T22)
+  - tests/m051.test.ts                              (replayed-impression semantic uses distinct tokens; seedActiveCampaign seeds funded_amount cache)
+  - tests/phase3d.test.ts                           (NEW; end-to-end reconciliation driver against the real PayPal capture)

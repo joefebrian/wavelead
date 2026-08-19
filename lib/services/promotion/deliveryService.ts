@@ -243,11 +243,14 @@ export const promotionDeliveryService = {
       if (!card) return { recorded: false, reason: 'no_rate_card' };
       cpm = card.cpm_usd_minor;
     }
-    // Per-impression spend = cpm / 1000 (in minor units). Use integer math so we
-    // never accumulate float drift.
+    // Per-impression spend. Use micros-native math for the ledger (exact:
+    // cpm_usd_minor × 10 = per-impression micros — a $2.00 CPM is 2,000 micros
+    // per impression). Keep unit_spend_usd_minor as the whole-minor display /
+    // legacy-budget-gate value (ceil so budget guards remain conservative).
+    const unit_spend_usd_micros = cpm * 10;
     const unit_spend_usd_minor = Math.ceil(cpm / 1000);
     // Atomic budget + funds check + increment.
-    const delivered = await promotionCampaignRepo.atomicDeliverImpression(camp.id, unit_spend_usd_minor);
+    const delivered = await promotionCampaignRepo.atomicDeliverImpression(camp.id, unit_spend_usd_minor, unit_spend_usd_micros);
     if (!delivered.delivered) return { recorded: false, reason: 'budget_exhausted' };
     // Post spend to immutable double-entry ledger. Idempotency key is the
     // stable impression_event_id — duplicate retries of the same ack will
@@ -255,7 +258,7 @@ export const promotionDeliveryService = {
     await ledgerService.postSpend({
       campaign_id: camp.id,
       impression_event_id,
-      amount_usd_micros: unit_spend_usd_minor * 10_000,
+      amount_usd_micros: unit_spend_usd_micros,
       placement: input.placement,
       channel_id: camp.channel_id,
       now,

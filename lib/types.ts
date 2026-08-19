@@ -420,9 +420,13 @@ export interface PromotionCampaign {
   delivered_impressions: number;
   estimated_spend_usd_minor: number;
 
+  // M06.0 Phase 3: precise micros counter (2,000 micros per impression at
+  // $2.00 CPM). estimated_spend_usd_minor stays as the display-rounded value.
+  estimated_spend_usd_micros?: number;
+
   // M06.0 Phase 3: cached ledger aggregates (derivable but kept on the campaign
   // doc so `atomicDeliverImpression` can gate delivery in one Mongo op).
-  //   available_funds_micros = (funded_amount_usd_micros - refunded_amount_usd_micros) - (estimated_spend_usd_minor * 10_000)
+  //   available_funds_micros = (funded_amount_usd_micros - refunded_amount_usd_micros) - estimated_spend_usd_micros
   // Never let this drop below zero.
   funded_amount_usd_micros?: number;
   refunded_amount_usd_micros?: number;

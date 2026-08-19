@@ -45,24 +45,28 @@ export const promotionCampaignRepo = {
   async atomicDeliverImpression(
     campaign_id: string,
     unit_spend_usd_minor: number,
+    unit_spend_usd_micros?: number,
   ): Promise<{ delivered: boolean; campaign: PromotionCampaign | null }> {
     const c = await getCollection<PromotionCampaign>(COLLECTIONS.PROMOTION_CAMPAIGNS);
     const now = new Date();
-    // Single-op gate: (a) campaign is active, (b) budget headroom for this
-    // impression, (c) ledger-cached funded − refunded also covers the next
-    // impression. Prevents concurrent overspend/negative-balance under load.
+    // Precise micros cost (falls back to the rounded-up minor * 10_000 when
+    // the caller didn't provide a native micros amount — preserves the pre-
+    // Phase-3 semantic for anyone still on the old signature).
+    const unit_micros = unit_spend_usd_micros ?? unit_spend_usd_minor * 10_000;
     const updated = await c.findOneAndUpdate(
       {
         id: campaign_id,
         status: 'active',
         $expr: {
           $and: [
+            // Whole-minor budget headroom (legacy budget-total gate).
             { $lte: [
               { $add: ['$estimated_spend_usd_minor', unit_spend_usd_minor] },
               '$budget_total_usd_minor',
             ]},
+            // Precise micros-native funds gate (funded − refunded − spent ≥ next).
             { $lte: [
-              { $multiply: [{ $add: ['$estimated_spend_usd_minor', unit_spend_usd_minor] }, 10000] },
+              { $add: [{ $ifNull: ['$estimated_spend_usd_micros', 0] }, unit_micros] },
               { $subtract: [
                 { $ifNull: ['$funded_amount_usd_micros', { $multiply: ['$budget_total_usd_minor', 10000] }] },
                 { $ifNull: ['$refunded_amount_usd_micros', 0] },
@@ -75,6 +79,7 @@ export const promotionCampaignRepo = {
         $inc: {
           delivered_impressions: 1,
           estimated_spend_usd_minor: unit_spend_usd_minor,
+          estimated_spend_usd_micros: unit_micros,
         },
         $set: { updated_at: now },
       },

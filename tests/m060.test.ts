@@ -287,41 +287,37 @@ describe('M06.0.7 — Phase 3: Ledger, spend accounting, integrity', () => {
     const { ledgerService } = await import('@/lib/services/ledger/ledgerService');
     const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
     const owner = await signup(); const ch = await ensureChannel(owner.userId);
-    // budget 200 minor = $2.00. cpm=200 minor. per-impression = ceil(200/1000)=1 minor = 10_000 micros ≠ 2000 micros because CPM 200 minor = $2.00 = 2_000_000 micros; per-imp = 2_000 micros. Use larger budget for 100 imps.
     const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
     const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
     await campaignFundingService.captureAndFinalize(f.id);
-    // Verify unit_spend_usd_minor computed by delivery matches expected.
     for (let i = 0; i < 100; i++) {
       const r = await promotionDeliveryService.acknowledgeImpression({
         campaign_id: camp.id, placement: 'sponsored_search',
-        anonymous_session_id: `s-t04-${i}`, // fresh session — bypass freq cap
+        anonymous_session_id: `s-t04-${i}`,
         impression_event_id: `imp-t04-${camp.id}-${i}`,
       });
       expect(r.recorded).toBe(true);
     }
     const b = await ledgerService.campaignBalances(camp.id);
-    expect(b.spent_usd_micros).toBe(1_000_000); // 100 imps × 10_000 micros (ceil(200/1000)=1 minor = 10_000 micros)
-    // The user protocol's "2,000 micros/impression at $2 CPM" uses micros directly:
-    // 2_000_000 micros CPM / 1000 = 2_000 micros/imp. Our implementation uses minor
-    // rounding (ceil(200/1000)=1 minor = 10_000 micros); document the divergence.
+    // Exact micros-native math: 200 minor CPM = 2,000,000 micros / 1000 = 2,000 micros/imp.
+    // 100 imps × 2,000 = 200,000 micros = $0.20.
+    expect(b.spent_usd_micros).toBe(200_000);
   });
 
-  it('T06: $20 - $0.20 → $19.80 remaining after 20 impressions at 1 minor each', async () => {
+  it('T06: $20 - $0.20 → $19.80 remaining after 100 impressions at 2,000 micros each', async () => {
     const { ledgerService } = await import('@/lib/services/ledger/ledgerService');
     const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
     const owner = await signup(); const ch = await ensureChannel(owner.userId);
     const camp = await createApprovedCampaign(owner.userId, ch.id, 2000);
     const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
     await campaignFundingService.captureAndFinalize(f.id);
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 100; i++) {
       await promotionDeliveryService.acknowledgeImpression({
         campaign_id: camp.id, placement: 'sponsored_search',
         anonymous_session_id: `s-t06-${i}`, impression_event_id: `imp-t06-${camp.id}-${i}`,
       });
     }
     const b = await ledgerService.campaignBalances(camp.id);
-    // 20 imps × 10_000 micros = 200_000 micros = $0.20.
     expect(b.spent_usd_micros).toBe(200_000);
     expect(b.remaining_usd_micros).toBe(19_800_000);
     expect(b.funded_usd_micros - b.spent_usd_micros - b.refunded_usd_micros).toBe(b.remaining_usd_micros);
@@ -437,10 +433,15 @@ describe('M06.0.7 — Phase 3: Ledger, spend accounting, integrity', () => {
     const { ledgerService } = await import('@/lib/services/ledger/ledgerService');
     const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
     const owner = await signup(); const ch = await ensureChannel(owner.userId);
-    // Budget = 10 minor = $0.10. Each imp costs 1 minor. So exactly 10 imps affordable.
-    const camp = await createApprovedCampaign(owner.userId, ch.id, 10);
+    // Budget generous so the whole-minor gate is NOT the limiter — we want
+    // to prove the micros-precise funds gate is what stops overspend.
+    // Cost per impression at CPM=$2.00 = 2,000 micros.
+    // Manually drop funded_amount_usd_micros to 20,000 micros → only 10 imps affordable.
+    const camp = await createApprovedCampaign(owner.userId, ch.id, 100);
     const f = await campaignFundingService.createFundingForCampaign({ user: { id: owner.userId, role: 'user' } as any, session: {} as any }, camp.id);
     await campaignFundingService.captureAndFinalize(f.id);
+    // Adjust cached funded_amount to isolate the funds gate.
+    await promotionCampaignRepo.update(camp.id, { funded_amount_usd_micros: 20_000 } as any);
     // Fire 20 concurrent qualifying impressions.
     const results = await Promise.all(Array.from({ length: 20 }, (_, i) =>
       promotionDeliveryService.acknowledgeImpression({
@@ -451,9 +452,16 @@ describe('M06.0.7 — Phase 3: Ledger, spend accounting, integrity', () => {
     const recorded = results.filter((r) => r.recorded).length;
     expect(recorded).toBe(10); // exactly the number affordable
     const b = await ledgerService.campaignBalances(camp.id);
-    expect(b.spent_usd_micros).toBe(100_000); // 10 × 10_000 micros
-    expect(b.remaining_usd_micros).toBe(0);
-    expect(b.remaining_usd_micros).toBeGreaterThanOrEqual(0);
+    // Note: ledger spent is derived from the ledger rows themselves and reflects
+    // 10 × 2,000 = 20,000 micros. Ledger.funded stays $20 because the ledger
+    // records the real capture; only the cached `funded_amount_usd_micros`
+    // was reduced for this concurrency test.
+    expect(b.spent_usd_micros).toBe(20_000);
+    // Cached campaign funds (what atomicDeliverImpression gates on) reached 0.
+    const cAfter = await promotionCampaignRepo.findById(camp.id);
+    const cachedRemaining = (cAfter!.funded_amount_usd_micros ?? 0) - (cAfter!.refunded_amount_usd_micros ?? 0) - (cAfter!.estimated_spend_usd_micros ?? 0);
+    expect(cachedRemaining).toBe(0);
+    expect(cachedRemaining).toBeGreaterThanOrEqual(0);
   });
 
   it('T16: budget-exhausted campaign becomes non-deliverable', async () => {
@@ -587,11 +595,11 @@ describe('M06.0.7 — Phase 3: Ledger, spend accounting, integrity', () => {
     await campaignFundingService.recordRefund(f.provider_order_id!, 500, `REFUND-t22-${camp.id}`);
     const b = await ledgerService.campaignBalances(camp.id);
     expect(b.funded_usd_micros - b.spent_usd_micros - b.refunded_usd_micros).toBe(b.remaining_usd_micros);
-    // Concretely: 20_000_000 funded − 70_000 spent − 5_000_000 refunded = 14_930_000 remaining.
+    // Concretely: 20_000_000 funded − 14_000 spent (7 × 2000 micros) − 5_000_000 refunded = 14_986_000 remaining.
     expect(b.funded_usd_micros).toBe(20_000_000);
-    expect(b.spent_usd_micros).toBe(70_000);
+    expect(b.spent_usd_micros).toBe(14_000);
     expect(b.refunded_usd_micros).toBe(5_000_000);
-    expect(b.remaining_usd_micros).toBe(14_930_000);
+    expect(b.remaining_usd_micros).toBe(14_986_000);
     const issues = await ledgerService.checkIntegrity({ campaign_id: camp.id });
     // T22 has no unbalanced/dup keys; only checks its own transactions.
     expect(issues.filter((i) => i.kind === 'unbalanced_transaction').length).toBe(0);
