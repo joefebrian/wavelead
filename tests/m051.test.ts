@@ -93,7 +93,9 @@ async function seedActiveCampaign(ownerId: string, channelId: string, opts: {
   };
   await promotionCampaignRepo.insert(camp);
   // M06.0 delivery gate: an "active" M05.1 test fixture also needs a funding
-  // row (legacy_waived) or delivery will skip it.
+  // row (legacy_waived) or delivery will skip it. Also seed the cached
+  // funded_amount_usd_micros = budget so atomicDeliverImpression's funds gate
+  // treats this campaign as fully funded (matches the grandfather semantic).
   const { paymentFundingOrderRepo } = await import('@/lib/repositories/paymentRepo');
   await paymentFundingOrderRepo.insert({
     id: uuidv4(), campaign_id: camp.id, owner_user_id: ownerId,
@@ -104,6 +106,7 @@ async function seedActiveCampaign(ownerId: string, channelId: string, opts: {
     paid_at: null, cancelled_at: null, refunded_at: null,
     created_at: now, updated_at: now,
   });
+  await promotionCampaignRepo.incrementFundedAmount(camp.id, camp.budget_total_usd_minor * 10_000);
   return camp;
 }
 
@@ -525,17 +528,20 @@ describe('M05.1.8 — /track/sponsored/impression endpoint', () => {
     const ch = await ensureChannel(owner.userId);
     const camp = await seedActiveCampaign(owner.userId, ch.id, { placements: ['sponsored_search'] });
     const anon = `wl_at_test_${Date.now()}`;
-    const token = issueAttributionToken({ campaign_id: camp.id, channel_id: ch.id, source: 'search', placement: 'sponsored_search', anonymous_session_id: anon });
-    // Two calls with same session and same token → both allowed, 3rd allowed, 4th blocked.
-    const ackFn = async () => api<{ recorded: boolean; reason?: string }>('/track/sponsored/impression', {
+    // Four distinct tokens = four distinct candidate deliveries. Each is its
+    // own billable impression until the frequency cap trips on the 4th.
+    // (Identical-token retries are dedup'd by M06.0 Phase 3 ledger — those
+    // are covered by their own test in m060.test.ts.)
+    const mkToken = () => issueAttributionToken({ campaign_id: camp.id, channel_id: ch.id, source: 'search', placement: 'sponsored_search', anonymous_session_id: anon });
+    const ackFn = async (token: string) => api<{ recorded: boolean; reason?: string }>('/track/sponsored/impression', {
       method: 'POST',
       headers: { Cookie: `wl_anon_id=${anon}` },
       body: JSON.stringify({ attribution_token: token }),
     });
-    const r1 = await ackFn(); expect(r1.body.data!.recorded).toBe(true);
-    const r2 = await ackFn(); expect(r2.body.data!.recorded).toBe(true);
-    const r3 = await ackFn(); expect(r3.body.data!.recorded).toBe(true);
-    const r4 = await ackFn(); expect(r4.body.data!.recorded).toBe(false);
+    const r1 = await ackFn(mkToken()); expect(r1.body.data!.recorded).toBe(true);
+    const r2 = await ackFn(mkToken()); expect(r2.body.data!.recorded).toBe(true);
+    const r3 = await ackFn(mkToken()); expect(r3.body.data!.recorded).toBe(true);
+    const r4 = await ackFn(mkToken()); expect(r4.body.data!.recorded).toBe(false);
     expect(r4.body.data!.reason).toBe('frequency_capped');
     // Spend should have deducted exactly 3 cents (ceil(200/1000)=1 minor per imp).
     const c = await promotionCampaignRepo.findById(camp.id);

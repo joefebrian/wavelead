@@ -9,6 +9,7 @@ import { paymentFundingOrderRepo, campaignFundingLedgerRepo } from '@/lib/reposi
 import { getPaymentProvider } from './providerFactory';
 import { HttpError, ROLES, rankOf } from '@/lib/auth/rbac';
 import { reconcileCampaign } from '@/lib/services/promotion/campaignStateService';
+import { ledgerService, minorToMicros as ledgerMinorToMicros } from '@/lib/services/ledger/ledgerService';
 import type { Actor, PaymentFundingOrder, PromotionCampaign } from '@/lib/types';
 
 // $1.00 = 1,000,000 USD micros. Payment currency USD; conversion is exact until
@@ -161,7 +162,7 @@ export const campaignFundingService = {
     const nextStatus = totalRefundedAfter >= f.amount_captured_minor ? 'refunded' : 'partially_refunded';
     const now = new Date();
     const key = `funding:refund:${provider_reference}`;
-    await campaignFundingLedgerRepo.insertIfAbsent({
+    const single = await campaignFundingLedgerRepo.insertIfAbsent({
       id: uuidv4(), campaign_id: f.campaign_id, funding_id: f.id,
       entry_type: 'refund_debit', direction: 'debit',
       amount_usd_micros: minorToMicros(refund_amount_minor),
@@ -169,11 +170,26 @@ export const campaignFundingService = {
       provider_reference, idempotency_key: key,
       metadata: { refund_amount_minor }, created_at: now,
     });
-    await paymentFundingOrderRepo.update(f.id, {
-      amount_refunded_minor: totalRefundedAfter,
-      status: nextStatus,
-      refunded_at: nextStatus === 'refunded' ? now : f.refunded_at,
+    const refund_micros = ledgerMinorToMicros(refund_amount_minor);
+    const dbl = await ledgerService.postRefund({
+      campaign_id: f.campaign_id,
+      funding_order_id: f.id,
+      refund_reference: provider_reference,
+      amount_usd_micros: refund_micros,
+      now,
     });
+    // Only mutate the funding order + cached campaign refunded_amount when the
+    // ledger actually inserted a fresh refund — never double-debit on retries.
+    if (single.inserted && dbl.inserted) {
+      await paymentFundingOrderRepo.update(f.id, {
+        amount_refunded_minor: totalRefundedAfter,
+        status: nextStatus,
+        refunded_at: nextStatus === 'refunded' ? now : f.refunded_at,
+      });
+      await promotionCampaignRepo.incrementRefundedAmount(f.campaign_id, refund_micros);
+      const camp = await promotionCampaignRepo.findById(f.campaign_id);
+      if (camp) { try { await reconcileCampaign(camp, now); } catch { /* best-effort */ } }
+    }
   },
 
   /**
@@ -213,12 +229,30 @@ async function finalizePaid(f: PaymentFundingOrder, provider_capture_id: string,
     metadata: { amount_minor: amount_captured_minor, provider: f.provider },
     created_at: now,
   });
+  // Phase 3 double-entry ledger — this is the immutable source of truth going
+  // forward. The single-entry `campaign_funding_ledger` above is kept in-sync
+  // for backwards compatibility with existing summaries.
+  const funding_micros = ledgerMinorToMicros(amount_captured_minor);
+  const ledgerResult = await ledgerService.postFunding({
+    campaign_id: f.campaign_id,
+    funding_order_id: f.id,
+    amount_usd_micros: funding_micros,
+    provider_capture_id,
+    now,
+  });
   // Only after ledger insert do we flip status — if the transition guard fails,
   // a duplicate delivery simply no-ops.
   await paymentFundingOrderRepo.transition(
     f.id, ['created', 'checkout_created', 'pending'], 'paid',
     { provider_capture_id, amount_captured_minor, paid_at: now },
   );
+  // Cache the funded amount on the campaign so the delivery path can gate spend
+  // with a single atomic check (funded − refunded − spent ≥ unit_cost). Only
+  // increment when the ledger inserted a fresh transaction; a duplicate call
+  // must NOT double-count.
+  if (ledgerResult.inserted) {
+    await promotionCampaignRepo.incrementFundedAmount(f.campaign_id, funding_micros);
+  }
   // Campaign lifecycle reconciliation. approved+funded within schedule → active;
   // future start_at → scheduled; end_at passed → completed. Safe & idempotent.
   const camp = await promotionCampaignRepo.findById(f.campaign_id);

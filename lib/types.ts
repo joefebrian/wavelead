@@ -420,6 +420,13 @@ export interface PromotionCampaign {
   delivered_impressions: number;
   estimated_spend_usd_minor: number;
 
+  // M06.0 Phase 3: cached ledger aggregates (derivable but kept on the campaign
+  // doc so `atomicDeliverImpression` can gate delivery in one Mongo op).
+  //   available_funds_micros = (funded_amount_usd_micros - refunded_amount_usd_micros) - (estimated_spend_usd_minor * 10_000)
+  // Never let this drop below zero.
+  funded_amount_usd_micros?: number;
+  refunded_amount_usd_micros?: number;
+
   created_at: Date;
   updated_at: Date;
 
@@ -561,4 +568,44 @@ export interface PaymentWebhookEvent {
   processed_at: Date | null;
   process_error: string | null;
   received_at: Date;
+}
+
+// ============================================================================
+// M06.0 Phase 3 — Immutable double-entry ledger
+// ============================================================================
+// The single source of truth for campaign money movement. Every dollar in and
+// out is a `LedgerTransaction` with N postings that MUST sum to zero (total
+// debits == total credits in USD micros). Transactions are append-only —
+// corrections happen via reversing transactions, never updates.
+export type LedgerAccount =
+  | 'gateway_clearing'       // money in-flight at PayPal
+  | 'campaign_unspent_funds' // funds committed to a specific campaign
+  | 'ad_delivery_revenue'    // WaveLead revenue realized from billable impressions
+  | 'refund_payable'         // pending outflows to refund a buyer
+  | 'rounding_adjustment';   // reserved: reconciles CPM integer rounding
+
+export type LedgerTransactionType =
+  | 'funding_credit'    // PayPal capture → campaign_unspent_funds
+  | 'spend_debit'       // billable impression → ad_delivery_revenue
+  | 'refund_debit'      // funds pulled back → refund_payable
+  | 'rounding_adjustment';
+
+export interface LedgerPosting {
+  account: LedgerAccount;
+  direction: 'debit' | 'credit';
+  amount_usd_micros: number; // positive integer only
+}
+
+export interface LedgerTransaction {
+  id: string;
+  transaction_type: LedgerTransactionType;
+  idempotency_key: string;       // unique — prevents any duplicate posting
+  campaign_id: string;
+  funding_order_id: string | null;
+  provider_event_id: string | null;
+  reference_event_id: string | null; // impression id / capture id / refund id
+  postings: LedgerPosting[];
+  amount_usd_micros: number;     // convenience: sum of debits (== sum of credits)
+  metadata: Record<string, unknown>;
+  created_at: Date;
 }

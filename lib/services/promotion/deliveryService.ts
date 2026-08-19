@@ -176,7 +176,12 @@ export const promotionDeliveryService = {
     placement: SponsoredPlacement;
     anonymous_session_id: string | null;
     country_code?: string | null;
-  }): Promise<{ recorded: boolean; reason?: string; unit_spend_usd_minor?: number; channel_id?: string }> {
+    /** Stable per-candidate id (attribution token `jti`). Duplicate acks with
+     *  the same id are deduplicated at the ledger unique-index layer.
+     *  Optional for callers who intentionally want a fresh impression each
+     *  time (e.g. test loops); a random uuid is generated in that case. */
+    impression_event_id?: string;
+  }): Promise<{ recorded: boolean; reason?: string; unit_spend_usd_minor?: number; channel_id?: string; impression_event_id?: string }> {
     const now = new Date();
     const raw = await promotionCampaignRepo.findById(input.campaign_id);
     if (!raw) return { recorded: false, reason: 'not_found' };
@@ -184,6 +189,42 @@ export const promotionDeliveryService = {
     if (camp.status !== 'active') return { recorded: false, reason: `status_${camp.status}` };
     if (!camp.placements.includes(input.placement)) return { recorded: false, reason: 'placement_mismatch' };
     if (!input.anonymous_session_id) return { recorded: false, reason: 'no_session' };
+    // Import here to avoid a top-level cycle between delivery + ledger.
+    const { ledgerService } = await import('@/lib/services/ledger/ledgerService');
+    const { ledgerRepo } = await import('@/lib/repositories/ledgerRepo');
+    const { v4: uuidv4 } = await import('uuid');
+    const { getCollection } = await import('@/lib/db/mongo');
+    const impression_event_id = input.impression_event_id || uuidv4();
+    // Fast dedup: if this impression_event_id was ever processed, return
+    // recorded=true idempotently. Uses a lightweight unique-index lock so 10
+    // concurrent duplicate acks resolve to exactly one financial mutation
+    // WITHOUT any of them touching frequency-cap or spend counters.
+    if (input.impression_event_id) {
+      const dedupC = await getCollection<{ impression_event_id: string; created_at: Date }>(
+        (await import('@/lib/db/collections')).COLLECTIONS.SPONSORED_IMPRESSION_DEDUP,
+      );
+      try {
+        await dedupC.insertOne({ impression_event_id, created_at: now });
+      } catch (err) {
+        const e = err as { code?: number };
+        if (e.code === 11000) {
+          // Another concurrent caller (or a retry) already owns this id.
+          const existing = await ledgerRepo.findByIdempotencyKey(`spend:${impression_event_id}`);
+          if (existing) {
+            return {
+              recorded: true,
+              unit_spend_usd_minor: Math.round(existing.amount_usd_micros / 10_000),
+              channel_id: camp.channel_id,
+              impression_event_id,
+            };
+          }
+          // Winner is still processing — signal recorded to the loser without
+          // touching any counter. The winner will produce the ledger row.
+          return { recorded: true, channel_id: camp.channel_id, impression_event_id };
+        }
+        throw err;
+      }
+    }
     // Frequency cap (atomic).
     const cap = await campaignImpressionDedupRepo.tryIncrement(
       camp.id,
@@ -205,10 +246,21 @@ export const promotionDeliveryService = {
     // Per-impression spend = cpm / 1000 (in minor units). Use integer math so we
     // never accumulate float drift.
     const unit_spend_usd_minor = Math.ceil(cpm / 1000);
-    // Atomic budget check + increment.
+    // Atomic budget + funds check + increment.
     const delivered = await promotionCampaignRepo.atomicDeliverImpression(camp.id, unit_spend_usd_minor);
     if (!delivered.delivered) return { recorded: false, reason: 'budget_exhausted' };
-    return { recorded: true, unit_spend_usd_minor, channel_id: camp.channel_id };
+    // Post spend to immutable double-entry ledger. Idempotency key is the
+    // stable impression_event_id — duplicate retries of the same ack will
+    // dedup at the unique-index layer even if the fastcheck above raced.
+    await ledgerService.postSpend({
+      campaign_id: camp.id,
+      impression_event_id,
+      amount_usd_micros: unit_spend_usd_minor * 10_000,
+      placement: input.placement,
+      channel_id: camp.channel_id,
+      now,
+    });
+    return { recorded: true, unit_spend_usd_minor, channel_id: camp.channel_id, impression_event_id };
   },
 };
 

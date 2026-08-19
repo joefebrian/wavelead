@@ -147,6 +147,13 @@ async function grandfatherPreM06Campaigns(): Promise<void> {
       paid_at: null, cancelled_at: null, refunded_at: null,
       created_at: now, updated_at: now,
     });
+    // Phase 3: seed the cached funded amount so atomicDeliverImpression's
+    // funds check treats legacy campaigns as fully covered by their budget.
+    // No ledger transaction is posted — legacy campaigns are grandfathered,
+    // not "fake-funded". checkIntegrity() only reasons about ledger rows.
+    if ((c.funded_amount_usd_micros ?? 0) < c.budget_total_usd_minor * 10_000) {
+      await promotionCampaignRepo.incrementFundedAmount(c.id, c.budget_total_usd_minor * 10_000 - (c.funded_amount_usd_micros ?? 0));
+    }
   }
 }
 

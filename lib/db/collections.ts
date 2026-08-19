@@ -22,6 +22,8 @@ export const COLLECTIONS = {
   PAYMENT_FUNDING_ORDERS: 'payment_funding_orders',
   CAMPAIGN_FUNDING_LEDGER: 'campaign_funding_ledger',
   PAYMENT_WEBHOOK_EVENTS: 'payment_webhook_events',
+  SPONSORED_IMPRESSION_DEDUP: 'sponsored_impression_dedup',
+  LEDGER_TRANSACTIONS: 'ledger_transactions',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

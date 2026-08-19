@@ -137,5 +137,16 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { provider_event_id: 1 }, unique: true, name: 'uniq_event' },
       { key: { received_at: -1 }, name: 'received' },
     ]),
+    db.collection(COLLECTIONS.LEDGER_TRANSACTIONS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { idempotency_key: 1 }, unique: true, name: 'uniq_idempotency_key' },
+      { key: { campaign_id: 1, created_at: 1 }, name: 'by_campaign_time' },
+      { key: { transaction_type: 1 }, name: 'by_type' },
+    ]),
+    db.collection(COLLECTIONS.SPONSORED_IMPRESSION_DEDUP).createIndexes([
+      { key: { impression_event_id: 1 }, unique: true, name: 'uniq_impression_event' },
+      // TTL: cleanup 7d after last write to keep the collection small.
+      { key: { created_at: 1 }, expireAfterSeconds: 604_800, name: 'ttl_created_at' },
+    ]),
   ]);
 }

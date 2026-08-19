@@ -48,14 +48,26 @@ export const promotionCampaignRepo = {
   ): Promise<{ delivered: boolean; campaign: PromotionCampaign | null }> {
     const c = await getCollection<PromotionCampaign>(COLLECTIONS.PROMOTION_CAMPAIGNS);
     const now = new Date();
+    // Single-op gate: (a) campaign is active, (b) budget headroom for this
+    // impression, (c) ledger-cached funded − refunded also covers the next
+    // impression. Prevents concurrent overspend/negative-balance under load.
     const updated = await c.findOneAndUpdate(
       {
         id: campaign_id,
         status: 'active',
         $expr: {
-          $lte: [
-            { $add: ['$estimated_spend_usd_minor', unit_spend_usd_minor] },
-            '$budget_total_usd_minor',
+          $and: [
+            { $lte: [
+              { $add: ['$estimated_spend_usd_minor', unit_spend_usd_minor] },
+              '$budget_total_usd_minor',
+            ]},
+            { $lte: [
+              { $multiply: [{ $add: ['$estimated_spend_usd_minor', unit_spend_usd_minor] }, 10000] },
+              { $subtract: [
+                { $ifNull: ['$funded_amount_usd_micros', { $multiply: ['$budget_total_usd_minor', 10000] }] },
+                { $ifNull: ['$refunded_amount_usd_micros', 0] },
+              ]},
+            ]},
           ],
         },
       },
@@ -70,6 +82,16 @@ export const promotionCampaignRepo = {
     );
     if (!updated) return { delivered: false, campaign: null };
     return { delivered: true, campaign: stripId(updated) as PromotionCampaign };
+  },
+  /** M06.0 Phase 3: increment the cached funded amount (in micros). */
+  async incrementFundedAmount(campaign_id: string, delta_micros: number): Promise<void> {
+    const c = await getCollection<PromotionCampaign>(COLLECTIONS.PROMOTION_CAMPAIGNS);
+    await c.updateOne({ id: campaign_id }, { $inc: { funded_amount_usd_micros: delta_micros } as unknown as never, $set: { updated_at: new Date() } });
+  },
+  /** M06.0 Phase 3: increment the cached refunded amount (in micros). */
+  async incrementRefundedAmount(campaign_id: string, delta_micros: number): Promise<void> {
+    const c = await getCollection<PromotionCampaign>(COLLECTIONS.PROMOTION_CAMPAIGNS);
+    await c.updateOne({ id: campaign_id }, { $inc: { refunded_amount_usd_micros: delta_micros } as unknown as never, $set: { updated_at: new Date() } });
   },
   async setStatus(id: string, status: PromotionCampaignStatus, patch: Partial<PromotionCampaign> = {}): Promise<void> {
     const c = await getCollection<PromotionCampaign>(COLLECTIONS.PROMOTION_CAMPAIGNS);

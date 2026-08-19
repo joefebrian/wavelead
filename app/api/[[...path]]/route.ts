@@ -641,6 +641,9 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
         placement: v.payload.placement,
         anonymous_session_id: anonId,
         country_code: (request.headers.get('x-vercel-ip-country') || request.headers.get('cf-ipcountry') || null),
+        // Stable per-candidate id from the signed attribution token — same
+        // ack retried 10× produces exactly one billable impression.
+        impression_event_id: v.payload.jti,
       });
       if (!ack.recorded) return applyCors(ok({ recorded: false, reason: ack.reason }), request);
       // Record the sponsored channel impression event.
