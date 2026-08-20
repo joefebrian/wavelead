@@ -10,9 +10,10 @@ export function sanitizeChannel(c: Channel): PublicChannel {
     reviewed_at: _ra,
     rejection_reason: _rr,
     rejection_notes: _rn,
+    is_test_fixture: _tf,
     ...rest
   } = c;
-  void _rb; void _ra; void _rr; void _rn;
+  void _rb; void _ra; void _rr; void _rn; void _tf;
   const hasOwner = !!owner_id;
   const rawVerified = verification_status === 'verified' || verification_status === 'official';
   const rawOfficial = verification_status === 'official';

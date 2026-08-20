@@ -4645,3 +4645,64 @@ agent_communication:
 
       READY FOR SAVE TO GITHUB: YES (again — this is a test-only revision).
 
+
+
+# ================================================================
+# M06.1 FINAL PUBLIC FIXTURE ISOLATION HARDENING
+# ================================================================
+agent_communication:
+  - agent: "main"
+    message: |
+      Centralized the public-visibility policy behind one canonical helper
+      and closed the search-path leakage gap.
+
+      New:
+        lib/services/publicChannelVisibility.ts
+          PUBLIC_CHANNEL_VISIBILITY_EXCLUSION
+          buildPublicChannelFilter(base)
+          buildPublicChannelMongoFilter(base)         (typed Filter<Channel>)
+          isChannelPublicallyVisible(c)               (in-memory)
+          isObviousPublicFixtureSlug(slug)            (fast-path)
+
+      Refactored to consume it:
+        lib/services/channelService.ts   (listPublic + getPublicBySlug + getFeatured + getStats)
+        lib/services/discoveryService.ts (publicFilter now aliases the helper)
+        lib/services/searchService.ts    (BOTH no-q and q branches apply the filter)
+
+      Durable marker added:
+        Channel.is_test_fixture?: boolean (internal, never leaks)
+        PublicChannel Omits it. sanitizeChannel drops it. submissionSchema
+        strips unknown keys via default z.object strip semantics, so a
+        public submitter cannot self-mark a channel.
+
+      Retained smoke financial anchor:
+        smoke-ch-m06p3 → is_test_fixture=true (channel entity only).
+        ledger_transactions for smoke-camp-m06p3: 102 rows PRESERVED.
+        No funding/payment/audit rows touched.
+
+      Targeted tests (all passing):
+        tests/m06_public_fixture_isolation.test.ts  — 9/9  (new)
+          - marker → excluded from BROWSE
+          - marker → 404 on DIRECT LOOKUP
+          - marker → excluded from SEARCH
+          - legacy slug ^test- (no marker) → excluded from all three
+          - legacy name ^Test  (no marker) → excluded from all three
+          - legitimate channel with "test" only in short_description → visible
+          - sanitizer never leaks is_test_fixture (or any moderation field)
+          - public submission CANNOT self-set is_test_fixture / status / is_featured
+          - search relevance for "wave-sports-weekly" unchanged for q=sport
+        tests/m06_hardening.test.ts                 — 7/7  (fixture test now
+                                                            exercises marker + slug + name arms)
+        tests/m051.test.ts                          — 33/33
+        tests/foundation.test.ts                    — 13/13
+        tests/m03.test.ts                           — 20/20
+        tests/m04.test.ts                           — passing
+
+      yarn typecheck → exit 0
+      Local live verification:
+        GET /api/channels?q=smoke     → 0 items
+        GET /api/channels/smoke-ch-m06p3 → 404
+        GET /api/channels?q=sport     → wave-sports-weekly first (unchanged)
+
+      READY FOR SAVE TO GITHUB: YES
+

@@ -8,24 +8,16 @@ import { getCollection } from '../db/mongo';
 import { COUNTRIES } from '../constants/countries';
 import { sanitizeChannel } from '../utils/sanitize';
 import { curationService } from './curationService';
+import { buildPublicChannelMongoFilter } from './publicChannelVisibility';
 import type { Category, Channel, PublicChannel } from '@/lib/types';
 
 const sanitize = sanitizeChannel;
 
-// M06 release hardening: hide obvious test/dev fixture channels from all
-// public discovery surfaces. Test fixtures use slugs starting with `test-`
-// and names starting with `Test `. We match at the discovery boundary (not
-// at insert) so previously-created rows are also hidden without deleting
-// their history. Financial ledger data is never touched by this filter.
-const PUBLIC_TEST_FIXTURE_EXCLUSION = {
-  slug: { $not: { $regex: '^test-', $options: 'i' } },
-  name: { $not: { $regex: '^Test ', $options: 'i' } },
-} as const;
-
-/** Merge the public-safe filter with a caller-supplied filter. */
-function publicFilter<T>(base: T): T {
-  return { ...(base as Record<string, unknown>), ...PUBLIC_TEST_FIXTURE_EXCLUSION } as unknown as T;
-}
+// M06 release hardening: the canonical public-visibility policy lives in
+// lib/services/publicChannelVisibility.ts. This module now delegates to
+// that single source so browse / direct-lookup / search / discovery all
+// agree on what counts as publicly-visible.
+const publicFilter = buildPublicChannelMongoFilter;
 
 export interface CategoryWithCount extends Category { channel_count: number; }
 export interface CountryWithCount { code: string; slug: string; name: string; flag: string; channel_count: number; }

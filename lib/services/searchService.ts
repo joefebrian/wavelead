@@ -8,10 +8,19 @@
 //   Description whole-word                 40
 //   Partial substring anywhere             15
 // Boosts: official +10, verified +8, featured +4.
+//
+// M06.1 hardening: applies the same canonical public-visibility policy as
+// channelService.listPublic and channelService.getPublicBySlug — internal
+// test/QA fixtures (is_test_fixture=true, slug ^test-, name ^Test ) are
+// filtered out at the pipeline `$match` boundary. Legitimate approved
+// channels whose organic content contains "test" (e.g. a category called
+// "Software Testing") are NOT affected because we filter on the fixture
+// marker + slug/name PREFIX only, never on substring.
 import { getCollection, stripIds } from '../db/mongo';
 import { COLLECTIONS } from '../db/collections';
 import { categoryRepo } from '../repositories/categoryRepo';
 import { sanitizeChannel } from '../utils/sanitize';
+import { buildPublicChannelFilter } from './publicChannelVisibility';
 import type { Channel, PublicChannel } from '@/lib/types';
 
 function escapeRe(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -26,8 +35,9 @@ export const searchService = {
     const coll = await getCollection<Channel>(COLLECTIONS.CHANNELS);
 
     if (!trimmed) {
-      // No query — basic filtering + reach ordering.
-      const filter: Record<string, unknown> = { status: 'approved' };
+      // No query — basic filtering + reach ordering. Apply the canonical
+      // public-visibility policy (marker + fixture-pattern exclusion).
+      const filter: Record<string, unknown> = buildPublicChannelFilter({ status: 'approved' });
       if (country) filter.country_code = country.toUpperCase();
       if (category) {
         const cat = await categoryRepo.findBySlug(category);
@@ -43,19 +53,17 @@ export const searchService = {
 
     const qLower = trimmed.toLowerCase();
     const qEsc = escapeRe(qLower);
-    const wordRe = new RegExp(`\\b${qEsc}\\b`, 'i');
-    const partRe = new RegExp(qEsc, 'i');
 
-    // Match any candidate that mentions the query anywhere (name / category / desc).
-    // Category matching goes through a lookup on the aggregation.
-    const match: Record<string, unknown> = {
+    // Match any candidate that mentions the query anywhere (name / category / desc)
+    // AND satisfies the canonical public-visibility policy.
+    const match: Record<string, unknown> = buildPublicChannelFilter({
       status: 'approved',
       $or: [
-        { name: partRe },
-        { short_description: partRe },
-        { description: partRe },
+        { name: new RegExp(qEsc, 'i') },
+        { short_description: new RegExp(qEsc, 'i') },
+        { description: new RegExp(qEsc, 'i') },
       ],
-    };
+    });
     if (country) match.country_code = country.toUpperCase();
 
     const pipeline: Record<string, unknown>[] = [

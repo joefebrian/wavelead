@@ -68,6 +68,11 @@ export interface Channel {
   reviewed_at?: Date | null;
   rejection_reason?: string | null;
   rejection_notes?: string | null;
+  // M06.1 hardening — durable internal marker used by
+  // publicChannelVisibility to hide test/QA fixtures from every public
+  // discovery surface (browse, direct lookup, search, homepage). Never
+  // settable via public API; never leaked to public responses.
+  is_test_fixture?: boolean;
 }
 
 export type PublicChannel = Omit<
@@ -78,6 +83,7 @@ export type PublicChannel = Omit<
   | 'reviewed_at'
   | 'rejection_reason'
   | 'rejection_notes'
+  | 'is_test_fixture'
 > & {
   is_verified: boolean;
   is_official: boolean;

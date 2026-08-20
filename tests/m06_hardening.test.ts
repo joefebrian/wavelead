@@ -281,27 +281,51 @@ describe('M06 release hardening — approve → fund → active lifecycle', () =
   // -------------------------------------------------------------------
   // Public discovery hides test-fixture channels.
   // -------------------------------------------------------------------
-  it('public discovery hides test-fixture channels', async () => {
-    const slug = `test-hardening-${Date.now()}-${Math.floor(Math.random()*1e6)}`;
-    const cid = uuidv4();
-    const wcid = `hardening_${cid.replace(/-/g, '').slice(0, 20)}`;
+  it('public discovery hides test-fixture channels (marker + slug + name)', async () => {
+    // Insert THREE distinct test fixtures that each hit a different arm of
+    // the canonical public-visibility policy:
+    //   (a) marked with is_test_fixture=true — organic slug and name
+    //   (b) legacy slug prefix — no marker, no test name
+    //   (c) legacy name prefix — no marker, organic slug
+    const markerSlug = `organic-slug-${Date.now()}-${Math.floor(Math.random()*1e6)}`;
+    const legacySlug = `test-legacy-${Date.now()}-${Math.floor(Math.random()*1e6)}`;
+    const legacyName = `nameonly-${Date.now()}-${Math.floor(Math.random()*1e6)}`;
+    const fixtures = [
+      { slug: markerSlug, name: 'Organic Looking Fixture', is_test_fixture: true },
+      { slug: legacySlug, name: 'Legacy Fixture', is_test_fixture: undefined },
+      { slug: legacyName, name: 'Test Legacy Name Fixture', is_test_fixture: undefined },
+    ];
     await withDb(async (db) => {
-      await db.collection('channels').insertOne({
-        id: cid, slug, name: 'Test Hardening Fixture',
-        whatsapp_url: `https://whatsapp.com/channel/${slug}`, whatsapp_channel_id: wcid,
-        description: null, short_description: null, logo_url: null, cover_url: null,
-        website_url: null, country_code: 'US', primary_language: 'en', category_id: null,
-        owner_id: null, status: 'approved', verification_status: 'unverified',
-        is_official: false, is_featured: false, is_nsfw: false, is_demo: false,
-        activity_level: 'active', follower_count: 1, follower_count_source: 'test',
-        follower_count_updated_at: new Date(), created_at: new Date(), updated_at: new Date(), published_at: new Date(),
-      });
+      for (const f of fixtures) {
+        const cid = uuidv4();
+        const wcid = `hardening_${cid.replace(/-/g, '').slice(0, 20)}`;
+        const doc: Record<string, unknown> = {
+          id: cid, slug: f.slug, name: f.name,
+          whatsapp_url: `https://whatsapp.com/channel/${f.slug}`, whatsapp_channel_id: wcid,
+          description: null, short_description: null, logo_url: null, cover_url: null,
+          website_url: null, country_code: 'US', primary_language: 'en', category_id: null,
+          owner_id: null, status: 'approved', verification_status: 'unverified',
+          is_official: false, is_featured: false, is_nsfw: false, is_demo: false,
+          activity_level: 'active', follower_count: 1, follower_count_source: 'test',
+          follower_count_updated_at: new Date(), created_at: new Date(), updated_at: new Date(), published_at: new Date(),
+        };
+        if (f.is_test_fixture !== undefined) doc.is_test_fixture = f.is_test_fixture;
+        await db.collection('channels').insertOne(doc);
+      }
     });
-    const r = await api<{ items: Array<{ slug: string }> }>(`/channels?limit=50`);
-    expect(r.status).toBe(200);
-    const slugs = (r.body.data?.items || []).map((i) => i.slug);
-    expect(slugs).not.toContain(slug);
-    const r2 = await api(`/channels/${slug}`);
-    expect(r2.status).toBe(404);
+    // (1) Browse listing hides ALL three.
+    const list = await api<{ items: Array<{ slug: string }> }>(`/channels?limit=100`);
+    expect(list.status).toBe(200);
+    const listSlugs = (list.body.data?.items || []).map((i) => i.slug);
+    for (const f of fixtures) expect(listSlugs).not.toContain(f.slug);
+    // (2) Direct slug lookup returns 404 for each.
+    for (const f of fixtures) {
+      const r = await api(`/channels/${f.slug}`);
+      expect(r.status).toBe(404);
+    }
+    // (3) Search hides all three (query the shared "fixture" substring).
+    const searchFix = await api<{ items: Array<{ slug: string }> }>(`/channels?q=fixture&limit=50`);
+    const searchSlugs = (searchFix.body.data?.items || []).map((i) => i.slug);
+    for (const f of fixtures) expect(searchSlugs).not.toContain(f.slug);
   });
 });
