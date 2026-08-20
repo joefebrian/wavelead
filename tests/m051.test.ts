@@ -10,6 +10,7 @@ import { issueAttributionToken, verifyAttributionToken, deriveSessionBinding } f
 import { computeNextStatus } from '@/lib/services/promotion/campaignStateService';
 import { promotionDeliveryService } from '@/lib/services/promotion/deliveryService';
 import { promotionCampaignRepo, promotionRateCardRepo, campaignImpressionDedupRepo } from '@/lib/repositories/promotionRepo';
+import { installTestPaymentProvider, restoreDefaultPaymentProvider, fundCampaignForTest } from './helpers/fundCampaign';
 import type { PromotionCampaign, SponsoredPlacement, VerificationStatus } from '@/lib/types';
 
 const BASE = 'http://localhost:3000/api';
@@ -119,9 +120,17 @@ beforeAll(async () => {
     await db.collection('events').deleteMany({ campaign_id: { $exists: true, $ne: null } });
   });
   await runSeed({}); // Idempotent — ensures rate cards are seeded.
+  // Install a deterministic paid PaymentProvider so the canonical
+  // fundCampaignForTest helper (used by the happy-path lifecycle test)
+  // can drive createFundingForCampaign + captureAndFinalize without live
+  // PayPal calls. Other m051 tests do NOT go through the funding service
+  // (they use seedActiveCampaign for delivery-shape shortcuts) so this
+  // provider install is inert for them.
+  installTestPaymentProvider();
 });
 
 afterAll(async () => {
+  restoreDefaultPaymentProvider();
   await withDb(async (db) => {
     await db.collection('users').deleteMany({ email: /^m051-/ });
     await db.collection('channels').deleteMany({ slug: /^m051-/ });
@@ -275,7 +284,7 @@ describe('M05.1.3 — Campaign create / authz', () => {
     expect(r.status).toBe(403);
   });
 
-  it('happy path: verified owner creates → submit → admin approve → active', async () => {
+  it('happy path: verified owner creates → submit → admin approve (approved+unfunded) → fund → active', async () => {
     const owner = await signup();
     const admin = await signup('admin');
     const ch = await ensureChannel(owner.userId, { verification_status: 'verified' });
@@ -295,26 +304,23 @@ describe('M05.1.3 — Campaign create / authz', () => {
     expect(submit.status).toBe(200);
     expect(submit.body.data!.campaign.status).toBe('pending_review');
     expect(submit.body.data!.campaign.rate_snapshot).toHaveLength(2);
-    // M06 hardening: approve only lands `approved` (unfunded). This test's
-    // intent is the full ACTIVE-lifecycle path, so we install a deterministic
-    // funding fixture (legacy_waived) BEFORE approve. The approve handler then
-    // reconciles funded+in-window → active.
-    const { paymentFundingOrderRepo } = await import('@/lib/repositories/paymentRepo');
-    const nowFund = new Date();
-    await paymentFundingOrderRepo.insert({
-      id: uuidv4(), campaign_id: id, owner_user_id: owner.userId,
-      provider: 'paypal', provider_order_id: null, provider_capture_id: null,
-      currency: 'USD', amount_minor: 0, amount_captured_minor: 0, amount_refunded_minor: 0,
-      amount_usd_micros: 0, status: 'legacy_waived',
-      approve_url: null, return_url: null, cancel_url: null,
-      paid_at: null, cancelled_at: null, refunded_at: null,
-      created_at: nowFund, updated_at: nowFund,
-    });
-    await promotionCampaignRepo.incrementFundedAmount(id, 10_000 * 10_000);
+    // Admin approve — canonical M06 lifecycle: approved + UNFUNDED.
     const approve = await api<{ campaign: PromotionCampaign }>(`/admin/promotions/${id}/approve`, { method: 'POST', headers: { Cookie: admin.cookie } });
     expect(approve.status).toBe(200);
-    expect(approve.body.data!.campaign.status).toBe('active');
-    expect(approve.body.data!.campaign.activated_at).toBeTruthy();
+    expect(approve.body.data!.campaign.status).toBe('approved');
+    // Sanity: funding_summary must confirm unfunded.
+    const { campaignFundingService } = await import('@/lib/services/payments/campaignFundingService');
+    const unfundedSummary = await campaignFundingService.fundingSummary(id);
+    expect(unfundedSummary.funded).toBe(false);
+    // Canonical funding — real service path (createFundingForCampaign +
+    // captureAndFinalize) via test PaymentProvider. NO legacy_waived shortcut.
+    await fundCampaignForTest(id, owner.userId);
+    // After funding, captureAndFinalize invokes reconcileCampaign which flips
+    // the in-window campaign to `active`. Verify via a fresh admin GET.
+    const post = await api<{ campaign: PromotionCampaign }>(`/admin/promotions/${id}`, { method: 'GET', headers: { Cookie: admin.cookie } });
+    expect(post.status).toBe(200);
+    expect(post.body.data!.campaign.status).toBe('active');
+    expect(post.body.data!.campaign.activated_at).toBeTruthy();
   });
 
   it('normal user cannot approve', async () => {

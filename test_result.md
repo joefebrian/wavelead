@@ -4590,3 +4590,58 @@ agent_communication:
 
       READY FOR SAVE TO GITHUB: YES
 
+
+
+# ================================================================
+# M06.1 TEST SEMANTICS CORRECTION — legacy_waived scope tightened
+# ================================================================
+agent_communication:
+  - agent: "main"
+    message: |
+      TEST SEMANTICS CORRECTION applied per user directive:
+        legacy_waived is reserved for genuinely grandfathered pre-M06 campaigns.
+        NEW campaigns must go through the canonical funding path.
+
+      Added helper file:
+        tests/helpers/fundCampaign.ts
+          - TestPaidPaymentProvider (deterministic PayPal mock, returns paid)
+          - installTestPaymentProvider() / restoreDefaultPaymentProvider()
+          - fundCampaignForTest(campaignId, ownerUserId)
+              → drives campaignFundingService.createFundingForCampaign
+                + captureAndFinalize (real production path)
+              → NO legacy_waived, NO status mutation, NO gate bypass
+
+      tests/m051.test.ts:
+        "happy path" renamed to reflect full lifecycle assertion:
+          create → submit → approve → assert approved+unfunded → fund → assert active
+        Uses fundCampaignForTest (canonical). No legacy_waived.
+
+      tests/m06_hardening.test.ts (rewritten):
+        - "admin approve leaves current-window campaign in `approved` + unfunded"
+            → canonical, no funding
+        - "funding … → active (canonical funding path)"
+            → fundCampaignForTest, NO legacy_waived
+        - "funding … → scheduled (canonical funding path)"
+            → fundCampaignForTest, NO legacy_waived
+        - "reconciliation does NOT auto-activate an unfunded approved campaign"
+            → canonical, no funding
+        - "legacy_waived campaigns (grandfather waiver) auto-activate on approve"
+            → THE ONLY test that uses installLegacyWaiver()
+        - NEW: "REAL journey: verified owner → create → submit → approve →
+                 (approved+unfunded) → fund → active"
+            → 100% real API path (owner /owner/promotions, /submit, admin approve)
+              + canonical funding via campaignFundingService
+        - "public discovery hides test-fixture channels" preserved.
+
+      Verification:
+        yarn typecheck                         → PASS (exit 0)
+        yarn vitest run tests/m051.test.ts
+                        tests/m06_hardening.test.ts → 40/40 PASS
+        yarn test (full)                       → 206/206 PASS
+
+      Application source: NO changes (test-only correction).
+      Frontend agent: NOT rerun (per rulebook — test-only change).
+      yarn build: NOT rerun (per rulebook — no app source change).
+
+      READY FOR SAVE TO GITHUB: YES (again — this is a test-only revision).
+
