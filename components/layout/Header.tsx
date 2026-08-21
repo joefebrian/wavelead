@@ -40,6 +40,7 @@ export default function Header() {
     { href: '/top', label: 'Top Channels' },
     { href: '/categories', label: 'Categories' },
     { href: '/for-brands', label: 'For Brands' },
+    { href: '/pricing', label: 'Pricing' },
   ];
 
   return (
