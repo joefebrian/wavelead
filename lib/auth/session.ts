@@ -13,7 +13,7 @@ function getSecret(): string {
   return s;
 }
 
-export function signSessionToken(payload: Pick<SessionPayload, 'userId' | 'email'>): string {
+export function signSessionToken(payload: Pick<SessionPayload, 'userId' | 'email' | 'v'>): string {
   const opts: SignOptions = { expiresIn: MAX_AGE_SECONDS, algorithm: 'HS256' };
   return jwt.sign(payload, getSecret(), opts);
 }
@@ -22,9 +22,9 @@ export function verifySessionToken(token: string): SessionPayload | null {
   try {
     const decoded = jwt.verify(token, getSecret(), { algorithms: ['HS256'] });
     if (typeof decoded === 'string') return null;
-    const { userId, email, iat, exp } = decoded as jwt.JwtPayload & Partial<SessionPayload>;
+    const { userId, email, v, iat, exp } = decoded as jwt.JwtPayload & Partial<SessionPayload>;
     if (!userId || !email) return null;
-    return { userId, email, iat, exp };
+    return { userId, email, v, iat, exp };
   } catch {
     return null;
   }

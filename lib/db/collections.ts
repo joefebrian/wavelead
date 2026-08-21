@@ -28,6 +28,8 @@ export const COLLECTIONS = {
   FUNDING_FX_RATES: 'funding_fx_rates',
   FUNDING_FX_QUOTES: 'funding_fx_quotes',
   SPONSORSHIP_LEADS: 'sponsorship_leads',
+  INTEGRATION_CREDENTIALS: 'integration_credentials',
+  SECURITY_AUDIT_EVENTS: 'security_audit_events',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

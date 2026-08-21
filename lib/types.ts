@@ -21,6 +21,11 @@ export interface User {
   auth_providers: string[];
   created_at: Date;
   updated_at: Date;
+  // Security metadata (M07-security patch)
+  is_disabled?: boolean;
+  session_version?: number;         // incremented on password change / admin reset / disable
+  must_change_password?: boolean;   // set by admin reset; enforced on /change-password
+  password_updated_at?: Date | null;
 }
 
 export type PublicUser = Omit<User, 'password_hash'>;
@@ -320,6 +325,7 @@ export interface AuditLog {
 export interface SessionPayload {
   userId: string;
   email: string;
+  v?: number;   // session_version at issuance — invalidated when user.session_version bumps
   iat?: number;
   exp?: number;
 }
@@ -730,4 +736,35 @@ export interface SponsorshipLead {
   admin_notes: string | null;
   created_at: Date;
   updated_at: Date;
+}
+
+// ============================================================
+// M07-security — Integration credential vault (PayPal + future providers)
+// ============================================================
+export type IntegrationProvider = 'paypal';
+export type IntegrationEnvironment = 'sandbox' | 'live';
+
+export interface IntegrationCredential {
+  id: string;
+  provider: IntegrationProvider;
+  environment: IntegrationEnvironment;
+  client_id: string;               // NOT secret; stored plain for masking display
+  client_secret_ciphertext: string; // AES-256-GCM base64: iv:ct:tag
+  webhook_id: string | null;
+  configured_by: string;           // user id
+  last_connection_test_at: Date | null;
+  last_connection_test_status: 'success' | 'failure' | null;
+  last_connection_test_message: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface SecurityAuditEvent {
+  id: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  event_type: string;              // e.g. PAYPAL_CONFIG_UPDATED, USER_PASSWORD_RESET, USER_PASSWORD_CHANGED, USER_DISABLED
+  subject_user_id?: string | null;
+  metadata: Record<string, unknown>;  // NEVER contains secrets
+  created_at: Date;
 }

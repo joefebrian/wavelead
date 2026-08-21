@@ -17,17 +17,23 @@ import type {
 const SANDBOX_BASE = 'https://api-m.sandbox.paypal.com';
 const LIVE_BASE = 'https://api-m.paypal.com';
 
-function cfg() {
-  const mode = (process.env.PAYPAL_MODE || 'sandbox').toLowerCase();
-  const clientId = process.env.PAYPAL_CLIENT_ID;
-  const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
-  const webhookId = process.env.PAYPAL_WEBHOOK_ID || null;
-  if (!clientId || !clientSecret) {
-    throw new Error('PayPal credentials not configured (PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET missing)');
+// M07-security: PayPal credentials now resolve through paypalConfigService
+// (vault → env fallback). Payment/refund/webhook LOGIC is unchanged; only
+// the read path for credentials moved. Live mode is impossible outside
+// production (paypalConfigService enforces this).
+async function cfg() {
+  const { paypalConfigService } = await import('./paypalConfigService');
+  const resolved = await paypalConfigService.resolveActive();
+  if (!resolved) {
+    throw new Error('PayPal credentials not configured (no admin-vault entry and no PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET env)');
   }
   return {
-    base: mode === 'live' ? LIVE_BASE : SANDBOX_BASE,
-    clientId, clientSecret, webhookId, mode,
+    base: resolved.environment === 'live' ? LIVE_BASE : SANDBOX_BASE,
+    clientId: resolved.client_id,
+    clientSecret: resolved.client_secret,
+    webhookId: resolved.webhook_id,
+    mode: resolved.environment,
+    source: resolved.source,
   };
 }
 
@@ -46,7 +52,7 @@ function fromCurrencyValue(value: string): number {
 let tokenCache: { access_token: string; expires_at: number } | null = null;
 
 async function getAccessToken(): Promise<string> {
-  const c = cfg();
+  const c = await cfg();
   const now = Date.now();
   if (tokenCache && tokenCache.expires_at > now + 60_000) return tokenCache.access_token;
   const res = await fetch(`${c.base}/v1/oauth2/token`, {
@@ -98,7 +104,7 @@ export class PayPalPaymentProvider implements PaymentProvider {
 
   async createPayment(input: CreatePaymentInput): Promise<CreatePaymentResult> {
     const token = await getAccessToken();
-    const c = cfg();
+    const c = await cfg();
     const body = {
       intent: 'CAPTURE',
       purchase_units: [
@@ -152,7 +158,7 @@ export class PayPalPaymentProvider implements PaymentProvider {
 
   async capturePayment(input: CapturePaymentInput): Promise<CapturePaymentResult> {
     const token = await getAccessToken();
-    const c = cfg();
+    const c = await cfg();
     const res = await this._fetch(`${c.base}/v2/checkout/orders/${encodeURIComponent(input.provider_order_id)}/capture`, {
       method: 'POST',
       headers: {
@@ -223,7 +229,7 @@ export class PayPalPaymentProvider implements PaymentProvider {
 
   async retrievePayment(input: CapturePaymentInput): Promise<RetrievePaymentResult> {
     const token = await getAccessToken();
-    const c = cfg();
+    const c = await cfg();
     const res = await this._fetch(`${c.base}/v2/checkout/orders/${encodeURIComponent(input.provider_order_id)}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
     });
@@ -246,7 +252,7 @@ export class PayPalPaymentProvider implements PaymentProvider {
 
   async createRefund(input: RefundInput): Promise<RefundResult> {
     const token = await getAccessToken();
-    const c = cfg();
+    const c = await cfg();
     const res = await this._fetch(`${c.base}/v2/payments/captures/${encodeURIComponent(input.provider_capture_id)}/refund`, {
       method: 'POST',
       headers: {
@@ -272,7 +278,7 @@ export class PayPalPaymentProvider implements PaymentProvider {
   }
 
   async verifyWebhook(input: WebhookVerifyInput): Promise<WebhookVerifyResult> {
-    const c = cfg();
+    const c = await cfg();
     if (!c.webhookId) {
       // Without a configured webhook id we cannot verify signature server-side.
       // Fail closed — never process the event.

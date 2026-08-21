@@ -58,7 +58,7 @@ export const authService = {
       updated_at: now,
     };
     await userRepo.insert(user);
-    const token = signSessionToken({ userId: user.id, email: user.email });
+    const token = signSessionToken({ userId: user.id, email: user.email, v: 0 });
     return { user: toPublic(user)!, token };
   },
 
@@ -68,9 +68,10 @@ export const authService = {
     const data: LoginInput = parsed.data;
     const user = await userRepo.findByEmail(data.email);
     if (!user) throw new HttpError(401, 'Invalid credentials');
+    if (user.is_disabled) throw new HttpError(403, 'Account disabled. Contact support.');
     const ok = await verifyPassword(data.password, user.password_hash || '');
     if (!ok) throw new HttpError(401, 'Invalid credentials');
-    const token = signSessionToken({ userId: user.id, email: user.email });
+    const token = signSessionToken({ userId: user.id, email: user.email, v: user.session_version ?? 0 });
     return { user: toPublic(user)!, token };
   },
 

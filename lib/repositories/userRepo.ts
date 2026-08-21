@@ -22,6 +22,10 @@ export const userRepo = {
     const c = await coll();
     await c.updateOne({ id }, { $set: { role, updated_at: new Date() } });
   },
+  async updateFields(id: string, fields: Partial<User>): Promise<void> {
+    const c = await coll();
+    await c.updateOne({ id }, { $set: fields as never });
+  },
   async count(): Promise<number> {
     const c = await coll();
     return c.countDocuments();

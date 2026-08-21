@@ -6,7 +6,7 @@ import Footer from '@/components/layout/Footer';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
 import { channelRepo } from '@/lib/repositories/channelRepo';
 import { Button } from '@/components/ui/button';
-import { Inbox, LayoutList, Users, Shield, Trophy, ClipboardCheck, KeyRound, ShieldAlert, Megaphone, Wallet, DollarSign, Activity, TrendingUp, Handshake } from 'lucide-react';
+import { Inbox, LayoutList, Users, Shield, Trophy, ClipboardCheck, KeyRound, ShieldAlert, Megaphone, Wallet, DollarSign, Activity, TrendingUp, Handshake, Cog } from 'lucide-react';
 import AdminNav from '@/components/layout/AdminNav';
 
 export const metadata: Metadata = { title: 'Admin', robots: { index: false, follow: false } };
@@ -50,6 +50,8 @@ export default async function AdminPage() {
     { title: 'Ledger', href: '/admin/ledger', blurb: 'Immutable financial history for campaigns and refunds.', icon: <DollarSign className="h-5 w-5" /> },
     { title: 'Payment Health', href: '/admin/payment-health', blurb: 'Provider configuration, reconciliation health, alerts.', icon: <Activity className="h-5 w-5" /> },
     { title: 'FX Rates', href: '/admin/fx-rates', blurb: 'Manage USD ↔ IDR (and future) reference rates.', icon: <DollarSign className="h-5 w-5" /> },
+    { title: 'Users', href: '/admin/users', blurb: 'Super-Admin: search users, reset passwords, disable accounts.', icon: <Users className="h-5 w-5" /> },
+    { title: 'PayPal Settings', href: '/admin/settings/paypal', blurb: 'Super-Admin: manage encrypted PayPal credentials & mode.', icon: <Cog className="h-5 w-5" /> },
     { title: 'Homepage Curation', href: '/admin/homepage', blurb: 'Manage Popular / New & Noteworthy / Featured slots.', icon: <LayoutList className="h-5 w-5" /> },
     { title: 'Approved channels', href: '/admin/channels?status=approved', blurb: 'Browse the current public catalogue.', icon: <ClipboardCheck className="h-5 w-5" />, badge: `${approvedCount} live` },
     { title: 'Rejected channels', href: '/admin/channels?status=rejected', blurb: 'Audit past rejection decisions.', icon: <Shield className="h-5 w-5" />, badge: rejectedCount > 0 ? `${rejectedCount}` : undefined },

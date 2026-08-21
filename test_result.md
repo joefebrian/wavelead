@@ -5125,3 +5125,271 @@ agent_communication:
 
       READY FOR SAVE TO GITHUB: YES
 
+
+
+# ---------- M07-SECURITY (Super Admin Security & PayPal Control) ----------
+backend_m07_security:
+  - task: "Primary Super Admin identity (hello@p2plabs.asia)"
+    implemented: true
+    working: true
+    file: "seed (manual), lib/services/authService.ts, .env (SUPER_ADMIN_EMAIL)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          hello@p2plabs.asia seeded as super_admin. Existing user identity
+          preserved (single row for this email). admin@wavelead.dev retained
+          only as a QA/bootstrap fixture (no longer super_admin at rest).
+          Verified by targeted vitest tests §1.
+
+  - task: "Own password change with session_version invalidation"
+    implemented: true
+    working: true
+    file: "lib/services/security/accountSecurityService.ts, lib/auth/rbac.ts, app/api/[[...path]]/route.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          POST /api/me/password validates current_password and enforces min 10
+          chars. On success bumps session_version so the OLD JWT is refused by
+          rbac.ts (401 on any privileged route + on /auth/me). New login with
+          new password re-issues fresh session cookie carrying new v.
+          Verified by targeted §4 tests.
+
+  - task: "Super Admin user management (search + reset + disable + force-change)"
+    implemented: true
+    working: true
+    file: "lib/services/security/accountSecurityService.ts, lib/services/security/adminUserService.ts, app/admin/users/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Super Admin only. Temporary password: 20+ chars random, returned
+          ONCE, never persisted plaintext (bcrypt hash only). must_change_password
+          set + session_version bumped. Disable also bumps session_version and
+          refuses login. UI at /admin/users lists users, exposes Reset / Force
+          change / Disable actions. Regular admin blocked (403).
+          Verified by targeted §2 + §5 + §6 tests.
+
+  - task: "Force-change gate blocks privileged endpoints until password changed"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.ts (passwordChangeGate)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Route-level gate returns 428 { code: 'password_change_required' } for
+          /admin, /owner, /me/*, /submit, /dashboard, /sponsorship-leads, /dev
+          prefixes when actor.must_change_password=true. Whitelist:
+          /auth/*, /me/password, /health. Public GETs (channels, discovery,
+          categories, /go/*) remain open by design.
+          Verified by targeted §5 #9 test.
+
+  - task: "PayPal integration_credentials vault + AES-256-GCM"
+    implemented: true
+    working: true
+    file: "lib/utils/cryptoVault.ts, lib/repositories/integrationCredentialRepo.ts, lib/services/security/paypalAdminService.ts, lib/services/payments/paypalConfigService.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Envelope format iv.ct.tag (base64). Master key from
+          INTEGRATION_SECRETS_KEY (never in code / DB). Tamper detection
+          (auth tag) — invalid envelopes throw. Plaintext client_secret is
+          NEVER returned by any API response, is never in audit metadata,
+          and is never logged. Client ID + Webhook ID are masked for display.
+          Verified by targeted §7 + §10 + §11 tests.
+
+  - task: "PayPal admin surface (/admin/settings/paypal) — vault + env fallback + hosts"
+    implemented: true
+    working: true
+    file: "app/admin/settings/paypal/page.tsx, lib/services/payments/paypalConfigService.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Super Admin only (regular admin → 403). Sandbox/Live tabs.
+          Resolution priority: admin_vault → env fallback (never both). Hosts:
+          sandbox → https://api-m.sandbox.paypal.com, live → https://api-m.paypal.com.
+          NODE_ENV≠production → Live activation blocked (400 with "production
+          environment" message). Live activation additionally requires:
+            * confirm_live === 'ENABLE LIVE PAYMENTS'
+            * webhook_id present
+            * OAuth connection test succeeds against real PayPal
+          Sandbox webhook is stored per-environment and cannot leak into Live.
+          Test-connection response never returns access_token, secret, or raw
+          provider payload. Verified by targeted §8 + §9 tests.
+
+  - task: "Security audit events (backend-only)"
+    implemented: true
+    working: true
+    file: "lib/repositories/securityAuditRepo.ts, lib/services/security/accountSecurityService.ts, lib/services/security/paypalAdminService.ts"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Events: USER_PASSWORD_CHANGED, USER_PASSWORD_RESET, USER_DISABLED,
+          USER_ENABLED, USER_FORCE_PASSWORD_CHANGE, PAYPAL_SANDBOX_ENABLED,
+          PAYPAL_LIVE_ENABLED, PAYPAL_SECRET_REPLACED, PAYPAL_CONFIG_UPDATED,
+          PAYPAL_CONNECTION_TESTED. Metadata contains only environment,
+          client_id_prefix, webhook_id_configured — NO plaintext / ciphertext.
+          Per user request, NO audit viewer UI in this patch (backend-only).
+
+  - task: "M06 payment behaviour regression"
+    implemented: true
+    working: true
+    file: "lib/services/payments/paypalProvider.ts, lib/services/payments/paypalConfigService.ts, app/api/[[...path]]/route.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          M07-security only changed how PayPal *credentials* are resolved
+          (vault → env fallback). Funding/refund/webhook/ledger semantics are
+          untouched. /admin/payment-health remains reachable to admins. Full
+          test suite: 265/265 PASS (no regressions in M04/M05/M05.1/M06).
+          Verified by targeted §12 tests.
+
+frontend_m07_security:
+  - task: "/dashboard/settings/security own-password UI"
+    implemented: true
+    working: true
+    file: "app/dashboard/settings/security/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Manual smoke at 1440 and 390 viewports as Super Admin.
+          H1 'Account security', form with Current / New (min 10) / Confirm
+          fields + Change password CTA + copy about invalidating sessions.
+          Signed-in-as card shows role badge.
+
+  - task: "/admin/users Super Admin management UI"
+    implemented: true
+    working: true
+    file: "app/admin/users/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Manual smoke at 1440 and 390 viewports. AdminNav includes
+          Users + PayPal Settings tabs. Table lists Email / Name / Role /
+          Status + Reset / Force change / Disable actions per row.
+          Copy line "Password material is never returned by the API."
+
+  - task: "/admin/settings/paypal Super Admin PayPal UI"
+    implemented: true
+    working: true
+    file: "app/admin/settings/paypal/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Manual smoke at 1440 and 390 viewports. Shows Active environment /
+          Credential source / Node environment cards; sandbox+live tab
+          selector; Live tab tagged (REAL MONEY); "Live mode DISABLED in
+          preview" banner in dev. Sandbox status: Configured, source=env
+          fallback (client secret marked Configured, never returned).
+          Form fields: Client ID, Replace Client Secret (leave blank to keep),
+          Webhook ID, auto-derived webhook callback URL.
+
+agent_communication:
+  - agent: "main"
+    message: |
+      WAVELEAD ADMIN SECURITY + PAYPAL CONTROL — PATCH COMPLETE
+
+      SUPER ADMIN
+        hello@p2plabs.asia:                PASS
+        Existing identity preserved:       PASS (single user row for this email)
+        /admin/users RBAC:                 PASS
+
+      PASSWORD
+        Own password change:               PASS
+        Temporary password:                PASS (24 chars, one-time, hashed)
+        Force-change enforcement:          PASS (428 gate on privileged routes)
+        Session invalidation:              PASS (session_version bump)
+        Disabled-user session invalidation: PASS
+
+      PAYPAL VAULT
+        AES-256-GCM:                       PASS
+        Secret at-rest encryption:         PASS (envelope iv.ct.tag)
+        Secret API exposure:               NONE
+        Environment fallback:              PASS
+        Vault override:                    PASS
+        Sandbox host:                      PASS (api-m.sandbox.paypal.com)
+        Live host readiness:               PASS (api-m.paypal.com — never called in preview)
+        Preview Live guard:                PASS (400 in NODE_ENV≠production)
+        Live activation safety:            PASS (confirm phrase + webhook + connection test)
+        Connection test:                   PASS (no token/secret in response)
+
+      AUDIT
+        Backend audit events:              PASS (10 event types)
+        Secret-free audit metadata:        PASS
+
+      PAYMENT REGRESSION:                  PASS (M06 untouched, 265/265 tests)
+
+      TARGETED TESTS:                      39/39
+      FULL TESTS:                          265/265
+      TYPECHECK:                           PASS
+      BUILD:                               PASS
+      FRONTEND MANUAL SMOKE:
+        390:                               PASS (users / paypal / security)
+        1440:                              PASS (users / paypal / security)
+
+      FILES CHANGED (this patch):
+        + lib/utils/cryptoVault.ts
+        + lib/services/security/accountSecurityService.ts
+        + lib/services/security/adminUserService.ts
+        + lib/services/security/paypalAdminService.ts
+        + lib/services/payments/paypalConfigService.ts
+        + lib/repositories/integrationCredentialRepo.ts
+        + lib/repositories/securityAuditRepo.ts
+        + app/admin/users/page.tsx
+        + app/admin/settings/paypal/page.tsx
+        + app/dashboard/settings/security/page.tsx
+        M app/api/[[...path]]/route.ts        (+ /me/password, /admin/users*, /admin/settings/paypal*, force-change gate, /auth/me 401 on stale)
+        M lib/auth/rbac.ts                    (already: session_version + disabled check)
+        M lib/db/collections.ts               (+ INTEGRATION_CREDENTIALS, SECURITY_AUDIT_EVENTS)
+        M lib/types.ts                        (+ IntegrationCredential, SecurityAuditEvent, User security fields)
+        M components/layout/AdminNav.tsx      (+ Users + PayPal Settings tabs)
+        M memory/test_credentials.md          (hello@p2plabs.asia noted)
+        + tests/m07_security.test.ts          (39 tests, all pass)
+
+      LIVE PAYPAL CALLS:                    0
+      BLOCKERS:                             none
+
+      READY FOR SAVE TO GITHUB:             YES
+      STOP.

@@ -14,6 +14,27 @@ async function safeJson(request: NextRequest): Promise<Record<string, unknown>> 
   try { return await request.json(); } catch { return {}; }
 }
 
+/**
+ * Force-change-password gate for privileged routes.
+ * Returns a 428 response if the current actor has must_change_password=true
+ * AND the requested route is not in the whitelist. Public routes remain open.
+ */
+const FORCE_CHANGE_WHITELIST = new Set([
+  '/auth/me', '/auth/logout', '/auth/login', '/auth/signup',
+  '/me/password', '/health',
+]);
+const FORCE_CHANGE_GATED_PREFIXES = ['/admin', '/owner', '/me', '/submit', '/dashboard', '/sponsorship-leads', '/dev'];
+async function passwordChangeGate(request: NextRequest, route: string): Promise<NextResponse | null> {
+  if (FORCE_CHANGE_WHITELIST.has(route)) return null;
+  const gated = FORCE_CHANGE_GATED_PREFIXES.some((p) => route === p || route.startsWith(`${p}/`));
+  if (!gated) return null;
+  const actor = await resolveActor(request);
+  if (actor?.user && (actor.user as { must_change_password?: boolean }).must_change_password) {
+    return applyCors(fail(428, 'Password change required', { code: 'password_change_required' }), request);
+  }
+  return null;
+}
+
 interface RouteCtx { params: Promise<{ path?: string[] }>; }
 
 export async function OPTIONS(request: NextRequest): Promise<NextResponse> {
@@ -26,6 +47,16 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
   const method = request.method;
 
   try {
+    // Force-change gate. When admin resets a user's password, must_change_password=true
+    // is set on that user (and session_version bumps → old cookie invalidated).
+    // After the user logs in with the temp password they hold a *valid* session but MUST
+    // change their password before doing anything privileged. Public reads (GET /channels,
+    // /categories, homepage, …) remain accessible; only privileged/mutating endpoints
+    // and dashboard/admin surfaces are gated. /me/password itself is exempt so the user
+    // can actually rotate their password.
+    const gate = await passwordChangeGate(request, route);
+    if (gate) return gate;
+
     if (route === '/health' && method === 'GET') {
       const v = getVersionInfo();
       return applyCors(ok({
@@ -61,10 +92,15 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return clearSessionCookie(applyCors(ok({ loggedOut: true }), request));
     }
     if (route === '/auth/me' && method === 'GET') {
-      // Always resolve current DB role — never trust JWT.
+      // No cookie / bad JWT → visitor (200, user:null).
+      // Valid JWT but stale session (bumped version OR disabled) → 401 so the client
+      // clears the dead cookie. This is the enforcement point for password-reset /
+      // account-disable session invalidation.
       const session = getSessionFromRequest(request);
-      const user = await authService.me(session);
-      return applyCors(ok({ user }), request);
+      if (!session) return applyCors(ok({ user: null }), request);
+      const actor = await resolveActor(request);
+      if (!actor) return applyCors(fail(401, 'Session invalidated'), request);
+      return applyCors(ok({ user: actor.user }), request);
     }
 
     // ---------- PREVIEW-ONLY QA BOOTSTRAP ----------
@@ -723,6 +759,12 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       // M06.1: local payment provider readiness signals (informational, never a health error).
       const { fxRateProvider } = await import('@/lib/services/fx/fxRateProvider');
       const { PAYPAL_CAPABILITIES, LOCAL_PAYMENT_CAPABILITIES } = await import('@/lib/services/payments/paymentProviderCapabilities');
+      // M07-security: enrich PayPal readiness with vault/env source, mode, connection test.
+      const { paypalConfigService } = await import('@/lib/services/payments/paypalConfigService');
+      const activeCfg = await paypalConfigService.resolveActive();
+      const activeMode = activeCfg?.environment ?? null;
+      const paypalStatus = activeCfg ? 'configured' : 'not_configured';
+      const activeEnvStatus = activeMode ? await paypalConfigService.status(activeMode) : null;
       const activeFx = await fxRateProvider.getActiveRate('USD', 'IDR');
       return applyCors(ok({
         pending_payments: pending,
@@ -731,9 +773,19 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
         webhook_processing_failures: webhook_failed,
         ledger_integrity_issues: integrity,
         reconciliation_needed_count: reconciliation_needed,
-        // M06.1 provider readiness (informational)
+        // M06.1 provider readiness + M07-security config source
         providers: {
-          paypal: { ...PAYPAL_CAPABILITIES, status: 'configured' },
+          paypal: {
+            ...PAYPAL_CAPABILITIES,
+            status: paypalStatus,
+            configured: !!activeCfg,
+            mode: activeMode,
+            credential_source: activeCfg?.source ?? null,
+            webhook_configured: !!activeCfg?.webhook_id,
+            last_connection_test_status: activeEnvStatus?.last_connection_test_status ?? null,
+            last_connection_test_at: activeEnvStatus?.last_connection_test_at ?? null,
+            real_money_enabled: activeMode === 'live',
+          },
           local: { ...LOCAL_PAYMENT_CAPABILITIES, status: 'not_configured' },
         },
         fx: activeFx
@@ -972,6 +1024,85 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
         dry_run: !!body?.dry_run,
       });
       return applyCors(ok(result), request);
+    }
+
+    // ---------- M07-SECURITY — ACCOUNT SECURITY ----------
+    if (route === '/me/password' && method === 'POST') {
+      const { accountSecurityService } = await import('@/lib/services/security/accountSecurityService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.USER);
+      const body = await safeJson(request);
+      await accountSecurityService.changeOwnPassword(actor!, String(body?.current_password || ''), String(body?.new_password || ''));
+      return applyCors(ok({ ok: true }), request);
+    }
+    // ---------- M07-SECURITY — SUPER ADMIN USERS ----------
+    if (route === '/admin/users' && method === 'GET') {
+      const { adminUserService } = await import('@/lib/services/security/adminUserService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.SUPER_ADMIN);
+      const { searchParams } = new URL(request.url);
+      const items = await adminUserService.search(actor!, (searchParams.get('q') || '').trim());
+      return applyCors(ok({ items }), request);
+    }
+    if (path.length === 3 && path[0] === 'admin' && path[1] === 'users' && method === 'GET') {
+      const { adminUserService } = await import('@/lib/services/security/adminUserService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.SUPER_ADMIN);
+      const user = await adminUserService.getById(actor!, path[2]);
+      return applyCors(ok({ user }), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'users' && path[3] === 'reset-password' && method === 'POST') {
+      const { accountSecurityService } = await import('@/lib/services/security/accountSecurityService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.SUPER_ADMIN);
+      const result = await accountSecurityService.adminResetPassword(actor!, path[2]);
+      return applyCors(ok(result), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'users' && path[3] === 'disable' && method === 'POST') {
+      const { accountSecurityService } = await import('@/lib/services/security/accountSecurityService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.SUPER_ADMIN);
+      const body = await safeJson(request);
+      await accountSecurityService.setDisabled(actor!, path[2], !!body?.disabled);
+      return applyCors(ok({ ok: true }), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'users' && path[3] === 'force-change' && method === 'POST') {
+      const { accountSecurityService } = await import('@/lib/services/security/accountSecurityService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.SUPER_ADMIN);
+      await accountSecurityService.setMustChangePassword(actor!, path[2]);
+      return applyCors(ok({ ok: true }), request);
+    }
+    // ---------- M07-SECURITY — SUPER ADMIN PAYPAL SETTINGS ----------
+    if (route === '/admin/settings/paypal' && method === 'GET') {
+      const { paypalAdminService } = await import('@/lib/services/security/paypalAdminService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.SUPER_ADMIN);
+      const status = await paypalAdminService.currentStatus(actor!);
+      return applyCors(ok(status), request);
+    }
+    if (route === '/admin/settings/paypal' && method === 'POST') {
+      const { paypalAdminService } = await import('@/lib/services/security/paypalAdminService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.SUPER_ADMIN);
+      const body = await safeJson(request);
+      const res = await paypalAdminService.upsert(actor!, body);
+      return applyCors(ok(res), request);
+    }
+    if (route === '/admin/settings/paypal/test-connection' && method === 'POST') {
+      const { paypalAdminService } = await import('@/lib/services/security/paypalAdminService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.SUPER_ADMIN);
+      const body = await safeJson(request);
+      const res = await paypalAdminService.testConnection(actor!, body);
+      return applyCors(ok(res), request);
+    }
+    if (route === '/admin/settings/paypal/import-env' && method === 'POST') {
+      const { paypalAdminService } = await import('@/lib/services/security/paypalAdminService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.SUPER_ADMIN);
+      const res = await paypalAdminService.importFromEnv(actor!);
+      return applyCors(ok(res), request);
     }
 
     // ---------- M07-LITE SPONSORSHIP LEADS ----------

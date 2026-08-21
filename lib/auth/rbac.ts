@@ -44,8 +44,16 @@ export class HttpError extends Error {
 // invalid OR the user no longer exists.
 async function actorFromSession(session: SessionPayload | null): Promise<Actor | null> {
   if (!session?.userId) return null;
-  const user = (await userRepo.findById(session.userId)) as (PublicUser & { password_hash?: string }) | null;
+  const user = (await userRepo.findById(session.userId)) as (PublicUser & { password_hash?: string; is_disabled?: boolean; session_version?: number }) | null;
   if (!user) return null;
+  // Security invariants:
+  //   - disabled accounts cannot resolve to an Actor
+  //   - session_version mismatch (bumped by password change / admin reset)
+  //     invalidates the JWT server-side even before it expires
+  if (user.is_disabled) return null;
+  const currentVersion = user.session_version ?? 0;
+  const tokenVersion = session.v ?? 0;
+  if (tokenVersion !== currentVersion) return null;
   const { password_hash: _drop, ...publicUser } = user;
   void _drop;
   return { session, user: publicUser };
