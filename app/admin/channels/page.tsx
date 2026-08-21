@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
+import AdminNav from '@/components/layout/AdminNav';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
@@ -63,6 +64,7 @@ export default async function AdminChannelsPage({ searchParams }: { searchParams
     <>
       <Header />
       <main className="container py-8">
+        <AdminNav active="/admin/channels" />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold">Moderation Queue</h1>

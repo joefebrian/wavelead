@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
+import AdminNav from '@/components/layout/AdminNav';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies, rankOf, ROLES } from '@/lib/auth/rbac';
 import { paymentFundingOrderRepo } from '@/lib/repositories/paymentRepo';
@@ -24,6 +25,7 @@ export default async function AdminPaymentsPage() {
     <div className="min-h-screen flex flex-col">
       <Header />
       <main className="container mx-auto px-4 py-6 max-w-5xl flex-1">
+        <AdminNav active="/admin/payments" />
         <h1 className="text-2xl font-bold mb-1">Payments</h1>
         <p className="text-sm text-muted-foreground mb-6">All campaign payments across owners.</p>
         <div className="wh-card overflow-x-auto">

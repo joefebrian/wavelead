@@ -702,3 +702,32 @@ export interface PaymentRefund {
   created_at: Date;
   updated_at: Date;
 }
+
+
+// ============================================================
+// M07-Lite — Sponsorship Leads (sales-assisted commercial funnel)
+// ============================================================
+export type SponsorshipLeadStatus = 'new' | 'contacted' | 'qualified' | 'won' | 'lost';
+export type SponsorshipObjective = 'brand_awareness' | 'traffic' | 'product_launch' | 'promotion' | 'other';
+export type SponsorshipBudgetRange = 'under_500' | '500_1000' | '1000_2500' | '2500_5000' | '5000_plus';
+
+export interface SponsorshipLead {
+  id: string;
+  channel_id: string;
+  channel_slug_snapshot: string;
+  channel_name_snapshot: string;
+  requester_user_id: string | null;
+  requester_role: Role | null;
+  company_name: string;
+  contact_name: string;
+  work_email: string;
+  objective: SponsorshipObjective;
+  budget_range: SponsorshipBudgetRange;
+  target_country: string | null;
+  desired_start_at: Date | null;
+  brief: string;
+  status: SponsorshipLeadStatus;
+  admin_notes: string | null;
+  created_at: Date;
+  updated_at: Date;
+}

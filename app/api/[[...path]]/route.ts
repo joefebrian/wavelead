@@ -974,6 +974,52 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok(result), request);
     }
 
+    // ---------- M07-LITE SPONSORSHIP LEADS ----------
+    if (route === '/sponsorship-leads' && method === 'POST') {
+      const rl = rateLimit(clientKey(request, 'sponsor-lead'), 20, 60_000);
+      if (!rl.allowed) return applyCors(fail(429, 'Too many requests'), request);
+      const { sponsorshipLeadService } = await import('@/lib/services/sponsorshipLeadService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      const lead = await sponsorshipLeadService.create(actor, body);
+      return applyCors(ok({ lead: { id: lead.id, status: lead.status, created_at: lead.created_at, channel_slug_snapshot: lead.channel_slug_snapshot, channel_name_snapshot: lead.channel_name_snapshot } }, { status: 201 }), request);
+    }
+    if (route === '/me/sponsorship-leads' && method === 'GET') {
+      const { sponsorshipLeadService } = await import('@/lib/services/sponsorshipLeadService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.USER);
+      const items = await sponsorshipLeadService.listMine(actor!);
+      return applyCors(ok({ items }), request);
+    }
+    if (route === '/admin/sponsorship-leads' && method === 'GET') {
+      const { sponsorshipLeadService } = await import('@/lib/services/sponsorshipLeadService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.MODERATOR);
+      const { searchParams } = new URL(request.url);
+      const items = await sponsorshipLeadService.listAdmin(actor!, {
+        status: (searchParams.get('status') || undefined) as never,
+        budget_range: searchParams.get('budget_range') || undefined,
+        channel_id: searchParams.get('channel_id') || undefined,
+      });
+      const counts = await sponsorshipLeadService.adminStatusCounts(actor!);
+      return applyCors(ok({ items, counts }), request);
+    }
+    if (path.length === 3 && path[0] === 'admin' && path[1] === 'sponsorship-leads' && method === 'GET') {
+      const { sponsorshipLeadService } = await import('@/lib/services/sponsorshipLeadService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.MODERATOR);
+      const lead = await sponsorshipLeadService.getAdmin(actor!, path[2]);
+      return applyCors(ok({ lead }), request);
+    }
+    if (path.length === 3 && path[0] === 'admin' && path[1] === 'sponsorship-leads' && method === 'PATCH') {
+      const { sponsorshipLeadService } = await import('@/lib/services/sponsorshipLeadService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.MODERATOR);
+      const body = await safeJson(request);
+      const lead = await sponsorshipLeadService.patch(actor!, path[2], body);
+      return applyCors(ok({ lead }), request);
+    }
+
     return applyCors(fail(404, `Route ${route} not found`), request);
   } catch (err) {
     return applyCors(handleServiceError(err), request);

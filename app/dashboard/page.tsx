@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { ownerService } from '@/lib/services/ownerService';
 import { claimService } from '@/lib/services/claimService';
-import { KeyRound, ShieldCheck, Send } from 'lucide-react';
+import { sponsorshipLeadService } from '@/lib/services/sponsorshipLeadService';
+import { KeyRound, ShieldCheck, Send, Megaphone, Wallet, Handshake, Compass } from 'lucide-react';
 
 export const metadata: Metadata = { title: 'Dashboard', robots: { index: false, follow: false } };
 export const dynamic = 'force-dynamic';
@@ -16,9 +17,13 @@ export default async function DashboardPage() {
   const actor = await resolveActorFromCookies();
   if (!actor) redirect('/login?next=/dashboard');
 
-  const [channels, claims] = await Promise.all([
+  const isBusiness = actor.user.role === 'business';
+
+  const [channels, claims, myLeads] = await Promise.all([
     ownerService.listMine(actor),
     claimService.listMine(actor),
+    // Cheap requester_user_id filter — safe for any authenticated persona.
+    sponsorshipLeadService.listMine(actor).catch(() => []),
   ]);
   const activeClaims = claims.filter((c) => c.status === 'pending' || c.status === 'needs_information').length;
 
@@ -31,11 +36,37 @@ export default async function DashboardPage() {
           Signed in as <span className="font-medium text-foreground">{actor.user.display_name || actor.user.email}</span> · role <span className="font-mono text-primary">{actor.user.role}</span>
         </p>
 
+        {isBusiness && (
+          <section className="mt-8 wh-card p-5 border-primary/30 bg-primary/5">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <div className="inline-flex items-center gap-2 text-xs uppercase text-primary font-semibold tracking-wide"><Handshake className="h-4 w-4" /> Brand opportunities</div>
+                <h2 className="mt-1 text-lg font-semibold">Discover & sponsor WhatsApp Channels</h2>
+                <p className="mt-1 text-sm text-muted-foreground max-w-xl">Find channels that match your audience and request a sponsorship. WaveLead coordinates the partnership.</p>
+              </div>
+              <div className="flex gap-2">
+                <Link href="/channels"><Button className="gap-1.5"><Compass className="h-4 w-4" /> Discover channels</Button></Link>
+                <Link href="/for-brands"><Button variant="outline">Learn more</Button></Link>
+              </div>
+            </div>
+          </section>
+        )}
+
         <div className="mt-8 grid gap-4 md:grid-cols-3">
           <Link href="/dashboard/channels" className="wh-card p-5 hover:border-primary/40 transition">
             <div className="flex items-center gap-2 text-sm text-muted-foreground"><ShieldCheck className="h-4 w-4" /> My channels</div>
             <div className="mt-2 text-3xl font-bold">{channels.length}</div>
             <div className="mt-3 text-xs text-muted-foreground">Manage the channels you own.</div>
+          </Link>
+          <Link href="/dashboard/promotions" className="wh-card p-5 hover:border-primary/40 transition">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Megaphone className="h-4 w-4" /> Campaigns</div>
+            <div className="mt-2 text-3xl font-bold">→</div>
+            <div className="mt-3 text-xs text-muted-foreground">Grow your channel with a paid promotion.</div>
+          </Link>
+          <Link href="/dashboard/billing" className="wh-card p-5 hover:border-primary/40 transition">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Wallet className="h-4 w-4" /> Billing</div>
+            <div className="mt-2 text-3xl font-bold">→</div>
+            <div className="mt-3 text-xs text-muted-foreground">Funding, receipts, and refunds.</div>
           </Link>
           <Link href="/dashboard/claims" className="wh-card p-5 hover:border-primary/40 transition">
             <div className="flex items-center gap-2 text-sm text-muted-foreground"><KeyRound className="h-4 w-4" /> Active claims</div>
@@ -47,10 +78,23 @@ export default async function DashboardPage() {
             <div className="mt-2 text-3xl font-bold">+</div>
             <div className="mt-3 text-xs text-muted-foreground">Add a new WhatsApp Channel to WaveLead.</div>
           </Link>
+          {myLeads.length > 0 && (
+            <div className="wh-card p-5">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> My sponsorship requests</div>
+              <div className="mt-2 text-3xl font-bold">{myLeads.length}</div>
+              <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
+                {myLeads.slice(0, 3).map((l) => (
+                  <li key={l.id}><span className="font-medium text-foreground">{l.channel_name_snapshot}</span> · <span className="uppercase tracking-wide">{l.status}</span></li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
 
         <div className="mt-8 flex flex-wrap gap-2">
           <Link href="/dashboard/channels"><Button variant="outline">My channels</Button></Link>
+          <Link href="/dashboard/promotions"><Button variant="outline">Campaigns</Button></Link>
+          <Link href="/dashboard/billing"><Button variant="outline">Billing</Button></Link>
           <Link href="/dashboard/claims"><Button variant="outline">My claims</Button></Link>
           <Link href="/submit"><Button>Submit a channel</Button></Link>
         </div>

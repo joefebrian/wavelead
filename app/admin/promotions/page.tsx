@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
+import AdminNav from '@/components/layout/AdminNav';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { promotionCampaignService } from '@/lib/services/promotion/campaignService';
@@ -25,6 +26,7 @@ export default async function AdminPromotionsPage({ searchParams }: { searchPara
     <>
       <Header />
       <main className="container py-8 md:py-12 max-w-5xl">
+        <AdminNav active="/admin/promotions" />
         <h1 className="text-3xl font-bold tracking-tight">Admin · Promotions</h1>
         <p className="mt-1 text-muted-foreground">Review and manage sponsored discovery campaigns.</p>
         <div className="mt-4 flex gap-2 flex-wrap">

@@ -27,6 +27,7 @@ export const COLLECTIONS = {
   PAYMENT_REFUNDS: 'payment_refunds',
   FUNDING_FX_RATES: 'funding_fx_rates',
   FUNDING_FX_QUOTES: 'funding_fx_quotes',
+  SPONSORSHIP_LEADS: 'sponsorship_leads',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

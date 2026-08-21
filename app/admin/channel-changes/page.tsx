@@ -3,6 +3,7 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
+import AdminNav from '@/components/layout/AdminNav';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
@@ -42,6 +43,7 @@ export default async function AdminChangeRequestsPage({ searchParams }: { search
     <>
       <Header />
       <main className="container py-8 max-w-5xl">
+        <AdminNav active="/admin/channel-changes" />
         <div className="flex items-baseline justify-between gap-3 flex-wrap">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold">Sensitive channel changes</h1>

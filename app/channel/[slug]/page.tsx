@@ -14,7 +14,7 @@ import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { channelRepo } from '@/lib/repositories/channelRepo';
 import { trackingService, normalizeReferrerDomain, normalizeSource } from '@/lib/services/trackingService';
 import { cookies, headers } from 'next/headers';
-import { ShieldCheck, Users, Share2, ArrowUpRight, Sparkles, BadgeCheck, Flag, KeyRound } from 'lucide-react';
+import { ShieldCheck, Users, Share2, ArrowUpRight, Sparkles, BadgeCheck, Flag, KeyRound, Handshake } from 'lucide-react';
 import type { Metadata } from 'next';
 
 interface Params { slug: string; }
@@ -128,6 +128,9 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
                   <a href={`/go/${channel.slug}?source=channel_profile`} target="_blank" rel="noopener noreferrer">
                     <Button size="lg" className="gap-2">Follow on WhatsApp <ArrowUpRight className="h-4 w-4" /></Button>
                   </a>
+                  <Link href={`/sponsor/${channel.slug}`}>
+                    <Button size="lg" variant="outline" className="gap-2 border-primary/40 text-primary hover:bg-primary/5"><Handshake className="h-4 w-4" /> Sponsor this Channel</Button>
+                  </Link>
                   <Button size="lg" variant="outline" className="gap-2"><Share2 className="h-4 w-4" /> Share</Button>
 
                   {/* M03 Claim / Ownership CTAs */}

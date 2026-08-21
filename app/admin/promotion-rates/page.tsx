@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
+import AdminNav from '@/components/layout/AdminNav';
 import { resolveActorFromCookies, ROLES, rankOf } from '@/lib/auth/rbac';
 import { promotionRateCardRepo } from '@/lib/repositories/promotionRepo';
 import RateCardForm from './RateCardForm';
@@ -18,6 +19,7 @@ export default async function AdminRatesPage() {
     <>
       <Header />
       <main className="container py-8 md:py-12 max-w-4xl">
+        <AdminNav active="/admin/promotion-rates" />
         <h1 className="text-3xl font-bold tracking-tight">Admin · Promotion rates</h1>
         <p className="mt-1 text-muted-foreground">CPM pricing per sponsored placement. Country-specific rates override the global fallback.</p>
 

@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
+import AdminNav from '@/components/layout/AdminNav';
 import { resolveActorFromCookies, rankOf, ROLES } from '@/lib/auth/rbac';
 import { ledgerRepo } from '@/lib/repositories/ledgerRepo';
 
@@ -26,6 +27,7 @@ export default async function AdminLedgerPage({ searchParams }: { searchParams: 
     <div className="min-h-screen flex flex-col">
       <Header />
       <main className="container mx-auto px-4 py-6 max-w-6xl flex-1">
+        <AdminNav active="/admin/ledger" />
         <h1 className="text-2xl font-bold mb-1">Ledger</h1>
         <p className="text-sm text-muted-foreground mb-6">Read-only. Corrections require reversal transactions. Showing up to {limit} rows{truncated ? ' — apply a filter to narrow, or raise ?limit=' : ''}.</p>
         <form className="flex flex-wrap gap-2 mb-4 text-sm">

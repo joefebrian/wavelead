@@ -1,5 +1,6 @@
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
+import AdminNav from '@/components/layout/AdminNav';
 import { resolveActorFromCookies, rankOf, ROLES } from '@/lib/auth/rbac';
 import { redirect } from 'next/navigation';
 import { fxAdminService } from '@/lib/services/fx/fxAdminService';
@@ -26,6 +27,7 @@ export default async function AdminFxRatesPage() {
     <div className="min-h-screen flex flex-col">
       <Header />
       <main className="container mx-auto px-4 py-6 max-w-4xl flex-1">
+        <AdminNav active="/admin/fx-rates" />
         <h1 className="text-2xl font-bold mb-1">FX Rates</h1>
         <p className="text-sm text-muted-foreground mb-6">
           Admin-managed USD → IDR conversion rate used for the Indonesian rupiah <em>equivalent display</em>. This rate does not perform any payment and does not affect campaign USD accounting. Existing locked quotes are never re-priced when a new rate becomes active.
