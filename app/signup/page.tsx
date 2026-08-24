@@ -9,6 +9,7 @@ import Footer from '@/components/layout/Footer';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton';
 
 export default function SignupPage() {
   const [form, setForm] = useState({ display_name: '', email: '', password: '' });
@@ -39,7 +40,10 @@ export default function SignupPage() {
       <main className="container py-16 max-w-md">
         <h1 className="text-3xl font-bold">Create your WaveLead account</h1>
         <p className="text-muted-foreground mt-2">Free forever for discovery. Growth tools available for channel owners.</p>
-        <form onSubmit={submit} className="mt-8 space-y-4">
+        <div className="mt-8">
+          <GoogleAuthButton label="Sign up with Google" />
+        </div>
+        <form onSubmit={submit} className="mt-6 space-y-4">
           <div><Label htmlFor="display_name">Display name</Label><Input id="display_name" required value={form.display_name} onChange={(e) => setForm((f) => ({ ...f, display_name: e.target.value }))} /></div>
           <div><Label htmlFor="email">Email</Label><Input id="email" type="email" required value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} /></div>
           <div><Label htmlFor="password">Password</Label><Input id="password" type="password" required minLength={8} value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} /><p className="text-xs text-muted-foreground mt-1">At least 8 characters.</p></div>

@@ -19,6 +19,7 @@ export interface User {
   preferred_language: string;
   password_hash?: string; // never leaked outside auth service
   auth_providers: string[];
+  google_sub?: string;    // Google-verified stable ID (only set when Google-linked)
   created_at: Date;
   updated_at: Date;
   // Security metadata (M07-security patch)

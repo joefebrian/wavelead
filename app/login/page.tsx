@@ -9,6 +9,7 @@ import Footer from '@/components/layout/Footer';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -41,7 +42,10 @@ export default function LoginPage() {
       <main className="container py-16 max-w-md">
         <h1 className="text-3xl font-bold">Welcome back</h1>
         <p className="text-muted-foreground mt-2">Log in to your WaveLead account.</p>
-        <form onSubmit={submit} className="mt-8 space-y-4">
+        <div className="mt-8">
+          <GoogleAuthButton label="Continue with Google" />
+        </div>
+        <form onSubmit={submit} className="mt-6 space-y-4">
           <div><Label htmlFor="email">Email</Label><Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></div>
           <div><Label htmlFor="password">Password</Label><Input id="password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} /></div>
           <Button className="w-full" disabled={loading}>{loading ? 'Signing in…' : 'Log in'}</Button>

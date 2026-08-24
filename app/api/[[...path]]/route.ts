@@ -91,6 +91,45 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
     if (route === '/auth/logout' && method === 'POST') {
       return clearSessionCookie(applyCors(ok({ loggedOut: true }), request));
     }
+
+    // ---------- Emergent Managed Google Auth ----------
+    // Public endpoints (no session required). The password-change gate whitelist
+    // above already excludes /auth/* prefix — no additional gate change needed.
+    if (route === '/auth/google/start' && method === 'GET') {
+      const { isGoogleAuthEnabled, buildStartUrl } = await import('@/lib/services/auth/emergentGoogleAdapter');
+      if (!isGoogleAuthEnabled()) {
+        return applyCors(fail(404, 'not_found'), request);
+      }
+      // Build absolute callback URL from the current request origin — this makes
+      // the exact same code work on preview AND on wavelead.org with no changes.
+      const origin = request.headers.get('origin')
+        || `${request.headers.get('x-forwarded-proto') || 'https'}://${request.headers.get('host') || ''}`;
+      const callback = `${origin.replace(/\/$/, '')}/auth/google/callback`;
+      const startUrl = buildStartUrl(callback);
+      return NextResponse.redirect(startUrl, 302);
+    }
+    if (route === '/auth/google/exchange' && method === 'POST') {
+      const { isGoogleAuthEnabled, exchangeSessionId, EmergentAuthError } = await import('@/lib/services/auth/emergentGoogleAdapter');
+      const { linkAndIssueSession, GoogleLinkError } = await import('@/lib/services/auth/googleLinkService');
+      if (!isGoogleAuthEnabled()) {
+        return applyCors(fail(404, 'not_found'), request);
+      }
+      const body = await safeJson(request);
+      const sessionId = typeof body.session_id === 'string' ? body.session_id : '';
+      if (!sessionId) return applyCors(fail(400, 'session_id_required'), request);
+      try {
+        const identity = await exchangeSessionId(sessionId);
+        const result = await linkAndIssueSession(identity);
+        const res = applyCors(ok({ user_id: result.user_id, linked: result.linked }), request);
+        return setSessionCookie(res, result.token);
+      } catch (e) {
+        if (e instanceof EmergentAuthError) return applyCors(fail(e.httpStatus, e.code), request);
+        if (e instanceof GoogleLinkError)  return applyCors(fail(e.httpStatus, e.code), request);
+        // Never leak internals to the client.
+        return applyCors(fail(500, 'google_auth_failed'), request);
+      }
+    }
+
     if (route === '/auth/me' && method === 'GET') {
       // No cookie / bad JWT → visitor (200, user:null).
       // Valid JWT but stale session (bumped version OR disabled) → 401 so the client
