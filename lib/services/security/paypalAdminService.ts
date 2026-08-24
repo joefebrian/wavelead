@@ -6,6 +6,7 @@ import { integrationCredentialRepo } from '../../repositories/integrationCredent
 import { securityAuditRepo } from '../../repositories/securityAuditRepo';
 import { encryptString, decryptString, isVaultConfigured } from '../../utils/cryptoVault';
 import { paypalConfigService, apiHostFor } from '../payments/paypalConfigService';
+import { getCanonicalWebhookUrl } from '../../utils/canonicalOrigin';
 import type { Actor, IntegrationCredential, IntegrationEnvironment } from '@/lib/types';
 
 export const paypalAdminUpsertSchema = z.object({
@@ -41,8 +42,9 @@ export const paypalAdminService = {
       live_api_host: apiHostFor('live'),
       active_environment: activeCfg?.environment ?? null,
       active_source: activeCfg?.source ?? null,
-      // Webhook callback URL (server-derived, not client-chosen).
-      webhook_url: `${(process.env.NEXT_PUBLIC_BASE_URL || '').replace(/\/$/, '')}/api/payments/paypal/webhook`,
+      // Webhook callback URL — DETERMINISTIC (derived only from NEXT_PUBLIC_BASE_URL).
+      // Request headers cannot influence this string. See lib/utils/canonicalOrigin.ts.
+      webhook_url: getCanonicalWebhookUrl('/api/payments/paypal/webhook'),
       sandbox,
       live,
     };

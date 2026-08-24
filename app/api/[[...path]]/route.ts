@@ -579,7 +579,13 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
     // ---------- M06.0 PAYMENTS / CAMPAIGN FUNDING ----------
     if (path.length === 4 && path[0] === 'owner' && path[1] === 'promotions' && path[3] === 'funding' && method === 'POST') {
       const { campaignFundingService } = await import('@/lib/services/payments/campaignFundingService');
-      const f = await campaignFundingService.createFundingForCampaign(await resolveActor(request), path[2]);
+      const { resolveTrustedOrigin } = await import('@/lib/utils/canonicalOrigin');
+      // Resolve an origin that the incoming request is allowed to use; if the
+      // effective host isn't in the allowlist we fall back to the configured
+      // canonical origin. This is the ONLY point where request headers touch
+      // PayPal return/cancel URL construction.
+      const trustedOrigin = resolveTrustedOrigin(request.headers);
+      const f = await campaignFundingService.createFundingForCampaign(await resolveActor(request), path[2], trustedOrigin);
       return applyCors(ok({ funding: { id: f.id, status: f.status, approve_url: f.approve_url, amount_minor: f.amount_minor, currency: f.currency } }), request);
     }
     if (path.length === 4 && path[0] === 'owner' && path[1] === 'promotions' && path[3] === 'funding-summary' && method === 'GET') {

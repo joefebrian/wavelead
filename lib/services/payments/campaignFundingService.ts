@@ -28,7 +28,7 @@ export const campaignFundingService = {
    * Create a PayPal order for the campaign’s approved budget. Server sets the
    * amount from the campaign record — client input is ignored.
    */
-  async createFundingForCampaign(actor: Actor | null, campaign_id: string): Promise<PaymentFundingOrder> {
+  async createFundingForCampaign(actor: Actor | null, campaign_id: string, requestOrigin?: string): Promise<PaymentFundingOrder> {
     if (!actor) throw new HttpError(401, 'Authentication required');
     const camp = await promotionCampaignRepo.findById(campaign_id);
     if (!camp) throw new HttpError(404, 'Campaign not found');
@@ -47,7 +47,9 @@ export const campaignFundingService = {
 
     const id = uuidv4();
     const now = new Date();
-    const base = (process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+    // Allowlisted request origin (already validated by the route handler) wins;
+    // fall back to configured canonical origin. See lib/utils/canonicalOrigin.ts.
+    const base = (requestOrigin || process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
     const return_url = `${base}/dashboard/promotions/${campaign_id}?funding=${id}&status=paid`;
     const cancel_url = `${base}/dashboard/promotions/${campaign_id}?funding=${id}&status=cancelled`;
     const provider = getPaymentProvider();
