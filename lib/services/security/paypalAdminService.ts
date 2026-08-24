@@ -3,10 +3,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { HttpError, hasAtLeastRole, ROLES } from '../../auth/rbac';
 import { integrationCredentialRepo } from '../../repositories/integrationCredentialRepo';
+import { integrationProviderSettingsRepo } from '../../repositories/integrationProviderSettingsRepo';
 import { securityAuditRepo } from '../../repositories/securityAuditRepo';
 import { encryptString, decryptString, isVaultConfigured } from '../../utils/cryptoVault';
-import { paypalConfigService, apiHostFor } from '../payments/paypalConfigService';
-import { getCanonicalWebhookUrl } from '../../utils/canonicalOrigin';
+import { paypalConfigService, apiHostFor, readActiveEnvironment } from '../payments/paypalConfigService';
+import { getCanonicalWebhookUrl, getConfiguredOrigin } from '../../utils/canonicalOrigin';
 import type { Actor, IntegrationCredential, IntegrationEnvironment } from '@/lib/types';
 
 export const paypalAdminUpsertSchema = z.object({
@@ -23,25 +24,46 @@ export const paypalAdminTestSchema = z.object({
   client_secret: z.string().min(10).max(500).optional(),
 });
 
-function requireSuperAdmin(actor: Actor) {
+// M07 activation patch — dedicated schemas for the environment switch endpoints.
+export const paypalActivateLiveSchema = z.object({
+  confirm: z.string().optional(),   // must be exactly 'ENABLE LIVE PAYMENTS'
+});
+export const paypalSwitchToSandboxSchema = z.object({
+  confirm: z.string().optional(),   // must be exactly 'SWITCH TO SANDBOX'
+});
+
+// Canonical production origin required before enabling Live payments.
+export const CANONICAL_LIVE_ORIGIN = 'https://wavelead.org';
+export const CONFIRM_ENABLE_LIVE = 'ENABLE LIVE PAYMENTS';
+export const CONFIRM_SWITCH_SANDBOX = 'SWITCH TO SANDBOX';
+
+function requireSuperAdmin(actor: Actor | null) {
+  if (!actor) throw new HttpError(401, 'Unauthorized');
   if (!hasAtLeastRole(actor.user, ROLES.SUPER_ADMIN)) throw new HttpError(403, 'Super Admin privileges required');
 }
 
 export const paypalAdminService = {
   async currentStatus(actor: Actor) {
     requireSuperAdmin(actor);
-    const [sandbox, live, activeCfg] = await Promise.all([
+    const [sandbox, live, activeCfg, activeEnv] = await Promise.all([
       paypalConfigService.status('sandbox'),
       paypalConfigService.status('live'),
       paypalConfigService.resolveActive(),
+      readActiveEnvironment(),
     ]);
     return {
       vault_key_configured: isVaultConfigured(),
       node_env: process.env.NODE_ENV || 'development',
       sandbox_api_host: apiHostFor('sandbox'),
       live_api_host: apiHostFor('live'),
+      // Persisted state — the raw value the admin last chose (or default).
+      persisted_active_environment: activeEnv.environment,
+      persisted_source: activeEnv.source, // 'db' | 'env' | 'default'
+      // Effective state after fail-closed + preview safety guards.
       active_environment: activeCfg?.environment ?? null,
       active_source: activeCfg?.source ?? null,
+      real_money_enabled: activeCfg?.environment === 'live',
+      canonical_origin: getConfiguredOrigin(),
       // Webhook callback URL — DETERMINISTIC (derived only from NEXT_PUBLIC_BASE_URL).
       // Request headers cannot influence this string. See lib/utils/canonicalOrigin.ts.
       webhook_url: getCanonicalWebhookUrl('/api/payments/paypal/webhook'),
@@ -64,10 +86,11 @@ export const paypalAdminService = {
 
     const existing = await integrationCredentialRepo.findByProviderEnv('paypal', environment);
 
-    // Explicit-confirmation gate for LIVE activation.
+    // Explicit-confirmation gate for LIVE credential save (kept for backward
+    // compat with existing UI; the *activation switch* itself is separate).
     const enablingLive = environment === 'live' && (!existing || !existing.client_secret_ciphertext);
-    if (enablingLive && confirm_live !== 'ENABLE LIVE PAYMENTS') {
-      throw new HttpError(400, 'Live activation requires typing "ENABLE LIVE PAYMENTS" in the confirmation field.');
+    if (enablingLive && confirm_live !== CONFIRM_ENABLE_LIVE) {
+      throw new HttpError(400, `Live activation requires typing "${CONFIRM_ENABLE_LIVE}" in the confirmation field.`);
     }
 
     // Determine the ciphertext to persist.
@@ -80,7 +103,7 @@ export const paypalAdminService = {
       throw new HttpError(400, 'client_secret is required for the first-time save of this environment.');
     }
 
-    // For LIVE activation, require full credentials + a passing connection test.
+    // For LIVE credential save, require full credentials + a passing connection test.
     if (enablingLive) {
       const secretPlain = client_secret || (existing ? decryptString(existing.client_secret_ciphertext) : '');
       const test = await paypalConfigService.testConnection({ environment: 'live', client_id, client_secret: secretPlain });
@@ -185,5 +208,143 @@ export const paypalAdminService = {
       metadata: { environment: envMode, imported_from: 'env' },
     });
     return { imported: true, environment: envMode };
+  },
+
+  // =========================================================================
+  // M07 PayPal-activation patch — DB-persisted active_environment switching.
+  //
+  // These two endpoints are the ONLY way to change the active PayPal environ-
+  // ment. They both:
+  //   * Require Super Admin.
+  //   * Require an exact confirmation phrase.
+  //   * Persist a single atomic row in `integration_provider_settings`.
+  //   * Re-resolve the effective config and return it — the client must not
+  //     display "activated" unless the effective environment matches.
+  //   * Emit a secret-free audit event (PAYPAL_LIVE_ENABLED / PAYPAL_SANDBOX_ENABLED).
+  // =========================================================================
+
+  async activateLive(actor: Actor, input: unknown) {
+    requireSuperAdmin(actor);
+    if (!isVaultConfigured()) {
+      throw new HttpError(500, 'INTEGRATION_SECRETS_KEY not configured on server — cannot activate Live payments');
+    }
+    const parsed = paypalActivateLiveSchema.safeParse(input);
+    if (!parsed.success) throw new HttpError(400, `Invalid input: ${parsed.error.issues[0]?.message || 'invalid'}`);
+    const { confirm } = parsed.data;
+
+    // GUARD 1 — Production only.
+    if (process.env.NODE_ENV !== 'production') {
+      throw new HttpError(400, 'Live PayPal payments can only be activated in the production environment.');
+    }
+
+    // GUARD 2 — Canonical origin locked to https://wavelead.org.
+    const origin = getConfiguredOrigin();
+    if (origin !== CANONICAL_LIVE_ORIGIN) {
+      throw new HttpError(400, `Live activation blocked: canonical origin must be exactly ${CANONICAL_LIVE_ORIGIN} (got ${origin}).`);
+    }
+
+    // GUARD 3 — Exact confirmation phrase.
+    if (confirm !== CONFIRM_ENABLE_LIVE) {
+      throw new HttpError(400, `Live activation requires the exact phrase "${CONFIRM_ENABLE_LIVE}".`);
+    }
+
+    // GUARD 4 — Live vault present + complete.
+    const liveVault = await integrationCredentialRepo.findByProviderEnv('paypal', 'live');
+    if (!liveVault) throw new HttpError(400, 'Live activation blocked: Live PayPal credentials have not been saved yet.');
+    if (!liveVault.client_id) throw new HttpError(400, 'Live activation blocked: Live Client ID missing.');
+    if (!liveVault.client_secret_ciphertext) throw new HttpError(400, 'Live activation blocked: Live Client Secret missing.');
+    if (!liveVault.webhook_id) throw new HttpError(400, 'Live activation blocked: Live Webhook ID missing.');
+
+    // GUARD 5 — Latest live connection test must be success.
+    if (liveVault.last_connection_test_status !== 'success') {
+      throw new HttpError(400, 'Live activation blocked: run a successful Live connection test first.');
+    }
+
+    // Snapshot previous env for audit + rollback.
+    const previous = await readActiveEnvironment();
+
+    // GUARD 6 — Verify we can actually decrypt the ciphertext (fail closed).
+    try {
+      const secret = decryptString(liveVault.client_secret_ciphertext);
+      if (!secret) throw new Error('empty');
+    } catch {
+      throw new HttpError(400, 'Live activation blocked: Live Client Secret cannot be decrypted (corrupted or key mismatch).');
+    }
+
+    // Atomic upsert.
+    await integrationProviderSettingsRepo.setActiveEnvironment('paypal', 'live', actor.user.id);
+
+    // Re-resolve and confirm effective state actually flipped to live.
+    const resolved = await paypalConfigService.resolveActive();
+    if (!resolved || resolved.environment !== 'live') {
+      // Roll back to the previous env so we never leave the settings row in an
+      // effective state the resolver cannot honour.
+      await integrationProviderSettingsRepo.setActiveEnvironment(
+        'paypal',
+        previous.environment,
+        actor.user.id,
+      );
+      throw new HttpError(500, 'Live activation could not be confirmed — resolver did not return a live configuration. Settings rolled back.');
+    }
+
+    await securityAuditRepo.record({
+      actor_user_id: actor.user.id,
+      actor_email: actor.user.email,
+      event_type: 'PAYPAL_LIVE_ENABLED',
+      metadata: {
+        previous_environment: previous.environment,
+        new_environment: 'live',
+        actor_user_id: actor.user.id,
+        source: 'admin_activation',
+      },
+    });
+
+    return {
+      ok: true as const,
+      active_environment: resolved.environment,
+      api_host: resolved.api_host,
+      real_money_enabled: true,
+      webhook_configured: !!resolved.webhook_id,
+      credential_source: resolved.source,
+    };
+  },
+
+  async switchToSandbox(actor: Actor, input: unknown) {
+    requireSuperAdmin(actor);
+    const parsed = paypalSwitchToSandboxSchema.safeParse(input);
+    if (!parsed.success) throw new HttpError(400, `Invalid input: ${parsed.error.issues[0]?.message || 'invalid'}`);
+    const { confirm } = parsed.data;
+
+    if (confirm !== CONFIRM_SWITCH_SANDBOX) {
+      throw new HttpError(400, `Sandbox rollback requires the exact phrase "${CONFIRM_SWITCH_SANDBOX}".`);
+    }
+
+    const previous = await readActiveEnvironment();
+
+    // Atomic upsert. NEVER touches vault rows, webhook IDs, ledger, funding
+    // orders, or refunds. Just flips the pointer.
+    await integrationProviderSettingsRepo.setActiveEnvironment('paypal', 'sandbox', actor.user.id);
+
+    const resolved = await paypalConfigService.resolveActive();
+
+    await securityAuditRepo.record({
+      actor_user_id: actor.user.id,
+      actor_email: actor.user.email,
+      event_type: 'PAYPAL_SANDBOX_ENABLED',
+      metadata: {
+        previous_environment: previous.environment,
+        new_environment: 'sandbox',
+        actor_user_id: actor.user.id,
+        source: 'admin_rollback',
+      },
+    });
+
+    return {
+      ok: true as const,
+      active_environment: resolved?.environment ?? 'sandbox',
+      api_host: apiHostFor('sandbox'),
+      real_money_enabled: false,
+      credential_source: resolved?.source ?? null,
+    };
   },
 };

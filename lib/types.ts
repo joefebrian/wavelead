@@ -760,6 +760,19 @@ export interface IntegrationCredential {
   updated_at: Date;
 }
 
+// M07-security PayPal-activation patch — DB-persisted "which environment is
+// currently ACTIVE for outgoing calls". One canonical row per provider,
+// enforced by a unique index on `provider`. This document NEVER stores
+// credentials or secrets — those remain exclusively in `integration_credentials`.
+export interface IntegrationProviderSettings {
+  id: string;
+  provider: IntegrationProvider;
+  active_environment: IntegrationEnvironment;
+  updated_by: string;              // user id of the super_admin who last changed it
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface SecurityAuditEvent {
   id: string;
   actor_user_id: string | null;

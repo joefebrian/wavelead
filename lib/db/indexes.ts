@@ -155,5 +155,9 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { owner_user_id: 1, created_at: -1 }, name: 'by_owner_time' },
       { key: { provider_refund_id: 1 }, unique: true, name: 'uniq_provider_refund', partialFilterExpression: { provider_refund_id: { $type: 'string' } } },
     ]),
+    // M07-security PayPal-activation patch — exactly one settings row per provider.
+    db.collection(COLLECTIONS.INTEGRATION_PROVIDER_SETTINGS).createIndexes([
+      { key: { provider: 1 }, unique: true, name: 'uniq_provider' },
+    ]),
   ]);
 }

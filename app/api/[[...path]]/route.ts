@@ -805,8 +805,9 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const { fxRateProvider } = await import('@/lib/services/fx/fxRateProvider');
       const { PAYPAL_CAPABILITIES, LOCAL_PAYMENT_CAPABILITIES } = await import('@/lib/services/payments/paymentProviderCapabilities');
       // M07-security: enrich PayPal readiness with vault/env source, mode, connection test.
-      const { paypalConfigService } = await import('@/lib/services/payments/paypalConfigService');
+      const { paypalConfigService, apiHostFor, readActiveEnvironment } = await import('@/lib/services/payments/paypalConfigService');
       const activeCfg = await paypalConfigService.resolveActive();
+      const persistedEnv = await readActiveEnvironment();
       const activeMode = activeCfg?.environment ?? null;
       const paypalStatus = activeCfg ? 'configured' : 'not_configured';
       const activeEnvStatus = activeMode ? await paypalConfigService.status(activeMode) : null;
@@ -825,7 +826,10 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
             status: paypalStatus,
             configured: !!activeCfg,
             mode: activeMode,
+            api_host: activeCfg?.api_host ?? apiHostFor(persistedEnv.environment),
             credential_source: activeCfg?.source ?? null,
+            environment_source: persistedEnv.source,          // 'db' | 'env' | 'default'
+            persisted_environment: persistedEnv.environment,  // what the admin last chose
             webhook_configured: !!activeCfg?.webhook_id,
             last_connection_test_status: activeEnvStatus?.last_connection_test_status ?? null,
             last_connection_test_at: activeEnvStatus?.last_connection_test_at ?? null,
@@ -1147,6 +1151,23 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const actor = await resolveActor(request);
       requireRole(actor, ROLES.SUPER_ADMIN);
       const res = await paypalAdminService.importFromEnv(actor!);
+      return applyCors(ok(res), request);
+    }
+    // M07 activation patch — DB-persisted active_environment switching.
+    if (route === '/admin/settings/paypal/activate-live' && method === 'POST') {
+      const { paypalAdminService } = await import('@/lib/services/security/paypalAdminService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.SUPER_ADMIN);
+      const body = await safeJson(request);
+      const res = await paypalAdminService.activateLive(actor!, body);
+      return applyCors(ok(res), request);
+    }
+    if (route === '/admin/settings/paypal/switch-to-sandbox' && method === 'POST') {
+      const { paypalAdminService } = await import('@/lib/services/security/paypalAdminService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.SUPER_ADMIN);
+      const body = await safeJson(request);
+      const res = await paypalAdminService.switchToSandbox(actor!, body);
       return applyCors(ok(res), request);
     }
 

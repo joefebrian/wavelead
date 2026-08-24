@@ -29,6 +29,7 @@ export const COLLECTIONS = {
   FUNDING_FX_QUOTES: 'funding_fx_quotes',
   SPONSORSHIP_LEADS: 'sponsorship_leads',
   INTEGRATION_CREDENTIALS: 'integration_credentials',
+  INTEGRATION_PROVIDER_SETTINGS: 'integration_provider_settings',
   SECURITY_AUDIT_EVENTS: 'security_audit_events',
 } as const;
 
