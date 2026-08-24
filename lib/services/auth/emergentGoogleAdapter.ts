@@ -20,9 +20,16 @@ import { z } from 'zod';
 
 // -------- Contract knobs (env-driven so we never redeploy for a URL change) --------
 function cfg() {
+  const host = (process.env.EMERGENT_AUTH_HOST || 'https://demobackend.emergentagent.com').replace(/\/+$/, '');
+  // Start URL: verified via runtime probe on 2026-08-24 — this endpoint 302s to
+  // Google OAuth consent (scope=openid+email+profile) and, after consent, 302s
+  // back to <callback>?session_id=... (or #session_id=...) for one-time redemption.
+  const startPath = process.env.EMERGENT_AUTH_START_PATH || '/auth/v1/env/oauth';
+  // Optional full-override env; wins over host+startPath composition.
+  const startUrlOverride = process.env.EMERGENT_AUTH_START_URL || '';
   return {
-    startUrl: (process.env.EMERGENT_AUTH_START_URL || 'https://auth.emergentagent.com/').replace(/\/*$/, '/'),
-    exchangeHost: (process.env.EMERGENT_AUTH_HOST || 'https://demobackend.emergentagent.com').replace(/\/+$/, ''),
+    startUrl: (startUrlOverride || `${host}${startPath}`).replace(/\/*$/, ''),
+    exchangeHost: host,
     exchangePath: process.env.EMERGENT_AUTH_SESSION_PATH || '/auth/v1/env/oauth/session-data',
     // Comma-separated list of methods to try in order (some Emergent envs are GET, some POST).
     exchangeMethods: (process.env.EMERGENT_AUTH_SESSION_METHOD || 'POST,GET').split(',').map((m) => m.trim().toUpperCase()),

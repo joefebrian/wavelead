@@ -48,13 +48,13 @@ afterAll(async () => {
 });
 
 describe('M07-google §A — API surface (feature flag + endpoint semantics)', () => {
-  it('/api/auth/google/start returns 302 to auth.emergentagent.com when flag is on', async () => {
+  it('/api/auth/google/start returns 302 to the Emergent oauth start endpoint when flag is on', async () => {
     const r = await api('/auth/google/start');
     expect(r.status).toBe(302);
     const loc = r.headers.get('location') || '';
-    expect(loc.startsWith('https://auth.emergentagent.com/')).toBe(true);
-    // Callback URL must be present in the redirect param, absolute and on the current origin.
-    expect(loc).toMatch(/redirect=/);
+    // Correct start URL is on demobackend.emergentagent.com/auth/v1/env/oauth (verified 2026-08-24)
+    expect(loc.startsWith('https://demobackend.emergentagent.com/auth/v1/env/oauth')).toBe(true);
+    expect(loc).toMatch(/[?&]redirect=/);
     expect(decodeURIComponent(loc.split('redirect=')[1] || '')).toMatch(/\/auth\/google\/callback$/);
   });
 
