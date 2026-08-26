@@ -181,6 +181,9 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { buyer_user_id: 1, created_at: -1 }, name: 'by_buyer_time' },
       { key: { status: 1, created_at: -1 }, name: 'by_status_time' },
       { key: { payment_reference_normalized: 1 }, name: 'by_payment_ref', partialFilterExpression: { payment_reference_normalized: { $type: 'string' } } },
+      // B1.1.2 — cross-order payment identity uniqueness. A single real-world
+      // payment (method + normalized reference) may fund at most one order.
+      { key: { payment_method: 1, payment_reference_normalized: 1 }, unique: true, name: 'uniq_payment_identity', partialFilterExpression: { payment_method: { $type: 'string' }, payment_reference_normalized: { $type: 'string' } } },
     ]),
     db.collection(COLLECTIONS.MARKETPLACE_FINANCIAL_EVENTS).createIndexes([
       { key: { id: 1 }, unique: true, name: 'uniq_id' },

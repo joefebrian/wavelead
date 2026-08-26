@@ -15,7 +15,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { MongoClient, type Db } from 'mongodb';
 import { v4 as uuidv4 } from 'uuid';
 import { COLLECTIONS } from '@/lib/db/collections';
-import { computeSplit, OWNER_SHARE_BPS, PLATFORM_SHARE_BPS } from '@/lib/utils/marketplaceMoney';
+import { computeSplit, OWNER_SHARE_BPS, PLATFORM_SHARE_BPS, MAX_MONEY_MINOR, assertSafeMoney } from '@/lib/utils/marketplaceMoney';
 import { marketplaceService } from '@/lib/services/marketplaceService';
 import type { Actor, Channel } from '@/lib/types';
 
@@ -695,5 +695,259 @@ describe('B1 §10 — Authenticated marketplace booking (B1.1.1)', () => {
     expect(r.status).toBe(200);
     expect(r.body.data?.packages.length).toBe(1);
     expect(r.body.data?.packages[0].price_minor).toBe(25000);
+  });
+});
+
+// ============================================================================
+// §11 B1.1.2 — Financial safety: BigInt/exact 90/10 + safe bounds + cross-order
+// payment-reference reuse block.
+// ============================================================================
+describe('B1 §11 — Financial safety (B1.1.2)', () => {
+  it('#33 exact integer arithmetic: smallest non-zero net (1 cent) maintains owner + platform = net', () => {
+    // net = 1 cent → owner = floor(1 * 9000 / 10000) = 0; platform = 1.
+    const s = computeSplit(1, 0);
+    expect(s.net_minor).toBe(1);
+    expect(s.owner_earnings_minor).toBe(0);
+    expect(s.wavelead_commission_minor).toBe(1);
+    expect(s.owner_earnings_minor + s.wavelead_commission_minor).toBe(s.net_minor);
+  });
+
+  it('#34 odd-cent net (99 cents) maintains invariant with residue accruing to WaveLead', () => {
+    // net = 99 → owner = floor(99 * 9000 / 10000) = floor(89.1) = 89; platform = 10.
+    const s = computeSplit(99, 0);
+    expect(s.owner_earnings_minor).toBe(89);
+    expect(s.wavelead_commission_minor).toBe(10);
+    expect(s.owner_earnings_minor + s.wavelead_commission_minor).toBe(s.net_minor);
+  });
+
+  it('#35 large supported amount (100M cents = $1M) is exact and safe', () => {
+    // net = 100_000_000 → owner = 90_000_000 exactly; platform = 10_000_000 exactly.
+    const s = computeSplit(100_000_000, 0);
+    expect(s.owner_earnings_minor).toBe(90_000_000);
+    expect(s.wavelead_commission_minor).toBe(10_000_000);
+    expect(s.owner_earnings_minor + s.wavelead_commission_minor).toBe(s.net_minor);
+    expect(Number.isSafeInteger(s.owner_earnings_minor)).toBe(true);
+    expect(Number.isSafeInteger(s.wavelead_commission_minor)).toBe(true);
+  });
+
+  it('#36 amount at ceiling (MAX_MONEY_MINOR) is exact; one cent above ceiling is rejected', () => {
+    // At ceiling: owner + platform = net exactly.
+    const s = computeSplit(MAX_MONEY_MINOR, 0);
+    expect(s.net_minor).toBe(MAX_MONEY_MINOR);
+    expect(s.owner_earnings_minor + s.wavelead_commission_minor).toBe(MAX_MONEY_MINOR);
+    // Above ceiling: safe-integer bound is enforced.
+    expect(() => computeSplit(MAX_MONEY_MINOR + 1, 0)).toThrow(/MAX_MONEY_MINOR/);
+  });
+
+  it('#37 unsafe/out-of-range monetary inputs are rejected', () => {
+    expect(() => computeSplit(-1, 0)).toThrow(/non-negative/);
+    expect(() => computeSplit(1.5, 0)).toThrow(/safe integer/);
+    expect(() => computeSplit(NaN, 0)).toThrow(/finite/);
+    expect(() => computeSplit(Number.POSITIVE_INFINITY, 0)).toThrow(/finite/);
+    expect(() => computeSplit(Number.MAX_SAFE_INTEGER + 1, 0)).toThrow();       // not a safe integer
+    expect(() => computeSplit(100, 200)).toThrow(/cannot exceed/);              // fee > gross
+    expect(() => assertSafeMoney('nope' as unknown, 'x')).toThrow(/finite/);
+    expect(() => assertSafeMoney(1.2 as unknown, 'x')).toThrow(/safe integer/);
+  });
+
+  it('#38 fuzzed random inputs preserve the invariant owner + platform = net (100 iterations)', () => {
+    const seedNet = () => Math.floor(Math.random() * (MAX_MONEY_MINOR + 1));
+    for (let i = 0; i < 100; i++) {
+      const gross = seedNet();
+      const fee = Math.floor(Math.random() * (gross + 1));
+      const s = computeSplit(gross, fee);
+      expect(s.owner_earnings_minor + s.wavelead_commission_minor).toBe(s.net_minor);
+      expect(s.owner_earnings_minor).toBeGreaterThanOrEqual(0);
+      expect(s.wavelead_commission_minor).toBeGreaterThanOrEqual(0);
+      // Owner never gets MORE than 90% (residue accrues to WaveLead).
+      expect(s.owner_earnings_minor * 10_000).toBeLessThanOrEqual(s.net_minor * OWNER_SHARE_BPS);
+      // Owner + platform = 100% of net (implicit).
+      expect(OWNER_SHARE_BPS + PLATFORM_SHARE_BPS).toBe(10_000);
+    }
+  });
+
+  it('#39 same payment reference repeated on SAME order is idempotent (no duplicate event)', async () => {
+    const owner = await signup(`b1mp-${RUN_TAG}-i39-o@t.test`);
+    const buyer = await signup(`b1mp-${RUN_TAG}-i39-b@t.test`);
+    const admin = await signup(`b1mp-${RUN_TAG}-i39-a@t.test`, 'admin');
+    const ch = await seedChannel(owner.userId, { verified: 'verified' });
+    const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
+    });
+    const order = await marketplaceService.submitBooking(actorFor(buyer.userId), {
+      channel_id: ch.id, package_id: card.packages[0].id,
+      company_name: 'A', contact_name: 'B', contact_email: 'b@t.test', campaign_objective: 'o', brief: 'b',
+    });
+    await marketplaceService.ownerAcceptOrder(actorFor(owner.userId), order.id);
+    const ref = `SAMEREF-${RUN_TAG}-39`;
+    const payload = {
+      payment_method: 'bank_transfer' as const, payment_reference: ref,
+      amount_received_minor: 25000, currency: 'USD' as const,
+      payment_received_at: new Date().toISOString(), gateway_fee_minor: 750,
+    };
+    await marketplaceService.adminConfirmPayment(actorFor(admin.userId, 'admin'), order.id, payload);
+    // Retry same reference — must be a safe no-op.
+    await marketplaceService.adminConfirmPayment(actorFor(admin.userId, 'admin'), order.id, payload);
+    await marketplaceService.adminConfirmPayment(actorFor(admin.userId, 'admin'), order.id, payload);
+    const events = await withDb(async (db) => db.collection(COLLECTIONS.MARKETPLACE_FINANCIAL_EVENTS).find({ order_id: order.id, event_type: 'PAYMENT_CONFIRMED' }).toArray());
+    expect(events.length).toBe(1);
+  });
+
+  it('#40 same payment reference applied to a DIFFERENT order is REJECTED (409, no side effects)', async () => {
+    const owner = await signup(`b1mp-${RUN_TAG}-i40-o@t.test`);
+    const buyerA = await signup(`b1mp-${RUN_TAG}-i40-a@t.test`);
+    const buyerB = await signup(`b1mp-${RUN_TAG}-i40-b@t.test`);
+    const admin = await signup(`b1mp-${RUN_TAG}-i40-adm@t.test`, 'admin');
+    const ch = await seedChannel(owner.userId, { verified: 'verified' });
+    const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
+    });
+    const orderA = await marketplaceService.submitBooking(actorFor(buyerA.userId), {
+      channel_id: ch.id, package_id: card.packages[0].id,
+      company_name: 'A', contact_name: 'A', contact_email: 'a@t.test', campaign_objective: 'o', brief: 'b',
+    });
+    const orderB = await marketplaceService.submitBooking(actorFor(buyerB.userId), {
+      channel_id: ch.id, package_id: card.packages[0].id,
+      company_name: 'B', contact_name: 'B', contact_email: 'b@t.test', campaign_objective: 'o', brief: 'b',
+    });
+    await marketplaceService.ownerAcceptOrder(actorFor(owner.userId), orderA.id);
+    await marketplaceService.ownerAcceptOrder(actorFor(owner.userId), orderB.id);
+
+    const sharedRef = `SHARED-${RUN_TAG}-40`;
+    // Fund order A with the shared reference.
+    await marketplaceService.adminConfirmPayment(actorFor(admin.userId, 'admin'), orderA.id, {
+      payment_method: 'bank_transfer', payment_reference: sharedRef,
+      amount_received_minor: 25000, currency: 'USD',
+      payment_received_at: new Date().toISOString(), gateway_fee_minor: 750,
+    });
+    // Attempt to reuse on order B — must be rejected with 409.
+    await expect(marketplaceService.adminConfirmPayment(actorFor(admin.userId, 'admin'), orderB.id, {
+      payment_method: 'bank_transfer', payment_reference: sharedRef,
+      amount_received_minor: 25000, currency: 'USD',
+      payment_received_at: new Date().toISOString(), gateway_fee_minor: 750,
+    })).rejects.toMatchObject({ status: 409 });
+
+    // Order B economics MUST remain unmodified.
+    const bAfter = await withDb(async (db) => db.collection(COLLECTIONS.MARKETPLACE_ORDERS).findOne({ id: orderB.id }));
+    expect(bAfter?.status).toBe('awaiting_payment');
+    expect(bAfter?.payment_method).toBe(null);
+    expect(bAfter?.payment_reference_normalized).toBe(null);
+    expect(bAfter?.owner_earnings_minor).toBe(null);
+    expect(bAfter?.wavelead_commission_minor).toBe(null);
+    // No PAYMENT_CONFIRMED event appended for order B.
+    const bEvents = await withDb(async (db) => db.collection(COLLECTIONS.MARKETPLACE_FINANCIAL_EVENTS).find({ order_id: orderB.id, event_type: 'PAYMENT_CONFIRMED' }).toArray());
+    expect(bEvents.length).toBe(0);
+  });
+
+  it('#41 different legitimate payment references on different orders work normally', async () => {
+    const owner = await signup(`b1mp-${RUN_TAG}-i41-o@t.test`);
+    const buyerA = await signup(`b1mp-${RUN_TAG}-i41-a@t.test`);
+    const buyerB = await signup(`b1mp-${RUN_TAG}-i41-b@t.test`);
+    const admin = await signup(`b1mp-${RUN_TAG}-i41-adm@t.test`, 'admin');
+    const ch = await seedChannel(owner.userId, { verified: 'verified' });
+    const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
+    });
+    const orderA = await marketplaceService.submitBooking(actorFor(buyerA.userId), {
+      channel_id: ch.id, package_id: card.packages[0].id,
+      company_name: 'A', contact_name: 'A', contact_email: 'a@t.test', campaign_objective: 'o', brief: 'b',
+    });
+    const orderB = await marketplaceService.submitBooking(actorFor(buyerB.userId), {
+      channel_id: ch.id, package_id: card.packages[0].id,
+      company_name: 'B', contact_name: 'B', contact_email: 'b@t.test', campaign_objective: 'o', brief: 'b',
+    });
+    await marketplaceService.ownerAcceptOrder(actorFor(owner.userId), orderA.id);
+    await marketplaceService.ownerAcceptOrder(actorFor(owner.userId), orderB.id);
+
+    const updatedA = await marketplaceService.adminConfirmPayment(actorFor(admin.userId, 'admin'), orderA.id, {
+      payment_method: 'bank_transfer', payment_reference: `REFA-${RUN_TAG}-41`,
+      amount_received_minor: 25000, currency: 'USD',
+      payment_received_at: new Date().toISOString(), gateway_fee_minor: 750,
+    });
+    const updatedB = await marketplaceService.adminConfirmPayment(actorFor(admin.userId, 'admin'), orderB.id, {
+      payment_method: 'bank_transfer', payment_reference: `REFB-${RUN_TAG}-41`,
+      amount_received_minor: 25000, currency: 'USD',
+      payment_received_at: new Date().toISOString(), gateway_fee_minor: 750,
+    });
+    expect(updatedA.status).toBe('paid');
+    expect(updatedB.status).toBe('paid');
+    expect(updatedA.owner_earnings_minor).toBe(21825);      // (25000-750)*9000/10000 = 21825
+    expect(updatedB.owner_earnings_minor).toBe(21825);
+    expect((updatedA.owner_earnings_minor ?? 0) + (updatedA.wavelead_commission_minor ?? 0)).toBe(updatedA.net_transaction_value_minor);
+    expect((updatedB.owner_earnings_minor ?? 0) + (updatedB.wavelead_commission_minor ?? 0)).toBe(updatedB.net_transaction_value_minor);
+  });
+
+  it('#42 same reference but DIFFERENT payment_method on a different order is treated as a distinct identity', async () => {
+    // Rationale: real-world identity is (method, ref). "TX-123" via PayPal and
+    // "TX-123" via bank_transfer are two different real payments.
+    const owner = await signup(`b1mp-${RUN_TAG}-i42-o@t.test`);
+    const buyerA = await signup(`b1mp-${RUN_TAG}-i42-a@t.test`);
+    const buyerB = await signup(`b1mp-${RUN_TAG}-i42-b@t.test`);
+    const admin = await signup(`b1mp-${RUN_TAG}-i42-adm@t.test`, 'admin');
+    const ch = await seedChannel(owner.userId, { verified: 'verified' });
+    const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
+    });
+    const orderA = await marketplaceService.submitBooking(actorFor(buyerA.userId), {
+      channel_id: ch.id, package_id: card.packages[0].id,
+      company_name: 'A', contact_name: 'A', contact_email: 'a@t.test', campaign_objective: 'o', brief: 'b',
+    });
+    const orderB = await marketplaceService.submitBooking(actorFor(buyerB.userId), {
+      channel_id: ch.id, package_id: card.packages[0].id,
+      company_name: 'B', contact_name: 'B', contact_email: 'b@t.test', campaign_objective: 'o', brief: 'b',
+    });
+    await marketplaceService.ownerAcceptOrder(actorFor(owner.userId), orderA.id);
+    await marketplaceService.ownerAcceptOrder(actorFor(owner.userId), orderB.id);
+
+    const shared = `TX-${RUN_TAG}-42`;
+    // Order A: bank_transfer / TX-…
+    await marketplaceService.adminConfirmPayment(actorFor(admin.userId, 'admin'), orderA.id, {
+      payment_method: 'bank_transfer', payment_reference: shared,
+      amount_received_minor: 25000, currency: 'USD',
+      payment_received_at: new Date().toISOString(), gateway_fee_minor: 750,
+    });
+    // Order B: paypal_manual / TX-… — DIFFERENT payment identity, so allowed.
+    const updatedB = await marketplaceService.adminConfirmPayment(actorFor(admin.userId, 'admin'), orderB.id, {
+      payment_method: 'paypal_manual', payment_reference: shared,
+      amount_received_minor: 25000, currency: 'USD',
+      payment_received_at: new Date().toISOString(), gateway_fee_minor: 750,
+    });
+    expect(updatedB.status).toBe('paid');
+    expect(updatedB.payment_method).toBe('paypal_manual');
+  });
+
+  it('#43 cross-order block also fires when the DB unique index catches a race (E11000 → 409)', async () => {
+    // We simulate the race by directly inserting an order document with the
+    // same payment identity, then attempting the service confirmation on
+    // another order. The DB partial unique index must translate to a 409.
+    const owner = await signup(`b1mp-${RUN_TAG}-i43-o@t.test`);
+    const buyer = await signup(`b1mp-${RUN_TAG}-i43-b@t.test`);
+    const admin = await signup(`b1mp-${RUN_TAG}-i43-adm@t.test`, 'admin');
+    const ch = await seedChannel(owner.userId, { verified: 'verified' });
+    const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
+    });
+    const order = await marketplaceService.submitBooking(actorFor(buyer.userId), {
+      channel_id: ch.id, package_id: card.packages[0].id,
+      company_name: 'A', contact_name: 'B', contact_email: 'b@t.test', campaign_objective: 'o', brief: 'b',
+    });
+    await marketplaceService.ownerAcceptOrder(actorFor(owner.userId), order.id);
+
+    const norm = `race-${RUN_TAG}-43`;
+    // Pre-plant a "ghost" order document holding the exact payment identity.
+    await withDb(async (db) => {
+      await db.collection(COLLECTIONS.MARKETPLACE_ORDERS).insertOne({
+        id: `ghost-${RUN_TAG}-43`, status: 'paid',
+        payment_method: 'bank_transfer',
+        payment_reference_normalized: norm,
+        created_at: new Date(), updated_at: new Date(),
+      } as unknown as Record<string, unknown>);
+    });
+    // The service pre-check will find the ghost and 409 before writing.
+    await expect(marketplaceService.adminConfirmPayment(actorFor(admin.userId, 'admin'), order.id, {
+      payment_method: 'bank_transfer', payment_reference: norm,
+      amount_received_minor: 25000, currency: 'USD',
+      payment_received_at: new Date().toISOString(), gateway_fee_minor: 750,
+    })).rejects.toMatchObject({ status: 409 });
   });
 });

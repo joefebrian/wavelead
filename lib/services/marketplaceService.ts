@@ -362,7 +362,7 @@ export const marketplaceService = {
 
     const normalized = normalizePaymentReference(d.payment_reference);
 
-    // Idempotency: if this exact (order, payment_reference) already has a
+    // (a) Same-order idempotency: if this exact (order, payment_reference) already has a
     // PAYMENT_CONFIRMED event, return the current order unchanged. The unique
     // partial index on the events collection also guards against races.
     const priorEvents = await marketplaceFinancialEventRepo.listByOrder(orderId);
@@ -372,6 +372,15 @@ export const marketplaceService = {
     }
     if (order.payment_reference_normalized && order.payment_reference_normalized !== normalized) {
       throw new HttpError(409, 'This order already has a different payment reference recorded');
+    }
+
+    // (b) B1.1.2 — cross-order payment-reference reuse block. A single real-world
+    // payment identifier (method + normalized ref) must never be applied to two
+    // different marketplace orders. Return 409 without leaking any details
+    // beyond the fact that this identifier is already allocated.
+    const existingElsewhere = await marketplaceOrderRepo.findByPaymentIdentity(d.payment_method, normalized);
+    if (existingElsewhere && existingElsewhere.id !== orderId) {
+      throw new HttpError(409, 'This payment reference is already allocated to another order');
     }
 
     const gross = order.snapshot.gross_price_minor;
@@ -413,7 +422,18 @@ export const marketplaceService = {
         paid_at: new Date(),
       };
     }
-    const updated = await marketplaceOrderRepo.update(orderId, patch);
+    let updated: MarketplaceOrder;
+    try {
+      updated = await marketplaceOrderRepo.update(orderId, patch);
+    } catch (e) {
+      // Defense-in-depth: partial unique index on
+      // (payment_method, payment_reference_normalized) catches a race with a
+      // concurrent confirmation on a different order.
+      if (/E11000|duplicate key/i.test((e as Error).message)) {
+        throw new HttpError(409, 'This payment reference is already allocated to another order');
+      }
+      throw e;
+    }
 
     try {
       await marketplaceFinancialEventRepo.append({

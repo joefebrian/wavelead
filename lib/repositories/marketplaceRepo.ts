@@ -60,6 +60,15 @@ export const marketplaceOrderRepo = {
     if (filter.status) q.status = filter.status;
     return stripIds(await c.find(q).sort({ created_at: -1 }).limit(500).toArray()) as MarketplaceOrder[];
   },
+  /**
+   * B1.1.2 — find any order that has already recorded this exact
+   * (payment_method, normalized reference). Used to block cross-order reuse
+   * of the same payment identifier.
+   */
+  async findByPaymentIdentity(payment_method: string, payment_reference_normalized: string): Promise<MarketplaceOrder | null> {
+    const c = await getCollection<MarketplaceOrder>(COLLECTIONS.MARKETPLACE_ORDERS);
+    return stripId(await c.findOne({ payment_method: payment_method as MarketplaceOrder['payment_method'], payment_reference_normalized })) as MarketplaceOrder | null;
+  },
 };
 
 export const marketplaceFinancialEventRepo = {
