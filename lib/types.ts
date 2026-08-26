@@ -782,3 +782,45 @@ export interface SecurityAuditEvent {
   metadata: Record<string, unknown>;  // NEVER contains secrets
   created_at: Date;
 }
+
+// ============================================================
+// Pricing conversion — commercial leads (Pro waitlist + Enterprise sales)
+// ============================================================
+export type CommercialLeadType = 'pro_waitlist' | 'enterprise_sales';
+export type CommercialLeadStatus = 'new' | 'contacted' | 'qualified' | 'won' | 'lost';
+export type EnterpriseCompanyType = 'brand' | 'agency' | 'publisher' | 'network_mcn' | 'other';
+export type EnterpriseInterest =
+  | 'channel_discovery'
+  | 'bulk_channel_management'
+  | 'promotion'
+  | 'sponsorship'
+  | 'analytics'
+  | 'api_integration'
+  | 'other';
+
+export const ENTERPRISE_COMPANY_TYPES: readonly EnterpriseCompanyType[] = [
+  'brand', 'agency', 'publisher', 'network_mcn', 'other',
+] as const;
+export const ENTERPRISE_INTERESTS: readonly EnterpriseInterest[] = [
+  'channel_discovery', 'bulk_channel_management', 'promotion', 'sponsorship', 'analytics', 'api_integration', 'other',
+] as const;
+
+export interface CommercialLead {
+  id: string;
+  type: CommercialLeadType;
+  user_id: string | null;         // populated if the submitter was authenticated
+  email: string;                  // normalized lowercase
+  name: string | null;
+  // Enterprise-only fields (null for pro_waitlist)
+  company_name: string | null;
+  company_type: EnterpriseCompanyType | null;
+  channel_count: number | null;
+  country: string | null;         // ISO-3166-1 alpha-2 or null
+  interest: EnterpriseInterest[]; // may be [] for pro_waitlist
+  message: string | null;
+  source: 'pricing';
+  status: CommercialLeadStatus;
+  admin_notes: string | null;
+  created_at: Date;
+  updated_at: Date;
+}

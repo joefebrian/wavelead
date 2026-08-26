@@ -159,5 +159,15 @@ export async function ensureIndexes(db: Db): Promise<void> {
     db.collection(COLLECTIONS.INTEGRATION_PROVIDER_SETTINGS).createIndexes([
       { key: { provider: 1 }, unique: true, name: 'uniq_provider' },
     ]),
+    // Pricing conversion — commercial leads
+    db.collection(COLLECTIONS.COMMERCIAL_LEADS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      // Prevent obvious duplicates: one active lead per (type, email).
+      // We DO NOT include status in the key so a Won/Lost lead does not permit
+      // silent duplicate re-submission; admins can archive if needed.
+      { key: { type: 1, email: 1 }, unique: true, name: 'uniq_type_email' },
+      { key: { status: 1, created_at: -1 }, name: 'by_status_time' },
+      { key: { type: 1, created_at: -1 }, name: 'by_type_time' },
+    ]),
   ]);
 }

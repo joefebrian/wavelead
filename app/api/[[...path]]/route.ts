@@ -1224,6 +1224,45 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ lead }), request);
     }
 
+    // ---------- COMMERCIAL LEADS (pricing conversion) ----------
+    if (route === '/commercial-leads/pro-waitlist' && method === 'POST') {
+      const rl = rateLimit(clientKey(request, 'pro-waitlist'), 10, 60_000);
+      if (!rl.allowed) return applyCors(fail(429, 'Too many requests', { retryAfter: rl.retryAfterSeconds }), request);
+      const { commercialLeadService } = await import('@/lib/services/commercialLeadService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      const res = await commercialLeadService.submitProWaitlist(actor, body);
+      return applyCors(ok(res, { status: 201 }), request);
+    }
+    if (route === '/commercial-leads/enterprise' && method === 'POST') {
+      const rl = rateLimit(clientKey(request, 'enterprise-lead'), 10, 60_000);
+      if (!rl.allowed) return applyCors(fail(429, 'Too many requests', { retryAfter: rl.retryAfterSeconds }), request);
+      const { commercialLeadService } = await import('@/lib/services/commercialLeadService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      const res = await commercialLeadService.submitEnterpriseLead(actor, body);
+      return applyCors(ok(res, { status: 201 }), request);
+    }
+    if (route === '/admin/commercial-leads' && method === 'GET') {
+      const { commercialLeadService } = await import('@/lib/services/commercialLeadService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const { searchParams } = new URL(request.url);
+      const type = (searchParams.get('type') || undefined) as 'pro_waitlist' | 'enterprise_sales' | undefined;
+      const status = (searchParams.get('status') || undefined) as import('@/lib/types').CommercialLeadStatus | undefined;
+      const items = await commercialLeadService.listAdmin(actor!, { type, status });
+      const counts = await commercialLeadService.adminCounts(actor!);
+      return applyCors(ok({ items, counts }), request);
+    }
+    if (path.length === 3 && path[0] === 'admin' && path[1] === 'commercial-leads' && method === 'PATCH') {
+      const { commercialLeadService } = await import('@/lib/services/commercialLeadService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const body = await safeJson(request);
+      const lead = await commercialLeadService.patchAdmin(actor!, path[2], body);
+      return applyCors(ok({ lead }), request);
+    }
+
     return applyCors(fail(404, `Route ${route} not found`), request);
   } catch (err) {
     return applyCors(handleServiceError(err), request);
