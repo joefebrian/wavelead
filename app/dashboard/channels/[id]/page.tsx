@@ -73,10 +73,13 @@ export default async function OwnerChannelPage({ params }: { params: Promise<Par
               <Link href={`/dashboard/channels/${channel.id}/analytics`} className="text-primary underline">Open analytics</Link>
               <span aria-hidden className="text-muted-foreground">·</span>
               <Link href={`/dashboard/channels/${channel.id}/promote`} className="text-primary underline">Promote channel</Link>
+              <span aria-hidden className="text-muted-foreground">·</span>
+              <Link href={`/dashboard/channels/${channel.id}/monetization`} className="text-primary underline">Monetization</Link>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <Link href={`/dashboard/channels/${channel.id}/promote`}><Button size="sm" className="gap-1.5">Grow with Promotion</Button></Link>
               <Link href={`/dashboard/channels/${channel.id}/analytics`}><Button size="sm" variant="outline">Open Analytics</Button></Link>
+              <Link href={`/dashboard/channels/${channel.id}/monetization`}><Button size="sm" variant="outline">Monetization</Button></Link>
             </div>
           </div>
         </div>

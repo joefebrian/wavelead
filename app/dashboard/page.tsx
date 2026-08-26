@@ -98,6 +98,11 @@ export default async function DashboardPage() {
             <div className="mt-2 text-3xl font-bold">{activeClaims}</div>
             <div className="mt-3 text-xs text-muted-foreground">Track claim submissions & moderator requests.</div>
           </Link>
+          <Link href="/dashboard/sponsorships" className="wh-card p-5 hover:border-primary/40 transition">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> My Sponsorships</div>
+            <div className="mt-2 text-3xl font-bold">→</div>
+            <div className="mt-3 text-xs text-muted-foreground">Sponsorship packages you&apos;ve requested from channels.</div>
+          </Link>
           <Link href="/submit" className="wh-card p-5 hover:border-primary/40 transition">
             <div className="flex items-center gap-2 text-sm text-muted-foreground"><Send className="h-4 w-4" /> Submit a channel</div>
             <div className="mt-2 text-3xl font-bold">+</div>
@@ -119,6 +124,7 @@ export default async function DashboardPage() {
         <div className="mt-8 flex flex-wrap gap-2">
           <Link href="/dashboard/channels"><Button variant="outline">My channels</Button></Link>
           <Link href="/dashboard/promotions"><Button variant="outline">Campaigns</Button></Link>
+          <Link href="/dashboard/sponsorships"><Button variant="outline">My Sponsorships</Button></Link>
           <Link href="/dashboard/billing"><Button variant="outline">Billing</Button></Link>
           <Link href="/dashboard/claims"><Button variant="outline">My claims</Button></Link>
           <Link href="/submit"><Button>Submit a channel</Button></Link>

@@ -12,9 +12,10 @@ import { categoryRepo } from '@/lib/repositories/categoryRepo';
 import { countryByCode } from '@/lib/constants/countries';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { channelRepo } from '@/lib/repositories/channelRepo';
+import { marketplaceService } from '@/lib/services/marketplaceService';
 import { trackingService, normalizeReferrerDomain, normalizeSource } from '@/lib/services/trackingService';
 import { cookies, headers } from 'next/headers';
-import { ShieldCheck, Users, Share2, ArrowUpRight, Sparkles, BadgeCheck, Flag, KeyRound, Handshake } from 'lucide-react';
+import { ShieldCheck, Users, Share2, ArrowUpRight, Sparkles, BadgeCheck, Flag, KeyRound, Handshake, Package, Clock } from 'lucide-react';
 import type { Metadata } from 'next';
 
 interface Params { slug: string; }
@@ -47,6 +48,8 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
     resolveActorFromCookies(),
     channelRepo.findById(channel.id),
   ]);
+  // Public marketplace rate card (only active fixed-price packages; null if none).
+  const publicRateCard = await marketplaceService.getPublicRateCard(channel.id).catch(() => null);
   // Sponsored related channel — never self-promote (server enforces exclude).
   const sponsored = await loadOneSponsored({
     placement: 'sponsored_related_channel',
@@ -159,6 +162,53 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
           <Stat label="Country" value={country ? `${country.flag} ${country.name}` : channel.country_code || '—'} icon={null} />
           <Stat label="Category" value={category?.name || '—'} icon={null} />
         </section>
+
+        {publicRateCard && publicRateCard.packages.length > 0 && (
+          <section className="container py-8" data-testid="sponsorship-opportunities">
+            <div className="flex items-end justify-between flex-wrap gap-3">
+              <div>
+                <h2 className="text-xl md:text-2xl font-bold tracking-tight flex items-center gap-2">
+                  <Handshake className="h-5 w-5 text-primary" /> Sponsorship Opportunities
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">Book a fixed-price sponsorship package directly. WaveLead coordinates the delivery.</p>
+              </div>
+              {publicRateCard.has_custom_quote && (
+                <Link href={`/sponsor/${channel.slug}`} className="text-sm text-primary underline">Need something custom? Request a quote →</Link>
+              )}
+            </div>
+            <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {publicRateCard.packages.map((p) => (
+                <div key={p.id} className="wh-card p-5 flex flex-col" data-testid={`pkg-${p.id}`}>
+                  <div className="flex items-center gap-2">
+                    <Package className="h-4 w-4 text-primary shrink-0" />
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground font-medium">{p.type.replace(/_/g, ' ')}</div>
+                  </div>
+                  <div className="mt-1 font-semibold text-base line-clamp-2">{p.name}</div>
+                  <p className="mt-1 text-sm text-muted-foreground line-clamp-3">{p.description}</p>
+                  {p.deliverables.length > 0 && (
+                    <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
+                      {p.deliverables.slice(0, 4).map((d, i) => (
+                        <li key={i} className="flex gap-1.5"><span aria-hidden>•</span><span className="flex-1">{d}</span></li>
+                      ))}
+                    </ul>
+                  )}
+                  {p.estimated_delivery_days != null && (
+                    <div className="mt-3 inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      <Clock className="h-3.5 w-3.5" /> ~{p.estimated_delivery_days} day{p.estimated_delivery_days === 1 ? '' : 's'} to deliver
+                    </div>
+                  )}
+                  <div className="mt-4 pt-4 border-t border-border/60 flex items-center justify-between gap-2">
+                    <div className="text-lg font-bold">${(((p.price_minor ?? 0) as number) / 100).toFixed(2)} <span className="text-xs font-normal text-muted-foreground">USD</span></div>
+                    <Link href={`/sponsor/${channel.slug}?package=${encodeURIComponent(p.id)}`}>
+                      <Button size="sm" className="gap-1.5"><Handshake className="h-3.5 w-3.5" /> Sponsor this Channel</Button>
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="mt-4 text-xs text-muted-foreground">All sponsorships are subject to WaveLead marketplace terms. Owner has 7 days to accept or reject.</p>
+          </section>
+        )}
 
         {(related.length > 0 || sponsored[0]) && (
           <section className="container py-8">
