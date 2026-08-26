@@ -6,6 +6,7 @@ import { promotionCampaignRepo, promotionRateCardRepo, campaignImpressionDedupRe
 import { channelRepo } from '@/lib/repositories/channelRepo';
 import { reconcileCampaign } from './campaignStateService';
 import { issueAttributionToken } from './attributionTokenService';
+import { scoreCandidate, isEligibleByRelevance, type RankBreakdown } from './sponsoredRankingService';
 import type {
   Channel,
   PromotionCampaign,
@@ -76,7 +77,7 @@ function matchesTargeting(camp: PromotionCampaign, ctx: DeliveryContext, ch: Cha
   return true;
 }
 
-interface CandidateWithChannel { camp: PromotionCampaign; ch: Channel; cpm_usd_minor: number; }
+interface CandidateWithChannel { camp: PromotionCampaign; ch: Channel; cpm_usd_minor: number; rank: RankBreakdown; }
 
 async function loadEligibleCampaigns(placement: SponsoredPlacement): Promise<PromotionCampaign[]> {
   // Return campaigns whose stored status is a candidate for delivery.
@@ -102,6 +103,8 @@ export const promotionDeliveryService = {
     for (const raw of rawCamps) {
       const camp = await reconcileCampaign(raw, now);
       if (camp.status !== 'active') continue;
+      // ---------- STAGE 1 : ELIGIBILITY (no budget-based overrides here) ----------
+      // Budget hard cap (existing invariant).
       if (camp.estimated_spend_usd_minor >= camp.budget_total_usd_minor) continue;
       // M06.0: campaigns can only deliver after they are funded (or waived).
       const funding = await campaignFundingService.fundingSummary(camp.id);
@@ -110,6 +113,7 @@ export const promotionDeliveryService = {
       if (!ch || ch.status !== 'approved') continue;
       const vs = (ch as unknown as { verification_status?: string }).verification_status;
       if (vs !== 'verified' && vs !== 'official') continue;
+      // Targeting hard filter (existing).
       if (!matchesTargeting(camp, ctx, ch)) continue;
       // Frequency cap peek (do NOT increment here — candidate selection is not an impression).
       if (ctx.anonymous_session_id) {
@@ -118,17 +122,35 @@ export const promotionDeliveryService = {
       }
       const rate = await promotionRateCardRepo.resolve(ctx.placement, ctx.country_code || null);
       if (!rate) continue;
-      candidates.push({ camp, ch, cpm_usd_minor: rate.cpm_usd_minor });
+      // ---------- STAGE 1 (Phase A) : RELEVANCE + PACING ELIGIBILITY ----------
+      // Score the candidate BEFORE deciding eligibility so we have both the
+      // hard gate (relevance ≥ MIN) and the pacing-throttle signal.
+      const rank = scoreCandidate(camp, ch, {
+        placement: ctx.placement,
+        country_code: ctx.country_code ?? null,
+        language: ctx.language ?? null,
+        category_slug: ctx.category_slug ?? null,
+        search_query: ctx.search_query ?? null,
+        exclude_channel_id: ctx.exclude_channel_id ?? null,
+        now,
+      });
+      // HARD GATE — no budget amount can override this.
+      if (!isEligibleByRelevance(rank.relevance)) continue;
+      // Over-pace throttle. Budget hard cap is still enforced above and at
+      // atomicDeliverImpression; this throttle only spreads delivery over time.
+      // Catch-up campaigns (final 10% of schedule, under-delivered) are
+      // exempted so late catch-up can happen — see sponsoredRankingService.
+      if (rank.paced_out) continue;
+      candidates.push({ camp, ch, cpm_usd_minor: rate.cpm_usd_minor, rank });
     }
     if (candidates.length === 0) return [];
-    // Fair rotation: shuffle then sort deterministically by remaining pacing
-    // headroom. For M05.1 keep it simple — randomize using session salt so a
-    // single session sees consistent-ish results per refresh.
-    const salt = ctx.anonymous_session_id ? [...ctx.anonymous_session_id].reduce((s, c) => s + c.charCodeAt(0), 0) : Date.now();
+    // ---------- STAGE 2 : RANK ----------
+    // Sort by sponsored_rank DESC. Budget is NEVER a direct ranking variable.
+    // Ties broken by a session-salted campaign id to avoid deterministic
+    // starvation of a specific campaign across pageloads.
+    const salt = ctx.anonymous_session_id ? [...ctx.anonymous_session_id].reduce((s, c) => s + c.charCodeAt(0), 0) : 0;
     candidates.sort((a, b) => {
-      const remA = a.camp.budget_total_usd_minor - a.camp.estimated_spend_usd_minor;
-      const remB = b.camp.budget_total_usd_minor - b.camp.estimated_spend_usd_minor;
-      if (remA !== remB) return remB - remA;
+      if (b.rank.sponsored_rank !== a.rank.sponsored_rank) return b.rank.sponsored_rank - a.rank.sponsored_rank;
       return ((a.camp.id.charCodeAt(0) + salt) % 7) - ((b.camp.id.charCodeAt(0) + salt) % 7);
     });
     const picked = candidates.slice(0, limit);
