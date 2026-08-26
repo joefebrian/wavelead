@@ -73,6 +73,17 @@ function actorFor(user_id: string, role = 'user'): Actor {
   return { session: { userId: user_id, email: `${user_id}@t.test`, v: 0 }, user: { id: user_id, email: `${user_id}@t.test`, role, display_name: user_id, avatar_url: null, country_code: null, preferred_language: 'en', auth_providers: [], created_at: new Date(), updated_at: new Date() } } as unknown as Actor;
 }
 
+/**
+ * B1.1.1 — fixed-price marketplace bookings require an authenticated buyer.
+ * This helper creates a fresh unique buyer for each booking so existing tests
+ * that previously used anonymous booking still exercise the same downstream
+ * accept/reject/payment paths without cross-test contamination.
+ */
+async function newBuyerActor(): Promise<Actor> {
+  const b = await signup(`b1mp-${RUN_TAG}-buyer-${Math.random().toString(36).slice(2, 8)}@t.test`);
+  return actorFor(b.userId);
+}
+
 async function purge() {
   await withDb(async (db) => {
     await db.collection('channels').deleteMany({ slug: /^b1-/ });
@@ -151,7 +162,7 @@ describe('B1 §1 — Rate Card', () => {
     // custom_quote MUST not be in the fixed-price list either.
     expect(pub?.packages.find((p) => p.type === 'custom_quote')).toBeUndefined();
     // Marketplace booking against custom_quote is rejected — sales-assisted only.
-    await expect(marketplaceService.submitBooking(null, {
+    await expect(marketplaceService.submitBooking(await newBuyerActor(), {
       channel_id: ch.id, package_id: cqPkg.id,
       company_name: 'A', contact_name: 'B', contact_email: 'b@t.test',
       campaign_objective: 'x', brief: 'y',
@@ -170,7 +181,7 @@ describe('B1 §2 — Brand booking', () => {
       packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
     });
     const pkg = card.packages[0];
-    const order = await marketplaceService.submitBooking(null, {
+    const order = await marketplaceService.submitBooking(await newBuyerActor(), {
       channel_id: ch.id, package_id: pkg.id,
       company_name: 'Acme', contact_name: 'CN', contact_email: 'cn@acme.test',
       campaign_objective: 'objective', brief: 'brief here',
@@ -181,25 +192,30 @@ describe('B1 §2 — Brand booking', () => {
 
   it('#8 client-supplied price / status / owner_user_id are IGNORED', async () => {
     const owner = await signup(`b1mp-${RUN_TAG}-b8@t.test`);
+    const buyer = await signup(`b1mp-${RUN_TAG}-b8-buyer@t.test`);
     const ch = await seedChannel(owner.userId, { verified: 'verified' });
     const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
       packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
     });
-    // spoofed extras via API layer
-    const r = await api<{ order: { quoted_price_minor: number; status: string; owner_user_id: string } }>('/marketplace/orders', {
-      method: 'POST', body: JSON.stringify({
+    // spoofed extras via API layer — authenticated buyer, but attempts to override economics + parties
+    const r = await api<{ order: { quoted_price_minor: number; status: string; owner_user_id: string; buyer_user_id: string } }>('/marketplace/orders', {
+      method: 'POST',
+      headers: { Cookie: buyer.cookie },
+      body: JSON.stringify({
         channel_id: ch.id, package_id: card.packages[0].id,
         company_name: 'Acme', contact_name: 'CN', contact_email: 'cn@acme.test',
         campaign_objective: 'obj', brief: 'brief',
         // spoofed:
         quoted_price_minor: 1, gross_price_minor: 1, price_minor: 1,
         status: 'paid', owner_user_id: 'PWNED', owner_earnings_minor: 999_999_00,
+        buyer_user_id: 'PWNED-BUYER',
       }),
     });
     expect(r.status).toBe(201);
     expect(r.body.data?.order.quoted_price_minor).toBe(25000);
     expect(r.body.data?.order.status).toBe('requested');
     expect(r.body.data?.order.owner_user_id).toBe(owner.userId);
+    expect(r.body.data?.order.buyer_user_id).toBe(buyer.userId);
   });
 
   it('#9 booking creates a requested order in DB', async () => {
@@ -208,7 +224,7 @@ describe('B1 §2 — Brand booking', () => {
     const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
       packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
     });
-    const order = await marketplaceService.submitBooking(null, {
+    const order = await marketplaceService.submitBooking(await newBuyerActor(), {
       channel_id: ch.id, package_id: card.packages[0].id,
       company_name: 'A', contact_name: 'B', contact_email: 'b@t.test',
       campaign_objective: 'o', brief: 'b',
@@ -230,7 +246,7 @@ describe('B1 §3 — Owner accept/reject + snapshot', () => {
     const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
       packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: ['1 post'], currency: 'USD', is_active: true }],
     });
-    const order = await marketplaceService.submitBooking(null, {
+    const order = await marketplaceService.submitBooking(await newBuyerActor(), {
       channel_id: ch.id, package_id: card.packages[0].id,
       company_name: 'Acme', contact_name: 'CN', contact_email: 'cn@acme.test',
       campaign_objective: 'o', brief: 'b',
@@ -290,7 +306,7 @@ describe('B1 §4 — Admin manual payment + idempotency', () => {
     const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
       packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
     });
-    const order = await marketplaceService.submitBooking(null, {
+    const order = await marketplaceService.submitBooking(await newBuyerActor(), {
       channel_id: ch.id, package_id: card.packages[0].id,
       company_name: 'Acme', contact_name: 'CN', contact_email: 'cn@acme.test',
       campaign_objective: 'o', brief: 'b',
@@ -352,7 +368,7 @@ describe('B1 §5 — Gateway-fee safety', () => {
     const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
       packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
     });
-    const order = await marketplaceService.submitBooking(null, {
+    const order = await marketplaceService.submitBooking(await newBuyerActor(), {
       channel_id: ch.id, package_id: card.packages[0].id,
       company_name: 'Acme', contact_name: 'CN', contact_email: 'cn@acme.test',
       campaign_objective: 'o', brief: 'b',
@@ -428,7 +444,7 @@ describe('B1 §7 — Financial events', () => {
     const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
       packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
     });
-    const order = await marketplaceService.submitBooking(null, {
+    const order = await marketplaceService.submitBooking(await newBuyerActor(), {
       channel_id: ch.id, package_id: card.packages[0].id,
       company_name: 'A', contact_name: 'B', contact_email: 'b@t.test',
       campaign_objective: 'o', brief: 'b',
@@ -479,7 +495,7 @@ describe('B1 §8 — Owner payable status', () => {
     const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
       packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
     });
-    const order = await marketplaceService.submitBooking(null, {
+    const order = await marketplaceService.submitBooking(await newBuyerActor(), {
       channel_id: ch.id, package_id: card.packages[0].id,
       company_name: 'A', contact_name: 'B', contact_email: 'b@t.test', campaign_objective: 'o', brief: 'b',
     });
@@ -501,7 +517,7 @@ describe('B1 §8 — Owner payable status', () => {
     const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
       packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
     });
-    const order = await marketplaceService.submitBooking(null, {
+    const order = await marketplaceService.submitBooking(await newBuyerActor(), {
       channel_id: ch.id, package_id: card.packages[0].id,
       company_name: 'A', contact_name: 'B', contact_email: 'b@t.test', campaign_objective: 'o', brief: 'b',
     });
@@ -530,7 +546,7 @@ describe('B1 §9 — Existing sponsorship-lead flow unaffected', () => {
     const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
       packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
     });
-    await marketplaceService.submitBooking(null, {
+    await marketplaceService.submitBooking(await newBuyerActor(), {
       channel_id: ch.id, package_id: card.packages[0].id,
       company_name: 'A', contact_name: 'B', contact_email: 'b@t.test', campaign_objective: 'o', brief: 'b',
     });
@@ -539,5 +555,145 @@ describe('B1 §9 — Existing sponsorship-lead flow unaffected', () => {
     // The marketplace order landed in the marketplace collection.
     const mp = await withDb(async (db) => db.collection(COLLECTIONS.MARKETPLACE_ORDERS).countDocuments({ channel_id: ch.id }));
     expect(mp).toBe(1);
+  });
+});
+
+// ============================================================================
+// §10 B1.1.1 — Authenticated fixed-price marketplace booking
+// ============================================================================
+describe('B1 §10 — Authenticated marketplace booking (B1.1.1)', () => {
+  it('#27 anonymous fixed-price booking is REJECTED (401) at the service layer', async () => {
+    const owner = await signup(`b1mp-${RUN_TAG}-anon-o@t.test`);
+    const ch = await seedChannel(owner.userId, { verified: 'verified' });
+    const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
+    });
+    await expect(marketplaceService.submitBooking(null, {
+      channel_id: ch.id, package_id: card.packages[0].id,
+      company_name: 'A', contact_name: 'B', contact_email: 'b@t.test',
+      campaign_objective: 'o', brief: 'b',
+    })).rejects.toMatchObject({ status: 401 });
+  });
+
+  it('#28 anonymous fixed-price booking is REJECTED (401) at the HTTP layer', async () => {
+    const owner = await signup(`b1mp-${RUN_TAG}-http-o@t.test`);
+    const ch = await seedChannel(owner.userId, { verified: 'verified' });
+    const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
+    });
+    // NO cookie sent → anonymous
+    const r = await api('/marketplace/orders', {
+      method: 'POST', body: JSON.stringify({
+        channel_id: ch.id, package_id: card.packages[0].id,
+        company_name: 'A', contact_name: 'B', contact_email: 'b@t.test',
+        campaign_objective: 'o', brief: 'b',
+      }),
+    });
+    expect(r.status).toBe(401);
+    const count = await withDb(async (db) => db.collection(COLLECTIONS.MARKETPLACE_ORDERS).countDocuments({ channel_id: ch.id }));
+    expect(count).toBe(0);   // no phantom order created
+  });
+
+  it('#29 authenticated buyer CAN submit fixed-price booking; buyer_user_id is derived from session', async () => {
+    const owner = await signup(`b1mp-${RUN_TAG}-authok-o@t.test`);
+    const buyer = await signup(`b1mp-${RUN_TAG}-authok-b@t.test`);
+    const ch = await seedChannel(owner.userId, { verified: 'verified' });
+    const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
+    });
+    const r = await api<{ order: { id: string; buyer_user_id: string; quoted_price_minor: number } }>('/marketplace/orders', {
+      method: 'POST',
+      headers: { Cookie: buyer.cookie },
+      body: JSON.stringify({
+        channel_id: ch.id, package_id: card.packages[0].id,
+        company_name: 'Acme', contact_name: 'CN', contact_email: 'cn@acme.test',
+        campaign_objective: 'obj', brief: 'brief',
+      }),
+    });
+    expect(r.status).toBe(201);
+    expect(r.body.data?.order.buyer_user_id).toBe(buyer.userId);
+    expect(r.body.data?.order.quoted_price_minor).toBe(25000);
+  });
+
+  it('#30 client-supplied buyer_user_id is IGNORED — server always uses authenticated session', async () => {
+    const owner = await signup(`b1mp-${RUN_TAG}-spoof-o@t.test`);
+    const buyer = await signup(`b1mp-${RUN_TAG}-spoof-b@t.test`);
+    const attacker = await signup(`b1mp-${RUN_TAG}-spoof-x@t.test`);
+    const ch = await seedChannel(owner.userId, { verified: 'verified' });
+    const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
+    });
+    // Buyer's session cookie, but attempts to spoof buyer_user_id as another user in payload.
+    const r = await api<{ order: { buyer_user_id: string } }>('/marketplace/orders', {
+      method: 'POST',
+      headers: { Cookie: buyer.cookie },
+      body: JSON.stringify({
+        channel_id: ch.id, package_id: card.packages[0].id,
+        company_name: 'A', contact_name: 'B', contact_email: 'b@t.test',
+        campaign_objective: 'o', brief: 'b',
+        buyer_user_id: attacker.userId,                        // spoofed
+        buyer: { id: attacker.userId },                        // spoofed alt
+      }),
+    });
+    expect(r.status).toBe(201);
+    expect(r.body.data?.order.buyer_user_id).toBe(buyer.userId);    // server authority
+    expect(r.body.data?.order.buyer_user_id).not.toBe(attacker.userId);
+  });
+
+  it('#31 buyer sees ONLY their own marketplace orders in /marketplace/buyer/orders (cross-buyer isolation)', async () => {
+    const owner = await signup(`b1mp-${RUN_TAG}-iso-o@t.test`);
+    const buyerA = await signup(`b1mp-${RUN_TAG}-iso-a@t.test`);
+    const buyerB = await signup(`b1mp-${RUN_TAG}-iso-b@t.test`);
+    const ch = await seedChannel(owner.userId, { verified: 'verified' });
+    const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'X', description: 'x', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
+    });
+    // Buyer A books.
+    const rA = await api<{ order: { id: string } }>('/marketplace/orders', {
+      method: 'POST',
+      headers: { Cookie: buyerA.cookie },
+      body: JSON.stringify({
+        channel_id: ch.id, package_id: card.packages[0].id,
+        company_name: 'A', contact_name: 'AC', contact_email: 'a@t.test',
+        campaign_objective: 'o', brief: 'b',
+      }),
+    });
+    expect(rA.status).toBe(201);
+    const aOrderId = rA.body.data!.order.id;
+
+    // Buyer A lists own orders — must see it.
+    const listA = await api<{ items: Array<{ id: string; buyer_user_id: string }> }>('/marketplace/buyer/orders', {
+      method: 'GET', headers: { Cookie: buyerA.cookie },
+    });
+    expect(listA.status).toBe(200);
+    const aIds = (listA.body.data?.items || []).map((o) => o.id);
+    expect(aIds).toContain(aOrderId);
+    for (const o of listA.body.data?.items || []) expect(o.buyer_user_id).toBe(buyerA.userId);
+
+    // Buyer B lists own orders — must NOT see Buyer A's order.
+    const listB = await api<{ items: Array<{ id: string; buyer_user_id: string }> }>('/marketplace/buyer/orders', {
+      method: 'GET', headers: { Cookie: buyerB.cookie },
+    });
+    expect(listB.status).toBe(200);
+    const bIds = (listB.body.data?.items || []).map((o) => o.id);
+    expect(bIds).not.toContain(aOrderId);
+    for (const o of listB.body.data?.items || []) expect(o.buyer_user_id).toBe(buyerB.userId);
+
+    // Anonymous cannot list at all.
+    const listAnon = await api('/marketplace/buyer/orders', { method: 'GET' });
+    expect(listAnon.status).toBe(401);
+  });
+
+  it('#32 authenticated public rate-card view remains open to guests (public discovery UNAFFECTED)', async () => {
+    const owner = await signup(`b1mp-${RUN_TAG}-pub-o@t.test`);
+    const ch = await seedChannel(owner.userId, { verified: 'verified' });
+    await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'X', description: 'public discovery', price_minor: 25000, deliverables: [], currency: 'USD', is_active: true }],
+    });
+    // NO cookie — guests must still see the public rate card.
+    const r = await api<{ packages: Array<{ id: string; price_minor: number }>; has_custom_quote: boolean }>(`/channels/${ch.id}/rate-card`, { method: 'GET' });
+    expect(r.status).toBe(200);
+    expect(r.body.data?.packages.length).toBe(1);
+    expect(r.body.data?.packages[0].price_minor).toBe(25000);
   });
 });

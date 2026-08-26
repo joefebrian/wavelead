@@ -187,7 +187,12 @@ export const marketplaceService = {
   },
 
   // -------- Brand booking --------
+  // Fixed-price marketplace bookings REQUIRE an authenticated buyer.
+  // buyer_user_id is derived exclusively from the authenticated session;
+  // any client-supplied buyer_user_id in the payload is ignored (Zod schema
+  // does not include it, so it never reaches this method).
   async submitBooking(actor: Actor | null, input: unknown): Promise<MarketplaceOrder> {
+    if (!actor) throw new HttpError(401, 'You must be signed in to book a sponsorship');
     const parsed = brandBookingSchema.safeParse(input);
     if (!parsed.success) throw new HttpError(400, `Invalid input: ${parsed.error.issues[0]?.message}`);
     const d = parsed.data;
@@ -213,7 +218,7 @@ export const marketplaceService = {
       id: uuidv4(),
       status: 'requested',
       economics_status: 'pre_acceptance',
-      buyer_user_id: actor?.user?.id ?? null,
+      buyer_user_id: actor.user.id,   // server-derived; never trusted from payload
       brief: {
         company_name: d.company_name,
         contact_name: d.contact_name,

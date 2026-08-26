@@ -123,6 +123,29 @@ export default function MarketplaceBookingForm({
 
   return (
     <div className="grid md:grid-cols-[1fr_320px] gap-6 items-start">
+      {!isAuthed ? (
+        <div className="wh-card p-5 md:p-6 space-y-4 border-primary/30 bg-primary/5" data-testid="mp-signin-gate">
+          <div>
+            <h2 className="text-lg font-semibold">Sign in to submit this sponsorship request</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              To keep sponsorships secure and track the status in your dashboard, WaveLead requires you to sign in before booking a fixed-price package.
+            </p>
+          </div>
+          <ul className="text-sm text-muted-foreground space-y-1">
+            <li>• Your selected package will be preserved.</li>
+            <li>• After signing in you&apos;ll return to this page to complete booking.</li>
+            <li>• The owner accepts or rejects within 7 days.</li>
+          </ul>
+          <div className="flex flex-wrap gap-2">
+            <Link href={`/login?next=${encodeURIComponent(nextForAuth)}`}>
+              <Button className="gap-1.5">Continue to Sign In</Button>
+            </Link>
+            <Link href={`/signup?next=${encodeURIComponent(nextForAuth)}`}>
+              <Button variant="outline">Create an account</Button>
+            </Link>
+          </div>
+        </div>
+      ) : (
       <form onSubmit={onSubmit} className="wh-card p-5 md:p-6 space-y-5">
         <div>
           <h2 className="text-lg font-semibold">Sponsor {channelName}</h2>
@@ -170,20 +193,12 @@ export default function MarketplaceBookingForm({
           <Button type="submit" disabled={submitting} className="min-w-44">
             {submitting ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Submitting…</> : 'Send sponsorship request'}
           </Button>
-          {!isAuthed && (
-            <span className="text-xs text-muted-foreground">
-              Not signed in?{' '}
-              <Link href={`/signup?next=${encodeURIComponent(nextForAuth)}`} className="text-primary underline">Sign up</Link>
-              {' '}or{' '}
-              <Link href={`/login?next=${encodeURIComponent(nextForAuth)}`} className="text-primary underline">log in</Link>
-              {' '}to track your requests.
-            </span>
-          )}
         </div>
         <p className="text-xs text-muted-foreground">
           No payment is collected on this page. WaveLead confirms payment manually before the campaign begins.
         </p>
       </form>
+      )}
 
       <aside className="wh-card p-5 md:sticky md:top-24 h-fit" data-testid="mp-package-summary">
         <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground font-medium">
