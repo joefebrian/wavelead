@@ -864,6 +864,9 @@ export type MarketplaceOrderStatus =
   | 'owner_rejected'
   | 'awaiting_payment'
   | 'paid'
+  | 'in_progress'                    // B2 — owner started work
+  | 'submitted_for_review'           // B2 — owner submitted delivery
+  | 'completed'                      // B2 — buyer accepted or admin override
   | 'cancelled';
 
 // Economics finalization state.
@@ -876,7 +879,11 @@ export type OrderEconomicsStatus =
 export type OwnerPayableStatus =
   | 'not_applicable'
   | 'blocked_fee_reconciliation'
-  | 'payable_pending_delivery';
+  | 'payable_pending_delivery'
+  | 'submitted_for_review'           // B2
+  | 'eligible_for_payout'            // B2
+  | 'paid_out'                       // B2
+  | 'manual_reconciliation_required';// B2 — refund attempted after payout
 
 export type MarketplacePaymentMethod = 'bank_transfer' | 'paypal_manual' | 'other';
 export const MARKETPLACE_PAYMENT_METHODS: readonly MarketplacePaymentMethod[] = [
@@ -965,13 +972,48 @@ export interface MarketplaceOrder {
   rejected_at: Date | null;
   paid_at: Date | null;
   cancelled_at: Date | null;
+
+  // ── B2 delivery lifecycle ────────────────────────────────────────────────
+  started_at: Date | null;
+  started_by: string | null;         // owner user id
+  delivery_notes: string | null;
+  delivery_urls: string[];           // validated http/https only
+  submitted_at: Date | null;
+  submitted_by: string | null;       // owner user id
+  proof_description: string | null;
+  completed_at: Date | null;
+  completed_by: string | null;       // buyer id OR admin id
+  completion_source: 'buyer' | 'admin' | null;
+  completion_note: string | null;    // admin-required for override; may be null for buyer accept
+  paid_out_at: Date | null;
+  payout_id: string | null;          // FK → marketplace_owner_payouts.id
+}
+
+// B2 — marketplace owner payout record (manual, admin-only).
+export interface MarketplaceOwnerPayout {
+  id: string;
+  order_id: string;
+  owner_user_id: string;
+  channel_id: string;
+  currency: 'USD';
+  amount_minor: number;                             // server-derived = order.owner_earnings_minor
+  payout_method: MarketplacePaymentMethod;
+  payout_reference_normalized: string;              // lowercased/trimmed for uniqueness
+  payout_reference_display: string;
+  paid_at: Date;
+  notes: string | null;
+  created_by: string;                               // admin user id
+  created_at: Date;
 }
 
 // Append-only marketplace financial events. Do NOT mutate rows after write.
 export type MarketplaceFinancialEventType =
   | 'ORDER_ACCEPTED'
   | 'PAYMENT_CONFIRMED'
-  | 'GATEWAY_FEE_RECONCILED';
+  | 'GATEWAY_FEE_RECONCILED'
+  | 'DELIVERY_COMPLETED'             // B2
+  | 'OWNER_PAYABLE_ELIGIBLE'         // B2
+  | 'OWNER_PAYOUT_RECORDED';         // B2
 
 export interface MarketplaceFinancialEvent {
   id: string;

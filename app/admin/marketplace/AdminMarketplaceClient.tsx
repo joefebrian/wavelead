@@ -1,9 +1,9 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Loader2 } from 'lucide-react';
-import type { MarketplaceOrder, MarketplacePaymentMethod } from '@/lib/types';
+import type { MarketplaceOrder, MarketplaceOwnerPayout, MarketplacePaymentMethod } from '@/lib/types';
 
 interface Kpis {
   orders_total: number; awaiting_payment: number; paid: number;
@@ -11,24 +11,52 @@ interface Kpis {
   finalized_owner_earnings_minor: number; finalized_commission_minor: number;
   pending_fee_reconciliation: number;
 }
+type Tab = 'orders' | 'payables' | 'payouts';
 
 export default function AdminMarketplaceClient({ initialItems, initialKpis }: { initialItems: MarketplaceOrder[]; initialKpis: Kpis }) {
+  const [tab, setTab] = useState<Tab>('orders');
   const [items, setItems] = useState(initialItems);
   const [kpis, setKpis] = useState(initialKpis);
   const [busy, setBusy] = useState<string | null>(null);
   const [modalOrder, setModalOrder] = useState<MarketplaceOrder | null>(null);
   const [feeModalOrder, setFeeModalOrder] = useState<MarketplaceOrder | null>(null);
+  const [payoutModalOrder, setPayoutModalOrder] = useState<MarketplaceOrder | null>(null);
+  const [payables, setPayables] = useState<MarketplaceOrder[]>([]);
+  const [payouts, setPayouts] = useState<MarketplaceOwnerPayout[]>([]);
+  const [payableFilter, setPayableFilter] = useState<'all' | 'eligible_for_payout' | 'paid_out' | 'blocked_fee_reconciliation' | 'submitted_for_review' | 'manual_reconciliation_required'>('eligible_for_payout');
 
   async function refetch() {
     const r = await fetch('/api/admin/marketplace/orders', { credentials: 'include' });
     const j = await r.json();
     if (r.ok && j.ok) { setItems(j.data.items); setKpis(j.data.kpis); }
   }
+  async function refetchPayables() {
+    const qs = payableFilter === 'all' ? '' : `?status=${payableFilter}`;
+    const r = await fetch(`/api/admin/marketplace/payables${qs}`, { credentials: 'include' });
+    const j = await r.json();
+    if (r.ok && j.ok) setPayables(j.data.items);
+  }
+  async function refetchPayouts() {
+    const r = await fetch('/api/admin/marketplace/payouts', { credentials: 'include' });
+    const j = await r.json();
+    if (r.ok && j.ok) setPayouts(j.data.items);
+  }
+
+  useEffect(() => { if (tab === 'payables') refetchPayables(); }, [tab, payableFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab === 'payouts') refetchPayouts(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const $$ = (m: number | null | undefined) => m == null ? '—' : `$${(m / 100).toFixed(2)}`;
 
   return (
     <div className="mt-6 space-y-6" data-testid="admin-marketplace">
+      <div className="flex gap-2 border-b border-border pb-3 flex-wrap">
+        <button className={tabClass(tab === 'orders')} onClick={() => setTab('orders')}>Orders</button>
+        <button className={tabClass(tab === 'payables')} onClick={() => setTab('payables')}>Owner Payables</button>
+        <button className={tabClass(tab === 'payouts')} onClick={() => setTab('payouts')}>Payouts</button>
+      </div>
+
+      {tab === 'orders' && (
+        <>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Kpi label="Orders total" v={String(kpis.orders_total)} />
         <Kpi label="Awaiting payment" v={String(kpis.awaiting_payment)} accent="amber" />
@@ -76,6 +104,75 @@ export default function AdminMarketplaceClient({ initialItems, initialKpis }: { 
           </tbody>
         </table>
       </div>
+        </>
+      )}
+
+      {tab === 'payables' && (
+        <div className="space-y-3">
+          <div className="flex gap-2 flex-wrap items-center">
+            <span className="text-xs uppercase text-muted-foreground">Filter:</span>
+            {(['eligible_for_payout', 'paid_out', 'blocked_fee_reconciliation', 'submitted_for_review', 'manual_reconciliation_required', 'all'] as const).map((s) => (
+              <button key={s} className={`text-xs px-2 py-1 rounded-md border ${payableFilter === s ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-secondary'}`}
+                onClick={() => setPayableFilter(s)}>{s.replace(/_/g, ' ')}</button>
+            ))}
+            <Button variant="outline" size="sm" onClick={refetchPayables} className="ml-auto">Refresh</Button>
+          </div>
+          <div className="wh-card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
+                <th className="px-3 py-2">Order</th><th className="px-3 py-2">Owner</th><th className="px-3 py-2">Channel</th>
+                <th className="px-3 py-2">Completed</th><th className="px-3 py-2">Owner Earnings</th>
+                <th className="px-3 py-2">Payable Status</th><th className="px-3 py-2">Actions</th>
+              </tr></thead>
+              <tbody>
+                {payables.length === 0 && (<tr><td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">No payables.</td></tr>)}
+                {payables.map((o) => (
+                  <tr key={o.id} className="border-b border-border/60">
+                    <td className="px-3 py-2 font-mono text-xs">{o.id.slice(0, 8)}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{o.owner_user_id.slice(0, 8)}</td>
+                    <td className="px-3 py-2">{o.snapshot?.channel_name || o.channel_slug}</td>
+                    <td className="px-3 py-2 text-xs">{o.completed_at ? new Date(o.completed_at).toLocaleDateString() : '—'}</td>
+                    <td className="px-3 py-2">{$$(o.owner_earnings_minor)}</td>
+                    <td className="px-3 py-2"><Badge className={payableStyle(o.owner_payable_status)}>{o.owner_payable_status.replace(/_/g, ' ')}</Badge></td>
+                    <td className="px-3 py-2">
+                      {o.owner_payable_status === 'eligible_for_payout' && (
+                        <Button size="sm" onClick={() => setPayoutModalOrder(o)}>Record Payout</Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'payouts' && (
+        <div className="wh-card overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
+              <th className="px-3 py-2">Order</th><th className="px-3 py-2">Owner</th>
+              <th className="px-3 py-2">Amount</th><th className="px-3 py-2">Method</th>
+              <th className="px-3 py-2">Reference</th><th className="px-3 py-2">Paid At</th>
+              <th className="px-3 py-2">Recorded By</th>
+            </tr></thead>
+            <tbody>
+              {payouts.length === 0 && (<tr><td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">No payouts recorded yet.</td></tr>)}
+              {payouts.map((p) => (
+                <tr key={p.id} className="border-b border-border/60">
+                  <td className="px-3 py-2 font-mono text-xs">{p.order_id.slice(0, 8)}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{p.owner_user_id.slice(0, 8)}</td>
+                  <td className="px-3 py-2 font-semibold text-emerald-700">{$$(p.amount_minor)}</td>
+                  <td className="px-3 py-2 text-xs">{p.payout_method}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{p.payout_reference_display}</td>
+                  <td className="px-3 py-2 text-xs">{new Date(p.paid_at).toLocaleDateString()}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{p.created_by.slice(0, 8)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {modalOrder && (
         <ConfirmPaymentModal order={modalOrder} onClose={() => setModalOrder(null)}
@@ -87,6 +184,61 @@ export default function AdminMarketplaceClient({ initialItems, initialKpis }: { 
           onDone={async () => { setFeeModalOrder(null); await refetch(); }}
           busy={busy} setBusy={setBusy} />
       )}
+      {payoutModalOrder && (
+        <RecordPayoutModal order={payoutModalOrder} onClose={() => setPayoutModalOrder(null)}
+          onDone={async () => { setPayoutModalOrder(null); await refetchPayables(); await refetchPayouts(); }}
+          busy={busy} setBusy={setBusy} />
+      )}
+    </div>
+  );
+}
+
+function RecordPayoutModal({ order, onClose, onDone, busy, setBusy }: { order: MarketplaceOrder; onClose: () => void; onDone: () => Promise<void>; busy: string | null; setBusy: (b: string | null) => void }) {
+  const [method, setMethod] = useState<MarketplacePaymentMethod>('bank_transfer');
+  const [reference, setReference] = useState('');
+  const [paidAt, setPaidAt] = useState(new Date().toISOString().slice(0, 16));
+  const [notes, setNotes] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  async function submit() {
+    setBusy('payout'); setError(null);
+    try {
+      const r = await fetch(`/api/admin/marketplace/orders/${order.id}/record-payout`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ payout_method: method, payout_reference: reference.trim(), paid_at: new Date(paidAt).toISOString(), notes: notes.trim() || null }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j?.error || 'Payout failed');
+      await onDone();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(null); }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="wh-card bg-background p-5 max-w-md w-full">
+        <div className="font-semibold text-lg">Record owner payout</div>
+        <p className="mt-1 text-xs text-muted-foreground">Server-derived amount: <span className="font-mono font-semibold">${((order.owner_earnings_minor ?? 0) / 100).toFixed(2)}</span> (owner earnings on order <span className="font-mono">{order.id.slice(0, 8)}</span>). Amount cannot be edited.</p>
+        <div className="mt-3 grid gap-3">
+          <label className="text-sm"><span className="block text-xs uppercase text-muted-foreground mb-1">Payout method</span>
+            <select value={method} onChange={(e) => setMethod(e.target.value as MarketplacePaymentMethod)} className={inputCls}>
+              <option value="bank_transfer">Bank transfer</option>
+              <option value="paypal_manual">PayPal (manual)</option>
+              <option value="other">Other</option>
+            </select></label>
+          <label className="text-sm"><span className="block text-xs uppercase text-muted-foreground mb-1">Payout reference (external txn / batch id)</span>
+            <input value={reference} onChange={(e) => setReference(e.target.value)} className={inputCls} placeholder="OUT-2026-001234" /></label>
+          <label className="text-sm"><span className="block text-xs uppercase text-muted-foreground mb-1">Paid at</span>
+            <input type="datetime-local" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} className={inputCls} /></label>
+          <label className="text-sm"><span className="block text-xs uppercase text-muted-foreground mb-1">Notes (optional)</span>
+            <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></label>
+          {error && <div className="text-sm text-rose-600">{error}</div>}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose} disabled={busy !== null}>Cancel</Button>
+            <Button onClick={submit} disabled={busy !== null || !reference.trim()}>
+              {busy === 'payout' ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Recording…</> : 'Record payout'}
+            </Button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -201,10 +353,13 @@ function Kpi({ label, v, accent }: { label: string; v: string; accent?: 'amber' 
   return (<div className="wh-card p-3"><div className="text-[10px] uppercase text-muted-foreground tracking-wide">{label}</div><div className={`mt-1 text-lg font-bold ${accent ? map[accent] : ''}`}>{v}</div></div>);
 }
 const inputCls = 'block w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40';
+const tabClass = (a: boolean) => `rounded-md px-3 py-1.5 text-sm font-medium ${a ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-secondary'}`;
 function statusStyle(s: string): string {
-  if (s === 'paid') return 'bg-emerald-100 text-emerald-800';
+  if (s === 'paid' || s === 'completed') return 'bg-emerald-100 text-emerald-800';
   if (s === 'awaiting_payment') return 'bg-amber-100 text-amber-800';
   if (s === 'owner_accepted') return 'bg-sky-100 text-sky-800';
+  if (s === 'in_progress') return 'bg-indigo-100 text-indigo-800';
+  if (s === 'submitted_for_review') return 'bg-violet-100 text-violet-800';
   if (s === 'owner_rejected' || s === 'cancelled') return 'bg-slate-200 text-slate-700';
   return 'bg-primary/10 text-primary';
 }
@@ -212,5 +367,13 @@ function econStyle(s: string): string {
   if (s === 'finalized') return 'bg-emerald-100 text-emerald-800';
   if (s === 'pending_fee_reconciliation') return 'bg-rose-100 text-rose-800';
   if (s === 'accepted_awaiting_payment') return 'bg-amber-100 text-amber-800';
+  return 'bg-slate-100 text-slate-700';
+}
+function payableStyle(s: string): string {
+  if (s === 'eligible_for_payout') return 'bg-emerald-100 text-emerald-800';
+  if (s === 'paid_out') return 'bg-primary/15 text-primary';
+  if (s === 'blocked_fee_reconciliation') return 'bg-rose-100 text-rose-800';
+  if (s === 'submitted_for_review') return 'bg-violet-100 text-violet-800';
+  if (s === 'manual_reconciliation_required') return 'bg-amber-100 text-amber-800';
   return 'bg-slate-100 text-slate-700';
 }

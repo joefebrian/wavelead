@@ -192,5 +192,13 @@ export async function ensureIndexes(db: Db): Promise<void> {
       // when both event_type=PAYMENT_CONFIRMED AND payment_reference is set.
       { key: { order_id: 1, event_type: 1, payment_reference_normalized: 1 }, unique: true, name: 'uniq_payment_confirm', partialFilterExpression: { event_type: 'PAYMENT_CONFIRMED', payment_reference_normalized: { $type: 'string' } } },
     ]),
+    // Phase B2 — owner payouts (manual admin records; no PayPal Payouts API)
+    db.collection(COLLECTIONS.MARKETPLACE_OWNER_PAYOUTS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { order_id: 1 }, unique: true, name: 'uniq_order' },       // one full payout per order (V1)
+      { key: { owner_user_id: 1, created_at: -1 }, name: 'by_owner_time' },
+      // Cross-payout reference identity: (method, normalized) unique across the collection.
+      { key: { payout_method: 1, payout_reference_normalized: 1 }, unique: true, name: 'uniq_payout_identity', partialFilterExpression: { payout_method: { $type: 'string' }, payout_reference_normalized: { $type: 'string' } } },
+    ]),
   ]);
 }

@@ -1356,6 +1356,82 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ order }), request);
     }
 
+    // ── Phase B2 — Delivery lifecycle + payout ──────────────────────────────
+    // Owner: start work (paid → in_progress)
+    if (path.length === 4 && path[0] === 'marketplace' && path[1] === 'orders' && path[3] === 'start-work' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const order = await marketplaceService.startWork(actor, path[2]);
+      return applyCors(ok({ order }), request);
+    }
+    // Owner: submit delivery (in_progress → submitted_for_review)
+    if (path.length === 4 && path[0] === 'marketplace' && path[1] === 'orders' && path[3] === 'submit-delivery' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      const order = await marketplaceService.submitDelivery(actor, path[2], body);
+      return applyCors(ok({ order }), request);
+    }
+    // Buyer: accept delivery (submitted_for_review → completed)
+    if (path.length === 4 && path[0] === 'marketplace' && path[1] === 'orders' && path[3] === 'accept-delivery' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const order = await marketplaceService.buyerAcceptDelivery(actor, path[2]);
+      return applyCors(ok({ order }), request);
+    }
+    // Buyer: read a single order they own
+    if (path.length === 3 && path[0] === 'marketplace' && path[1] === 'buyer' && method === 'GET' && path[2] !== 'orders') {
+      // /marketplace/buyer/:orderId — only if this is not the list endpoint above
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const order = await marketplaceService.findOrderForBuyer(actor, path[2]);
+      return applyCors(order ? ok({ order }) : fail(404, 'Not found'), request);
+    }
+    // Admin: complete-override
+    if (path.length === 5 && path[0] === 'admin' && path[1] === 'marketplace' && path[2] === 'orders' && path[4] === 'complete-override' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const body = await safeJson(request);
+      const order = await marketplaceService.adminCompleteOrder(actor, path[3], body);
+      return applyCors(ok({ order }), request);
+    }
+    // Admin: record manual payout
+    if (path.length === 5 && path[0] === 'admin' && path[1] === 'marketplace' && path[2] === 'orders' && path[4] === 'record-payout' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const body = await safeJson(request);
+      const { order, payout } = await marketplaceService.adminRecordPayout(actor, path[3], body);
+      return applyCors(ok({ order, payout }), request);
+    }
+    // Admin: refund guard (no execution; marks manual_reconciliation_required if paid_out)
+    if (path.length === 5 && path[0] === 'admin' && path[1] === 'marketplace' && path[2] === 'orders' && path[4] === 'refund-guard' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const body = await safeJson(request);
+      const result = await marketplaceService.adminInitiateRefund(actor, path[3], body);
+      return applyCors(ok(result), request);
+    }
+    // Admin: payables + payouts lists
+    if (route === '/admin/marketplace/payables' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const url = new URL(request.url);
+      const statusParam = url.searchParams.get('status') || undefined;
+      const items = await marketplaceService.listPayablesAdmin(actor, statusParam ? { status: statusParam as never } : {});
+      return applyCors(ok({ items }), request);
+    }
+    if (route === '/admin/marketplace/payouts' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const items = await marketplaceService.listPayoutsAdmin(actor);
+      return applyCors(ok({ items }), request);
+    }
+
     return applyCors(fail(404, `Route ${route} not found`), request);
   } catch (err) {
     return applyCors(handleServiceError(err), request);

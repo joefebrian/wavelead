@@ -14,16 +14,18 @@ import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { HttpError, hasAtLeastRole, ROLES } from '../auth/rbac';
 import { channelRepo } from '../repositories/channelRepo';
-import { channelRateCardRepo, marketplaceFinancialEventRepo, marketplaceOrderRepo } from '../repositories/marketplaceRepo';
-import { computeSplit, OWNER_SHARE_BPS, PLATFORM_SHARE_BPS } from '../utils/marketplaceMoney';
+import { channelRateCardRepo, marketplaceFinancialEventRepo, marketplaceOrderRepo, marketplaceOwnerPayoutRepo } from '../repositories/marketplaceRepo';
+import { computeSplit, OWNER_SHARE_BPS, PLATFORM_SHARE_BPS, assertSafeMoney } from '../utils/marketplaceMoney';
 import type {
   Actor,
   Channel,
   ChannelRateCard,
   MarketplaceOrder,
   MarketplaceOrderStatus,
+  MarketplaceOwnerPayout,
   MarketplacePackageType,
   MarketplacePaymentMethod,
+  OwnerPayableStatus,
   RateCardPackage,
 } from '@/lib/types';
 import { MARKETPLACE_PACKAGE_TYPES, MARKETPLACE_PAYMENT_METHODS } from '@/lib/types';
@@ -252,6 +254,12 @@ export const marketplaceService = {
       cancelled_reason: null,
       created_at: now, updated_at: now,
       accepted_at: null, rejected_at: null, paid_at: null, cancelled_at: null,
+      // B2 delivery lifecycle fields — null until the order transitions past `paid`.
+      started_at: null, started_by: null,
+      delivery_notes: null, delivery_urls: [],
+      submitted_at: null, submitted_by: null, proof_description: null,
+      completed_at: null, completed_by: null, completion_source: null, completion_note: null,
+      paid_out_at: null, payout_id: null,
     };
     return marketplaceOrderRepo.insert(order);
   },
@@ -536,4 +544,338 @@ export const marketplaceService = {
       pending_fee_reconciliation: pending_fee,
     };
   },
+
+  // ============================================================================
+  // Phase B2 — Delivery lifecycle + owner payout
+  // ============================================================================
+
+  /**
+   * B2 — owner starts fulfillment. paid → in_progress.
+   * Requires order.status==='paid', economics_status==='finalized',
+   * owner_payable_status==='payable_pending_delivery'.
+   */
+  async startWork(actor: Actor | null, orderId: string): Promise<MarketplaceOrder> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const order = await marketplaceOrderRepo.findById(orderId);
+    if (!order) throw new HttpError(404, 'Order not found');
+    if (order.owner_user_id !== actor.user.id) throw new HttpError(403, 'Only the channel owner may start work');
+    if (order.status !== 'paid') throw new HttpError(400, `Cannot start work: order status is '${order.status}', not 'paid'`);
+    if (order.economics_status !== 'finalized') throw new HttpError(400, 'Cannot start work: order economics are not finalized (gateway fee may be unknown)');
+    if (order.owner_payable_status !== 'payable_pending_delivery') throw new HttpError(400, `Cannot start work: owner payable status is '${order.owner_payable_status}'`);
+    return marketplaceOrderRepo.update(orderId, {
+      status: 'in_progress',
+      started_at: new Date(),
+      started_by: actor.user.id,
+    });
+  },
+
+  /**
+   * B2 — owner submits fulfillment. in_progress → submitted_for_review.
+   * URL safety: only http:// and https:// are accepted. javascript:/data:/file:
+   * and any other schemes are rejected. Server DOES NOT fetch these URLs.
+   */
+  async submitDelivery(actor: Actor | null, orderId: string, input: unknown): Promise<MarketplaceOrder> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const schema = z.object({
+      delivery_notes: z.string().trim().min(1).max(4000),
+      delivery_urls: z.array(z.string().trim().min(1).max(2048)).min(0).max(10).default([]),
+      proof_description: z.string().trim().max(2000).optional().nullable(),
+    });
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) throw new HttpError(400, `Invalid input: ${parsed.error.issues[0]?.message}`);
+    const d = parsed.data;
+
+    // Validate URLs — http/https only, well-formed.
+    const cleanUrls: string[] = [];
+    for (const u of d.delivery_urls) {
+      let parsedUrl: URL;
+      try { parsedUrl = new URL(u); }
+      catch { throw new HttpError(400, `Delivery URL is not a valid URL: ${u.slice(0, 80)}`); }
+      const proto = parsedUrl.protocol.toLowerCase();
+      if (proto !== 'http:' && proto !== 'https:') {
+        throw new HttpError(400, `Delivery URL protocol is not allowed: ${proto} (only http/https)`);
+      }
+      cleanUrls.push(parsedUrl.toString());
+    }
+
+    const order = await marketplaceOrderRepo.findById(orderId);
+    if (!order) throw new HttpError(404, 'Order not found');
+    if (order.owner_user_id !== actor.user.id) throw new HttpError(403, 'Only the channel owner may submit delivery');
+    if (order.status !== 'in_progress') throw new HttpError(400, `Cannot submit delivery: order status is '${order.status}', not 'in_progress'`);
+
+    return marketplaceOrderRepo.update(orderId, {
+      status: 'submitted_for_review',
+      owner_payable_status: 'submitted_for_review',
+      delivery_notes: d.delivery_notes,
+      delivery_urls: cleanUrls,
+      proof_description: d.proof_description || null,
+      submitted_at: new Date(),
+      submitted_by: actor.user.id,
+    });
+  },
+
+  /**
+   * B2 — buyer accepts delivery. submitted_for_review → completed.
+   * Only order.buyer_user_id may accept.
+   */
+  async buyerAcceptDelivery(actor: Actor | null, orderId: string): Promise<MarketplaceOrder> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const order = await marketplaceOrderRepo.findById(orderId);
+    if (!order) throw new HttpError(404, 'Order not found');
+    if (!order.buyer_user_id || order.buyer_user_id !== actor.user.id) {
+      throw new HttpError(403, 'Only the buyer of this sponsorship may accept delivery');
+    }
+    if (order.status !== 'submitted_for_review') throw new HttpError(400, `Cannot accept: order status is '${order.status}', not 'submitted_for_review'`);
+    return this._finalizeCompletion(order, {
+      completed_by: actor.user.id,
+      completion_source: 'buyer',
+      completion_note: null,
+    });
+  },
+
+  /**
+   * B2 — admin/super_admin completion override. Requires a note.
+   * Records completion_source='admin' explicitly — never masquerades as buyer.
+   */
+  async adminCompleteOrder(actor: Actor | null, orderId: string, input: unknown): Promise<MarketplaceOrder> {
+    requireAdmin(actor);
+    const schema = z.object({ completion_note: z.string().trim().min(3).max(1000) });
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) throw new HttpError(400, 'completion_note is required (3–1000 chars)');
+    const order = await marketplaceOrderRepo.findById(orderId);
+    if (!order) throw new HttpError(404, 'Order not found');
+    if (order.status !== 'submitted_for_review' && order.status !== 'in_progress') {
+      throw new HttpError(400, `Cannot admin-complete: order status is '${order.status}'`);
+    }
+    return this._finalizeCompletion(order, {
+      completed_by: actor!.user.id,
+      completion_source: 'admin',
+      completion_note: parsed.data.completion_note,
+    });
+  },
+
+  /**
+   * Internal — shared completion path: writes completed_* fields, computes
+   * payout eligibility, appends DELIVERY_COMPLETED + OWNER_PAYABLE_ELIGIBLE
+   * financial events. Called by buyer accept and admin override.
+   */
+  async _finalizeCompletion(
+    order: MarketplaceOrder,
+    who: { completed_by: string; completion_source: 'buyer' | 'admin'; completion_note: string | null },
+  ): Promise<MarketplaceOrder> {
+    const now = new Date();
+    const nextPayable = deriveOwnerPayableAfterCompletion(order);
+    const updated = await marketplaceOrderRepo.update(order.id, {
+      status: 'completed',
+      completed_at: now,
+      completed_by: who.completed_by,
+      completion_source: who.completion_source,
+      completion_note: who.completion_note,
+      owner_payable_status: nextPayable,
+    });
+    // Append financial events (append-only). Do not mutate.
+    await marketplaceFinancialEventRepo.append({
+      order_id: order.id,
+      event_type: 'DELIVERY_COMPLETED',
+      currency: 'USD',
+      gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
+      gateway_fee_minor: order.gateway_fee_minor,
+      net_amount_minor: order.net_transaction_value_minor,
+      owner_earnings_minor: order.owner_earnings_minor,
+      wavelead_commission_minor: order.wavelead_commission_minor,
+      payment_reference_normalized: order.payment_reference_normalized,
+      actor_user_id: who.completed_by,
+      metadata: { completion_source: who.completion_source },
+    });
+    if (nextPayable === 'eligible_for_payout') {
+      await marketplaceFinancialEventRepo.append({
+        order_id: order.id,
+        event_type: 'OWNER_PAYABLE_ELIGIBLE',
+        currency: 'USD',
+        gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
+        gateway_fee_minor: order.gateway_fee_minor,
+        net_amount_minor: order.net_transaction_value_minor,
+        owner_earnings_minor: order.owner_earnings_minor,
+        wavelead_commission_minor: order.wavelead_commission_minor,
+        payment_reference_normalized: order.payment_reference_normalized,
+        actor_user_id: who.completed_by,
+        metadata: {},
+      });
+    }
+    return updated;
+  },
+
+  /**
+   * B2 — admin records a manual owner payout. V1 full payout only.
+   * Amount is server-derived from order.owner_earnings_minor.
+   * Only admin/super_admin may call. Requires owner_payable_status==='eligible_for_payout'.
+   */
+  async adminRecordPayout(actor: Actor | null, orderId: string, input: unknown): Promise<{ order: MarketplaceOrder; payout: MarketplaceOwnerPayout }> {
+    requireAdmin(actor);
+    const schema = z.object({
+      payout_method: z.enum(MARKETPLACE_PAYMENT_METHODS as readonly [string, ...string[]]),
+      payout_reference: z.string().trim().min(1).max(200),
+      paid_at: z.string().datetime(),
+      notes: z.string().trim().max(2000).optional().nullable(),
+    });
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) throw new HttpError(400, `Invalid input: ${parsed.error.issues[0]?.message}`);
+    const d = parsed.data;
+
+    const order = await marketplaceOrderRepo.findById(orderId);
+    if (!order) throw new HttpError(404, 'Order not found');
+    if (order.status !== 'completed') throw new HttpError(400, `Cannot record payout: order status is '${order.status}', not 'completed'`);
+    if (order.economics_status !== 'finalized') throw new HttpError(400, 'Cannot record payout: order economics are not finalized');
+    if (order.owner_payable_status !== 'eligible_for_payout' && order.owner_payable_status !== 'paid_out') {
+      throw new HttpError(400, `Cannot record payout: owner payable status is '${order.owner_payable_status}'`);
+    }
+    if (order.owner_earnings_minor === null || order.owner_earnings_minor === undefined) {
+      throw new HttpError(400, 'Cannot record payout: owner earnings not finalized');
+    }
+    assertSafeMoney(order.owner_earnings_minor, 'owner_earnings_minor');
+
+    const normalizedRef = normalizePaymentReference(d.payout_reference);
+
+    // Idempotency (same order): if a payout already exists on this order and
+    // uses the SAME (method, ref), return it as a safe no-op.
+    const existing = await marketplaceOwnerPayoutRepo.findByOrder(orderId);
+    if (existing) {
+      if (
+        existing.payout_method === (d.payout_method as MarketplacePaymentMethod) &&
+        existing.payout_reference_normalized === normalizedRef
+      ) {
+        return { order, payout: existing };
+      }
+      throw new HttpError(409, 'This order already has a payout recorded with a different reference');
+    }
+
+    // Cross-payout identity: (method, normalized) must be unique across payouts.
+    const otherWithSameIdentity = await marketplaceOwnerPayoutRepo.findByPayoutIdentity(d.payout_method, normalizedRef);
+    if (otherWithSameIdentity) {
+      throw new HttpError(409, 'This payout reference is already allocated to another payout');
+    }
+
+    // Amount is server-authoritative. Client-supplied amount is ignored (Zod does
+    // not include it in the schema, so it never reaches this scope).
+    const payout: MarketplaceOwnerPayout = {
+      id: uuidv4(),
+      order_id: order.id,
+      owner_user_id: order.owner_user_id,
+      channel_id: order.channel_id,
+      currency: 'USD',
+      amount_minor: order.owner_earnings_minor,
+      payout_method: d.payout_method as MarketplacePaymentMethod,
+      payout_reference_normalized: normalizedRef,
+      payout_reference_display: d.payout_reference,
+      paid_at: new Date(d.paid_at),
+      notes: d.notes || null,
+      created_by: actor!.user.id,
+      created_at: new Date(),
+    };
+
+    try {
+      await marketplaceOwnerPayoutRepo.insert(payout);
+    } catch (e) {
+      if (/E11000|duplicate key/i.test((e as Error).message)) {
+        throw new HttpError(409, 'This payout reference is already allocated to another payout');
+      }
+      throw e;
+    }
+
+    const updatedOrder = await marketplaceOrderRepo.update(order.id, {
+      owner_payable_status: 'paid_out',
+      paid_out_at: payout.paid_at,
+      payout_id: payout.id,
+    });
+
+    await marketplaceFinancialEventRepo.append({
+      order_id: order.id,
+      event_type: 'OWNER_PAYOUT_RECORDED',
+      currency: 'USD',
+      gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
+      gateway_fee_minor: order.gateway_fee_minor,
+      net_amount_minor: order.net_transaction_value_minor,
+      owner_earnings_minor: order.owner_earnings_minor,
+      wavelead_commission_minor: order.wavelead_commission_minor,
+      payment_reference_normalized: order.payment_reference_normalized,
+      actor_user_id: actor!.user.id,
+      metadata: {
+        payout_id: payout.id,
+        payout_method: payout.payout_method,
+        payout_reference_normalized: payout.payout_reference_normalized,
+      },
+    });
+
+    return { order: updatedOrder, payout };
+  },
+
+  /**
+   * B2 — refund guard. Refund execution is admin-only and remains manual.
+   * If owner has already been paid, the system MUST NOT reverse economics
+   * silently. Marks the order manual_reconciliation_required and returns
+   * the guard state. Actual refund provider execution is out of scope for B2.
+   */
+  async adminInitiateRefund(actor: Actor | null, orderId: string, input: unknown): Promise<{ order: MarketplaceOrder; requires_manual: boolean; reason: string }> {
+    requireAdmin(actor);
+    const schema = z.object({ reason: z.string().trim().min(3).max(1000) });
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) throw new HttpError(400, 'refund reason is required (3-1000 chars)');
+    const order = await marketplaceOrderRepo.findById(orderId);
+    if (!order) throw new HttpError(404, 'Order not found');
+
+    if (order.owner_payable_status === 'paid_out') {
+      // Owner already paid. Refund must NOT auto-reverse economics.
+      const updated = await marketplaceOrderRepo.update(orderId, {
+        owner_payable_status: 'manual_reconciliation_required',
+      });
+      return { order: updated, requires_manual: true, reason: parsed.data.reason };
+    }
+    // Not paid-out — economics could still be reversed by a future admin flow,
+    // but B2 does not implement provider-side refund execution.
+    return { order, requires_manual: true, reason: parsed.data.reason };
+  },
+
+  // -------- Buyer / owner list helpers for UI --------
+  async listByOwner(actor: Actor | null): Promise<MarketplaceOrder[]> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    return marketplaceOrderRepo.listByOwner(actor.user.id);
+  },
+  async findOrderForOwner(actor: Actor | null, orderId: string): Promise<MarketplaceOrder | null> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const o = await marketplaceOrderRepo.findById(orderId);
+    if (!o) return null;
+    if (o.owner_user_id !== actor.user.id) throw new HttpError(403, 'Not your order');
+    return o;
+  },
+  async findOrderForBuyer(actor: Actor | null, orderId: string): Promise<MarketplaceOrder | null> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const o = await marketplaceOrderRepo.findById(orderId);
+    if (!o) return null;
+    if (!o.buyer_user_id || o.buyer_user_id !== actor.user.id) throw new HttpError(403, 'Not your order');
+    return o;
+  },
+  async listPayoutsAdmin(actor: Actor | null): Promise<MarketplaceOwnerPayout[]> {
+    requireAdmin(actor);
+    return marketplaceOwnerPayoutRepo.listAdmin();
+  },
+  async listPayablesAdmin(actor: Actor | null, filter: { status?: OwnerPayableStatus } = {}): Promise<MarketplaceOrder[]> {
+    requireAdmin(actor);
+    const all = await marketplaceOrderRepo.listAdmin({});
+    return all.filter((o) => (filter.status ? o.owner_payable_status === filter.status : ['eligible_for_payout', 'paid_out', 'blocked_fee_reconciliation', 'submitted_for_review', 'manual_reconciliation_required'].includes(o.owner_payable_status)));
+  },
 };
+
+/**
+ * B2 — pure function that derives owner_payable_status upon completion.
+ * The rules are strict: ANY missing invariant blocks payout eligibility.
+ */
+export function deriveOwnerPayableAfterCompletion(order: MarketplaceOrder): OwnerPayableStatus {
+  // If we're already paid_out, don't downgrade.
+  if (order.owner_payable_status === 'paid_out') return 'paid_out';
+  // Must be paid + finalized.
+  if (order.status !== 'paid' && order.status !== 'in_progress' && order.status !== 'submitted_for_review' && order.status !== 'completed') return 'not_applicable';
+  if (order.economics_status !== 'finalized') return 'blocked_fee_reconciliation';
+  if (order.gateway_fee_minor === null || order.gateway_fee_minor === undefined) return 'blocked_fee_reconciliation';
+  if (order.owner_earnings_minor === null || order.owner_earnings_minor === undefined) return 'blocked_fee_reconciliation';
+  return 'eligible_for_payout';
+}

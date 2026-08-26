@@ -23,6 +23,7 @@ export default function MonetizationClient({
   const [orders, setOrders] = useState<MarketplaceOrder[]>(initialOrders);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<null | { ok: boolean; text: string }>(null);
+  const [deliveryDraft, setDeliveryDraft] = useState<Record<string, { notes: string; urls: string }>>({});
 
   function addPkg() {
     setPackages((p) => [...p, { type: 'sponsored_post', name: '', description: '', price_minor: 25000, currency: 'USD', deliverables: [], estimated_delivery_days: null, is_active: true }]);
@@ -53,7 +54,7 @@ export default function MonetizationClient({
     finally { setBusy(false); }
   }
 
-  async function doAction(orderId: string, action: 'accept' | 'reject') {
+  async function doAction(orderId: string, action: 'accept' | 'reject' | 'start-work') {
     setBusy(true); setMsg(null);
     try {
       const r = await fetch(`/api/marketplace/orders/${orderId}/${action}`, {
@@ -63,7 +64,26 @@ export default function MonetizationClient({
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Action failed');
       setOrders((prev) => prev.map((o) => (o.id === orderId ? j.data.order as MarketplaceOrder : o)));
-      setMsg({ ok: true, text: `Order ${action}ed.` });
+      setMsg({ ok: true, text: `Order ${action.replace('-', ' ')}ed.` });
+    } catch (e) { setMsg({ ok: false, text: (e as Error).message }); }
+    finally { setBusy(false); }
+  }
+
+  async function submitDelivery(orderId: string) {
+    const notes = deliveryDraft[orderId]?.notes?.trim();
+    const urlsRaw = (deliveryDraft[orderId]?.urls || '').split('\n').map((s) => s.trim()).filter(Boolean);
+    if (!notes) { setMsg({ ok: false, text: 'Please add delivery notes.' }); return; }
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch(`/api/marketplace/orders/${orderId}/submit-delivery`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ delivery_notes: notes, delivery_urls: urlsRaw }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j?.error || 'Submission failed');
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? j.data.order as MarketplaceOrder : o)));
+      setDeliveryDraft((d) => { const n = { ...d }; delete n[orderId]; return n; });
+      setMsg({ ok: true, text: 'Delivery submitted for buyer review.' });
     } catch (e) { setMsg({ ok: false, text: (e as Error).message }); }
     finally { setBusy(false); }
   }
@@ -143,6 +163,39 @@ export default function MonetizationClient({
                   <Button size="sm" variant="outline" onClick={() => doAction(o.id, 'reject')} disabled={busy}>Reject</Button>
                 </div>
               )}
+              {o.status === 'paid' && o.economics_status === 'finalized' && (
+                <div className="mt-3 flex gap-2">
+                  <Button size="sm" onClick={() => doAction(o.id, 'start-work')} disabled={busy}>Start Work</Button>
+                </div>
+              )}
+              {o.status === 'in_progress' && (
+                <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">Submit Delivery</div>
+                  <textarea rows={3} placeholder="Delivery notes — what you did, when it ran, results if any." className={inputCls}
+                    value={deliveryDraft[o.id]?.notes || ''}
+                    onChange={(e) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: e.target.value, urls: d[o.id]?.urls || '' } }))} />
+                  <input placeholder="Proof URLs (one per line, http/https only)" className={inputCls}
+                    value={deliveryDraft[o.id]?.urls || ''}
+                    onChange={(e) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: d[o.id]?.notes || '', urls: e.target.value } }))} />
+                  <Button size="sm" onClick={() => submitDelivery(o.id)} disabled={busy}>Submit delivery for review</Button>
+                </div>
+              )}
+              {o.status === 'submitted_for_review' && (
+                <div className="mt-3 text-sm text-muted-foreground">Awaiting buyer review — you&apos;ll be notified when accepted.</div>
+              )}
+              {o.status === 'completed' && (
+                <div className="mt-3 text-sm">
+                  {o.owner_payable_status === 'paid_out' ? (
+                    <span className="text-emerald-700 font-medium">Paid — ${((o.owner_earnings_minor ?? 0) / 100).toFixed(2)} received {o.paid_out_at ? `on ${new Date(o.paid_out_at).toLocaleDateString()}` : ''}</span>
+                  ) : o.owner_payable_status === 'eligible_for_payout' ? (
+                    <span className="text-emerald-700 font-medium">Eligible for payout — ${((o.owner_earnings_minor ?? 0) / 100).toFixed(2)} pending WaveLead disbursement</span>
+                  ) : o.owner_payable_status === 'manual_reconciliation_required' ? (
+                    <span className="text-amber-700 font-medium">Payout reconciliation required — contact WaveLead</span>
+                  ) : (
+                    <span className="text-muted-foreground">Completed. Payable status: {o.owner_payable_status}</span>
+                  )}
+                </div>
+              )}
             </div>
           ))}
           {msg && <div className={`text-sm ${msg.ok ? 'text-emerald-600' : 'text-rose-600'}`}>{msg.text}</div>}
@@ -157,9 +210,11 @@ export default function MonetizationClient({
 const tabClass = (a: boolean) => `rounded-md px-3 py-1.5 text-sm font-medium ${a ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-secondary'}`;
 const inputCls = 'block w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40';
 function statusStyle(s: string): string {
-  if (s === 'paid') return 'bg-emerald-100 text-emerald-800';
+  if (s === 'paid' || s === 'completed') return 'bg-emerald-100 text-emerald-800';
   if (s === 'awaiting_payment') return 'bg-amber-100 text-amber-800';
   if (s === 'owner_accepted') return 'bg-sky-100 text-sky-800';
+  if (s === 'in_progress') return 'bg-indigo-100 text-indigo-800';
+  if (s === 'submitted_for_review') return 'bg-violet-100 text-violet-800';
   if (s === 'owner_rejected' || s === 'cancelled') return 'bg-slate-200 text-slate-700';
   return 'bg-primary/10 text-primary';
 }

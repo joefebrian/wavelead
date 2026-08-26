@@ -35,6 +35,7 @@ export const COLLECTIONS = {
   CHANNEL_RATE_CARDS: 'channel_rate_cards',
   MARKETPLACE_ORDERS: 'marketplace_orders',
   MARKETPLACE_FINANCIAL_EVENTS: 'marketplace_financial_events',
+  MARKETPLACE_OWNER_PAYOUTS: 'marketplace_owner_payouts',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

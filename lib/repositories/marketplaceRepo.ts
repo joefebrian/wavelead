@@ -7,6 +7,7 @@ import type {
   MarketplaceFinancialEvent,
   MarketplaceOrder,
   MarketplaceOrderStatus,
+  MarketplaceOwnerPayout,
 } from '@/lib/types';
 
 export const channelRateCardRepo = {
@@ -81,5 +82,33 @@ export const marketplaceFinancialEventRepo = {
   async listByOrder(order_id: string): Promise<MarketplaceFinancialEvent[]> {
     const c = await getCollection<MarketplaceFinancialEvent>(COLLECTIONS.MARKETPLACE_FINANCIAL_EVENTS);
     return stripIds(await c.find({ order_id }).sort({ created_at: 1 }).toArray()) as MarketplaceFinancialEvent[];
+  },
+};
+
+// B2 — manual owner payouts.
+export const marketplaceOwnerPayoutRepo = {
+  async insert(p: MarketplaceOwnerPayout): Promise<MarketplaceOwnerPayout> {
+    const c = await getCollection<MarketplaceOwnerPayout>(COLLECTIONS.MARKETPLACE_OWNER_PAYOUTS);
+    await c.insertOne(p);
+    return stripId(p) as MarketplaceOwnerPayout;
+  },
+  async findById(id: string): Promise<MarketplaceOwnerPayout | null> {
+    const c = await getCollection<MarketplaceOwnerPayout>(COLLECTIONS.MARKETPLACE_OWNER_PAYOUTS);
+    return stripId(await c.findOne({ id })) as MarketplaceOwnerPayout | null;
+  },
+  async findByOrder(order_id: string): Promise<MarketplaceOwnerPayout | null> {
+    const c = await getCollection<MarketplaceOwnerPayout>(COLLECTIONS.MARKETPLACE_OWNER_PAYOUTS);
+    return stripId(await c.findOne({ order_id })) as MarketplaceOwnerPayout | null;
+  },
+  async findByPayoutIdentity(method: string, normalized: string): Promise<MarketplaceOwnerPayout | null> {
+    const c = await getCollection<MarketplaceOwnerPayout>(COLLECTIONS.MARKETPLACE_OWNER_PAYOUTS);
+    return stripId(await c.findOne({
+      payout_method: method as MarketplaceOwnerPayout['payout_method'],
+      payout_reference_normalized: normalized,
+    })) as MarketplaceOwnerPayout | null;
+  },
+  async listAdmin(): Promise<MarketplaceOwnerPayout[]> {
+    const c = await getCollection<MarketplaceOwnerPayout>(COLLECTIONS.MARKETPLACE_OWNER_PAYOUTS);
+    return stripIds(await c.find({}).sort({ created_at: -1 }).limit(500).toArray()) as MarketplaceOwnerPayout[];
   },
 };
