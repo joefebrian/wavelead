@@ -32,6 +32,9 @@ export const COLLECTIONS = {
   INTEGRATION_PROVIDER_SETTINGS: 'integration_provider_settings',
   SECURITY_AUDIT_EVENTS: 'security_audit_events',
   COMMERCIAL_LEADS: 'commercial_leads',
+  CHANNEL_RATE_CARDS: 'channel_rate_cards',
+  MARKETPLACE_ORDERS: 'marketplace_orders',
+  MARKETPLACE_FINANCIAL_EVENTS: 'marketplace_financial_events',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

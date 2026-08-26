@@ -169,5 +169,25 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { status: 1, created_at: -1 }, name: 'by_status_time' },
       { key: { type: 1, created_at: -1 }, name: 'by_type_time' },
     ]),
+    // Phase B1 — marketplace
+    db.collection(COLLECTIONS.CHANNEL_RATE_CARDS).createIndexes([
+      { key: { channel_id: 1 }, unique: true, name: 'uniq_channel' },
+      { key: { owner_user_id: 1 }, name: 'by_owner' },
+    ]),
+    db.collection(COLLECTIONS.MARKETPLACE_ORDERS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { channel_id: 1, created_at: -1 }, name: 'by_channel_time' },
+      { key: { owner_user_id: 1, status: 1, created_at: -1 }, name: 'by_owner_status_time' },
+      { key: { buyer_user_id: 1, created_at: -1 }, name: 'by_buyer_time' },
+      { key: { status: 1, created_at: -1 }, name: 'by_status_time' },
+      { key: { payment_reference_normalized: 1 }, name: 'by_payment_ref', partialFilterExpression: { payment_reference_normalized: { $type: 'string' } } },
+    ]),
+    db.collection(COLLECTIONS.MARKETPLACE_FINANCIAL_EVENTS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { order_id: 1, created_at: -1 }, name: 'by_order_time' },
+      // Idempotency: (order_id, event_type, payment_reference_normalized) unique
+      // when both event_type=PAYMENT_CONFIRMED AND payment_reference is set.
+      { key: { order_id: 1, event_type: 1, payment_reference_normalized: 1 }, unique: true, name: 'uniq_payment_confirm', partialFilterExpression: { event_type: 'PAYMENT_CONFIRMED', payment_reference_normalized: { $type: 'string' } } },
+    ]),
   ]);
 }

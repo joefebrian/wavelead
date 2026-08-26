@@ -1263,6 +1263,99 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ lead }), request);
     }
 
+    // ---------- MARKETPLACE (Phase B1) ----------
+    // Owner rate-card CRUD (verified owner only)
+    if (path.length === 3 && path[0] === 'owner' && path[1] === 'channels' && path[2] === 'rate-card' && method === 'GET') {
+      // /owner/channels/:id/rate-card — this shape supported below
+    }
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'rate-card') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const channelId = path[2];
+      if (method === 'GET') {
+        const card = await marketplaceService.getMyRateCard(actor, channelId);
+        return applyCors(ok({ rate_card: card }), request);
+      }
+      if (method === 'PUT') {
+        const body = await safeJson(request);
+        const card = await marketplaceService.replaceRateCard(actor, channelId, body);
+        return applyCors(ok({ rate_card: card }), request);
+      }
+    }
+    // Public: rate card for a channel (sanitized)
+    if (path.length === 3 && path[0] === 'channels' && path[2] === 'rate-card' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const data = await marketplaceService.getPublicRateCard(path[1]);
+      if (!data) return applyCors(fail(404, 'not_found'), request);
+      return applyCors(ok(data), request);
+    }
+    // Brand booking
+    if (route === '/marketplace/orders' && method === 'POST') {
+      const rl = rateLimit(clientKey(request, 'mp-book'), 10, 60_000);
+      if (!rl.allowed) return applyCors(fail(429, 'Too many requests', { retryAfter: rl.retryAfterSeconds }), request);
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      const order = await marketplaceService.submitBooking(actor, body);
+      return applyCors(ok({ order }, { status: 201 }), request);
+    }
+    // Owner: list own orders + accept + reject
+    if (route === '/marketplace/owner/orders' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const { searchParams } = new URL(request.url);
+      const status = (searchParams.get('status') || undefined) as import('@/lib/types').MarketplaceOrderStatus | undefined;
+      const items = await marketplaceService.listMyOwnerOrders(actor, status);
+      return applyCors(ok({ items }), request);
+    }
+    if (path.length === 4 && path[0] === 'marketplace' && path[1] === 'orders' && path[3] === 'accept' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const order = await marketplaceService.ownerAcceptOrder(actor, path[2]);
+      return applyCors(ok({ order }), request);
+    }
+    if (path.length === 4 && path[0] === 'marketplace' && path[1] === 'orders' && path[3] === 'reject' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      const order = await marketplaceService.ownerRejectOrder(actor, path[2], body);
+      return applyCors(ok({ order }), request);
+    }
+    // Buyer: list own orders
+    if (route === '/marketplace/buyer/orders' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const items = await marketplaceService.listMyBuyerOrders(actor);
+      return applyCors(ok({ items }), request);
+    }
+    // Admin: list orders, kpis, confirm payment, reconcile fee
+    if (route === '/admin/marketplace/orders' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const { searchParams } = new URL(request.url);
+      const status = (searchParams.get('status') || undefined) as import('@/lib/types').MarketplaceOrderStatus | undefined;
+      const items = await marketplaceService.listOrdersAdmin(actor, { status });
+      const kpis = await marketplaceService.adminKpis(actor);
+      return applyCors(ok({ items, kpis }), request);
+    }
+    if (path.length === 5 && path[0] === 'admin' && path[1] === 'marketplace' && path[2] === 'orders' && path[4] === 'confirm-payment' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const body = await safeJson(request);
+      const order = await marketplaceService.adminConfirmPayment(actor, path[3], body);
+      return applyCors(ok({ order }), request);
+    }
+    if (path.length === 5 && path[0] === 'admin' && path[1] === 'marketplace' && path[2] === 'orders' && path[4] === 'reconcile-fee' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const body = await safeJson(request);
+      const order = await marketplaceService.adminReconcileFee(actor, path[3], body);
+      return applyCors(ok({ order }), request);
+    }
+
     return applyCors(fail(404, `Route ${route} not found`), request);
   } catch (err) {
     return applyCors(handleServiceError(err), request);

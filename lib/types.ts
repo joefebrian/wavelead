@@ -824,3 +824,167 @@ export interface CommercialLead {
   created_at: Date;
   updated_at: Date;
 }
+
+// ============================================================
+// Phase B1 — Sponsorship Marketplace Commerce
+// ============================================================
+export type MarketplacePackageType = 'sponsored_post' | 'sponsored_post_pin' | 'multi_post' | 'custom_quote';
+export const MARKETPLACE_PACKAGE_TYPES: readonly MarketplacePackageType[] = [
+  'sponsored_post', 'sponsored_post_pin', 'multi_post', 'custom_quote',
+] as const;
+
+// Package inline inside a channel_rate_card doc.
+export interface RateCardPackage {
+  id: string;
+  type: MarketplacePackageType;
+  name: string;
+  description: string;
+  // price_minor is null for `custom_quote`. Otherwise an integer minor unit (USD cents).
+  price_minor: number | null;
+  currency: 'USD';
+  deliverables: string[];
+  estimated_delivery_days: number | null;
+  is_active: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+export interface ChannelRateCard {
+  id: string;
+  channel_id: string;               // unique per channel
+  owner_user_id: string;            // verified owner at time of publish
+  packages: RateCardPackage[];
+  created_at: Date;
+  updated_at: Date;
+}
+
+// Marketplace order lifecycle.
+export type MarketplaceOrderStatus =
+  | 'requested'
+  | 'owner_accepted'
+  | 'owner_rejected'
+  | 'awaiting_payment'
+  | 'paid'
+  | 'cancelled';
+
+// Economics finalization state.
+export type OrderEconomicsStatus =
+  | 'pre_acceptance'                 // not yet accepted, no snapshot
+  | 'accepted_awaiting_payment'      // snapshot taken, no payment
+  | 'pending_fee_reconciliation'     // payment confirmed but gateway_fee unknown
+  | 'finalized';                     // gateway_fee known, owner/commission computed
+
+export type OwnerPayableStatus =
+  | 'not_applicable'
+  | 'blocked_fee_reconciliation'
+  | 'payable_pending_delivery';
+
+export type MarketplacePaymentMethod = 'bank_transfer' | 'paypal_manual' | 'other';
+export const MARKETPLACE_PAYMENT_METHODS: readonly MarketplacePaymentMethod[] = [
+  'bank_transfer', 'paypal_manual', 'other',
+] as const;
+
+// Atomic snapshot taken at owner_accept. Rate-card edits AFTER this must not
+// change any of these fields.
+export interface MarketplaceOrderSnapshot {
+  channel_id: string;
+  channel_name: string;
+  channel_slug: string;
+  owner_user_id: string;
+  package_id: string;
+  package_type: MarketplacePackageType;
+  package_name: string;
+  package_description: string;
+  deliverables: string[];
+  estimated_delivery_days: number | null;
+  gross_price_minor: number;         // never null once accepted (custom_quote never reaches accept via this path)
+  currency: 'USD';
+  owner_share_bps: 9000;
+  platform_share_bps: 1000;
+  accepted_at: Date;
+  accepted_by: string;               // owner user id
+}
+
+// Brand-submitted brief.
+export interface MarketplaceOrderBrief {
+  company_name: string;
+  contact_name: string;
+  contact_email: string;             // normalized lowercase
+  campaign_objective: string;
+  brief: string;
+  target_start_date: Date | null;
+  target_end_date: Date | null;
+  product_url: string | null;
+  notes: string | null;
+}
+
+export interface MarketplaceOrder {
+  id: string;
+  status: MarketplaceOrderStatus;
+  economics_status: OrderEconomicsStatus;
+
+  // Buyer side
+  buyer_user_id: string | null;      // authenticated brand user (if any)
+  brief: MarketplaceOrderBrief;
+
+  // Seller side (denormalized for admin search; authoritative is snapshot below once accepted)
+  channel_id: string;
+  channel_slug: string;
+  owner_user_id: string;
+
+  // Package pointer at request time (used to compute price for the request)
+  package_id: string;
+  package_type: MarketplacePackageType;
+
+  // Server-derived price at request time (informational — the authoritative
+  // sellable price is `snapshot.gross_price_minor` after acceptance).
+  quoted_price_minor: number | null;
+  currency: 'USD';
+
+  // Snapshot — populated on ACCEPT. Immutable thereafter.
+  snapshot: MarketplaceOrderSnapshot | null;
+
+  // Payment
+  payment_method: MarketplacePaymentMethod | null;
+  payment_reference_normalized: string | null;  // lowercased/trimmed for uniqueness
+  payment_reference_display: string | null;      // as entered
+  payment_received_at: Date | null;
+  amount_received_minor: number | null;
+  gateway_fee_minor: number | null;              // null = UNKNOWN, 0 = known-zero
+  // Cached derived economics (null while unknown; NEVER computed with gateway_fee ?? 0)
+  net_transaction_value_minor: number | null;
+  owner_earnings_minor: number | null;
+  wavelead_commission_minor: number | null;
+  owner_payable_status: OwnerPayableStatus;
+
+  rejection_reason: string | null;
+  cancelled_reason: string | null;
+
+  created_at: Date;
+  updated_at: Date;
+  accepted_at: Date | null;
+  rejected_at: Date | null;
+  paid_at: Date | null;
+  cancelled_at: Date | null;
+}
+
+// Append-only marketplace financial events. Do NOT mutate rows after write.
+export type MarketplaceFinancialEventType =
+  | 'ORDER_ACCEPTED'
+  | 'PAYMENT_CONFIRMED'
+  | 'GATEWAY_FEE_RECONCILED';
+
+export interface MarketplaceFinancialEvent {
+  id: string;
+  order_id: string;
+  event_type: MarketplaceFinancialEventType;
+  currency: 'USD';
+  gross_amount_minor: number | null;
+  gateway_fee_minor: number | null;
+  net_amount_minor: number | null;
+  owner_earnings_minor: number | null;
+  wavelead_commission_minor: number | null;
+  payment_reference_normalized: string | null;
+  actor_user_id: string;
+  metadata: Record<string, unknown>;   // NEVER secrets
+  created_at: Date;
+}
