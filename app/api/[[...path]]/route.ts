@@ -76,16 +76,16 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const rl = rateLimit(clientKey(request, 'signup'), 5, 60_000);
       if (!rl.allowed) return applyCors(fail(429, 'Too many signup attempts, please slow down', { retryAfter: rl.retryAfterSeconds }), request);
       const body = await safeJson(request);
-      const { user, token } = await authService.signup(body);
-      const res = applyCors(ok({ user }), request);
+      const { user, token, redirect_to } = await authService.signup(body, (body as { next?: unknown })?.next);
+      const res = applyCors(ok({ user, redirect_to }), request);
       return setSessionCookie(res, token);
     }
     if (route === '/auth/login' && method === 'POST') {
       const rl = rateLimit(clientKey(request, 'login'), 8, 60_000);
       if (!rl.allowed) return applyCors(fail(429, 'Too many login attempts, please try again shortly', { retryAfter: rl.retryAfterSeconds }), request);
       const body = await safeJson(request);
-      const { user, token } = await authService.login(body);
-      const res = applyCors(ok({ user }), request);
+      const { user, token, redirect_to } = await authService.login(body, (body as { next?: unknown })?.next);
+      const res = applyCors(ok({ user, redirect_to }), request);
       return setSessionCookie(res, token);
     }
     if (route === '/auth/logout' && method === 'POST') {
@@ -120,7 +120,14 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       try {
         const identity = await exchangeSessionId(sessionId);
         const result = await linkAndIssueSession(identity);
-        const res = applyCors(ok({ user_id: result.user_id, linked: result.linked }), request);
+        // Compute a role-aware redirect using the freshly-loaded DB user.
+        const { userRepo } = await import('@/lib/repositories/userRepo');
+        const { resolvePostLoginRedirect } = await import('@/lib/auth/postLoginRedirect');
+        const dbUser = await userRepo.findById(result.user_id);
+        const redirect_to = dbUser
+          ? resolvePostLoginRedirect({ user: dbUser as unknown as import('@/lib/types').PublicUser, next: (body as { next?: unknown })?.next })
+          : '/dashboard';
+        const res = applyCors(ok({ user_id: result.user_id, linked: result.linked, redirect_to }), request);
         return setSessionCookie(res, result.token);
       } catch (e) {
         if (e instanceof EmergentAuthError) return applyCors(fail(e.httpStatus, e.code), request);

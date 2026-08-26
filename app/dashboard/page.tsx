@@ -8,7 +8,7 @@ import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { ownerService } from '@/lib/services/ownerService';
 import { claimService } from '@/lib/services/claimService';
 import { sponsorshipLeadService } from '@/lib/services/sponsorshipLeadService';
-import { KeyRound, ShieldCheck, Send, Megaphone, Wallet, Handshake, Compass } from 'lucide-react';
+import { KeyRound, ShieldCheck, Send, Megaphone, Wallet, Handshake, Compass, Shield, Users, Cog, Activity } from 'lucide-react';
 
 export const metadata: Metadata = { title: 'Dashboard', robots: { index: false, follow: false } };
 export const dynamic = 'force-dynamic';
@@ -18,6 +18,7 @@ export default async function DashboardPage() {
   if (!actor) redirect('/login?next=/dashboard');
 
   const isBusiness = actor.user.role === 'business';
+  const isSuperAdmin = actor.user.role === 'super_admin';
 
   const [channels, claims, myLeads] = await Promise.all([
     ownerService.listMine(actor),
@@ -35,6 +36,30 @@ export default async function DashboardPage() {
         <p className="text-muted-foreground mt-1">
           Signed in as <span className="font-medium text-foreground">{actor.user.display_name || actor.user.email}</span> · role <span className="font-mono text-primary">{actor.user.role}</span>
         </p>
+
+        {isSuperAdmin && (
+          <section
+            data-testid="super-admin-entry"
+            className="mt-6 rounded-lg border border-primary/30 bg-primary/5 p-4"
+          >
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <div className="inline-flex items-center gap-2 text-xs uppercase text-primary font-semibold tracking-wide">
+                  <Shield className="h-4 w-4" /> Super Admin
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Operational surfaces are on the Admin Console. Quick links below.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Link href="/admin"><Button size="sm" className="gap-1.5"><Shield className="h-4 w-4" />Admin Console</Button></Link>
+                <Link href="/admin/users"><Button size="sm" variant="outline" className="gap-1.5"><Users className="h-4 w-4" />Users</Button></Link>
+                <Link href="/admin/settings/paypal"><Button size="sm" variant="outline" className="gap-1.5"><Cog className="h-4 w-4" />PayPal Settings</Button></Link>
+                <Link href="/admin/payment-health"><Button size="sm" variant="outline" className="gap-1.5"><Activity className="h-4 w-4" />Payment Health</Button></Link>
+              </div>
+            </div>
+          </section>
+        )}
 
         {isBusiness && (
           <section className="mt-8 wh-card p-5 border-primary/30 bg-primary/5">

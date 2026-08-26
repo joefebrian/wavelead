@@ -12,6 +12,7 @@ import { HttpError } from '../auth/rbac';
 import { signupSchema, loginSchema, type SignupInput, type LoginInput } from '../validation/schemas';
 import { getCollection } from '../db/mongo';
 import { COLLECTIONS } from '../db/collections';
+import { resolvePostLoginRedirect } from '../auth/postLoginRedirect';
 import type { PublicUser, Role, User, SessionPayload } from '@/lib/types';
 
 function toPublic(u: User | null): PublicUser | null {
@@ -31,10 +32,10 @@ async function resolveBootstrapRole(email: string): Promise<Role> {
   return existing ? 'user' : 'super_admin';
 }
 
-export interface AuthResult { user: PublicUser; token: string; }
+export interface AuthResult { user: PublicUser; token: string; redirect_to: string; }
 
 export const authService = {
-  async signup(input: unknown): Promise<AuthResult> {
+  async signup(input: unknown, next?: unknown): Promise<AuthResult> {
     const parsed = signupSchema.safeParse(input);
     if (!parsed.success) {
       throw new HttpError(400, parsed.error.issues.map((i) => i.message).join('; '));
@@ -59,10 +60,11 @@ export const authService = {
     };
     await userRepo.insert(user);
     const token = signSessionToken({ userId: user.id, email: user.email, v: 0 });
-    return { user: toPublic(user)!, token };
+    const publicUser = toPublic(user)!;
+    return { user: publicUser, token, redirect_to: resolvePostLoginRedirect({ user: publicUser, next }) };
   },
 
-  async login(input: unknown): Promise<AuthResult> {
+  async login(input: unknown, next?: unknown): Promise<AuthResult> {
     const parsed = loginSchema.safeParse(input);
     if (!parsed.success) throw new HttpError(400, 'Invalid login data');
     const data: LoginInput = parsed.data;
@@ -72,7 +74,8 @@ export const authService = {
     const ok = await verifyPassword(data.password, user.password_hash || '');
     if (!ok) throw new HttpError(401, 'Invalid credentials');
     const token = signSessionToken({ userId: user.id, email: user.email, v: user.session_version ?? 0 });
-    return { user: toPublic(user)!, token };
+    const publicUser = toPublic(user)!;
+    return { user: publicUser, token, redirect_to: resolvePostLoginRedirect({ user: publicUser, next }) };
   },
 
   // Returns the CURRENT database view of the signed-in user — role included.

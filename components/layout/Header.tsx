@@ -79,6 +79,14 @@ export default function Header() {
             <div className="h-9 w-24 rounded-md bg-muted animate-pulse" />
           ) : me ? (
             <>
+              {(me.role === 'super_admin' || me.role === 'admin' || me.role === 'moderator') && (
+                <Link
+                  href={me.role === 'moderator' ? '/admin/moderation' : '/admin'}
+                  aria-label="Admin Console"
+                >
+                  <Button variant="outline" size="sm">Admin Console</Button>
+                </Link>
+              )}
               <Link href="/dashboard"><Button variant="ghost" size="sm">Dashboard</Button></Link>
               <Button size="sm" onClick={logout}>Log out</Button>
             </>
@@ -107,6 +115,15 @@ export default function Header() {
             <div className="flex gap-2 pt-2 border-t border-border/60">
               {me ? (
                 <>
+                  {(me.role === 'super_admin' || me.role === 'admin' || me.role === 'moderator') && (
+                    <Link
+                      href={me.role === 'moderator' ? '/admin/moderation' : '/admin'}
+                      className="flex-1"
+                      onClick={() => setOpen(false)}
+                    >
+                      <Button variant="outline" className="w-full">Admin Console</Button>
+                    </Link>
+                  )}
                   <Link href="/dashboard" className="flex-1"><Button variant="outline" className="w-full">Dashboard</Button></Link>
                   <Button className="flex-1" onClick={logout}>Log out</Button>
                 </>
