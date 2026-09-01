@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, AlertTriangle } from 'lucide-react';
-import type { MarketplaceOrder, MarketplaceOwnerPayout, MarketplacePaymentMethod } from '@/lib/types';
+import type { MarketplaceOrder, MarketplaceOwnerPayout, MarketplacePaymentMethod, MarketplacePaymentAttempt } from '@/lib/types';
 
 interface Kpis {
   orders_total: number; awaiting_payment: number; paid: number;
@@ -11,7 +11,11 @@ interface Kpis {
   finalized_owner_earnings_minor: number; finalized_commission_minor: number;
   pending_fee_reconciliation: number;
 }
-type Tab = 'orders' | 'payables' | 'payouts';
+type Tab = 'orders' | 'payables' | 'payouts' | 'payments';
+type AttemptRow = Omit<MarketplacePaymentAttempt, 'provider_order_id' | 'provider_capture_id'> & {
+  provider_order_id: string | null;
+  provider_capture_id: string | null;
+};
 
 export default function AdminMarketplaceClient({ initialItems, initialKpis }: { initialItems: MarketplaceOrder[]; initialKpis: Kpis }) {
   const [tab, setTab] = useState<Tab>('orders');
@@ -23,6 +27,7 @@ export default function AdminMarketplaceClient({ initialItems, initialKpis }: { 
   const [payoutModalOrder, setPayoutModalOrder] = useState<MarketplaceOrder | null>(null);
   const [payables, setPayables] = useState<MarketplaceOrder[]>([]);
   const [payouts, setPayouts] = useState<MarketplaceOwnerPayout[]>([]);
+  const [payments, setPayments] = useState<AttemptRow[]>([]);
   const [payableFilter, setPayableFilter] = useState<'all' | 'eligible_for_payout' | 'paid_out' | 'blocked_fee_reconciliation' | 'submitted_for_review' | 'manual_reconciliation_required'>('eligible_for_payout');
 
   async function refetch() {
@@ -41,9 +46,15 @@ export default function AdminMarketplaceClient({ initialItems, initialKpis }: { 
     const j = await r.json();
     if (r.ok && j.ok) setPayouts(j.data.items);
   }
+  async function refetchPayments() {
+    const r = await fetch('/api/admin/marketplace/payments', { credentials: 'include' });
+    const j = await r.json();
+    if (r.ok && j.ok) setPayments(j.data.items);
+  }
 
   useEffect(() => { if (tab === 'payables') refetchPayables(); }, [tab, payableFilter]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab === 'payouts') refetchPayouts(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab === 'payments') refetchPayments(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const $$ = (m: number | null | undefined) => m == null ? '—' : `$${(m / 100).toFixed(2)}`;
 
@@ -51,6 +62,7 @@ export default function AdminMarketplaceClient({ initialItems, initialKpis }: { 
     <div className="mt-6 space-y-6" data-testid="admin-marketplace">
       <div className="flex gap-2 border-b border-border pb-3 flex-wrap">
         <button className={tabClass(tab === 'orders')} onClick={() => setTab('orders')}>Orders</button>
+        <button className={tabClass(tab === 'payments')} onClick={() => setTab('payments')}>Payments</button>
         <button className={tabClass(tab === 'payables')} onClick={() => setTab('payables')}>Owner Payables</button>
         <button className={tabClass(tab === 'payouts')} onClick={() => setTab('payouts')}>Payouts</button>
       </div>
@@ -189,8 +201,65 @@ export default function AdminMarketplaceClient({ initialItems, initialKpis }: { 
           onDone={async () => { setPayoutModalOrder(null); await refetchPayables(); await refetchPayouts(); }}
           busy={busy} setBusy={setBusy} />
       )}
+
+      {tab === 'payments' && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="text-xs text-muted-foreground">
+              Marketplace PayPal Checkout attempts. Manual admin confirmations still appear in the Orders tab.
+            </div>
+            <Button variant="outline" size="sm" onClick={refetchPayments} className="ml-auto">Refresh</Button>
+          </div>
+          <div className="wh-card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
+                <th className="px-3 py-2">Attempt</th>
+                <th className="px-3 py-2">Order</th>
+                <th className="px-3 py-2">Provider</th>
+                <th className="px-3 py-2">Env</th>
+                <th className="px-3 py-2">Amount</th>
+                <th className="px-3 py-2">Fee</th>
+                <th className="px-3 py-2">Net</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Provider Order</th>
+                <th className="px-3 py-2">Capture</th>
+                <th className="px-3 py-2">Created</th>
+                <th className="px-3 py-2">Captured</th>
+              </tr></thead>
+              <tbody>
+                {payments.length === 0 && (<tr><td colSpan={12} className="px-3 py-6 text-center text-muted-foreground">No marketplace payment attempts.</td></tr>)}
+                {payments.map((a) => (
+                  <tr key={a.id} className="border-b border-border/60" data-testid={`payment-row-${a.id}`}>
+                    <td className="px-3 py-2 font-mono text-xs">{a.id.slice(0, 8)}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{a.marketplace_order_id.slice(0, 8)}</td>
+                    <td className="px-3 py-2 text-xs">{a.provider}</td>
+                    <td className="px-3 py-2 text-xs"><Badge className={a.provider_environment === 'live' ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-700'}>{a.provider_environment}</Badge></td>
+                    <td className="px-3 py-2">{$$(a.amount_minor)} <span className="text-xs text-muted-foreground">{a.currency}</span></td>
+                    <td className="px-3 py-2">{a.provider_fee_minor == null ? <span className="text-xs text-rose-700">unknown</span> : $$(a.provider_fee_minor)}</td>
+                    <td className="px-3 py-2">{$$(a.provider_net_minor)}</td>
+                    <td className="px-3 py-2"><Badge className={attemptStyle(a.status)}>{a.status}</Badge></td>
+                    <td className="px-3 py-2 font-mono text-xs">{a.provider_order_id || '—'}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{a.provider_capture_id || '—'}</td>
+                    <td className="px-3 py-2 text-xs">{new Date(a.created_at).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-xs">{a.captured_at ? new Date(a.captured_at).toLocaleString() : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function attemptStyle(s: string): string {
+  if (s === 'captured') return 'bg-emerald-100 text-emerald-800';
+  if (s === 'approved') return 'bg-indigo-100 text-indigo-800';
+  if (s === 'checkout_created' || s === 'created') return 'bg-amber-100 text-amber-800';
+  if (s === 'cancelled') return 'bg-slate-100 text-slate-700';
+  if (s === 'reversed') return 'bg-fuchsia-100 text-fuchsia-800';
+  return 'bg-rose-100 text-rose-800'; // failed
 }
 
 /**

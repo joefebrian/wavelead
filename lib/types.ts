@@ -885,9 +885,9 @@ export type OwnerPayableStatus =
   | 'paid_out'                       // B2
   | 'manual_reconciliation_required';// B2 — refund attempted after payout
 
-export type MarketplacePaymentMethod = 'bank_transfer' | 'paypal_manual' | 'other';
+export type MarketplacePaymentMethod = 'bank_transfer' | 'paypal_manual' | 'paypal' | 'other';
 export const MARKETPLACE_PAYMENT_METHODS: readonly MarketplacePaymentMethod[] = [
-  'bank_transfer', 'paypal_manual', 'other',
+  'bank_transfer', 'paypal_manual', 'paypal', 'other',
 ] as const;
 
 // Atomic snapshot taken at owner_accept. Rate-card edits AFTER this must not
@@ -987,6 +987,16 @@ export interface MarketplaceOrder {
   completion_note: string | null;    // admin-required for override; may be null for buyer accept
   paid_out_at: Date | null;
   payout_id: string | null;          // FK → marketplace_owner_payouts.id
+
+  // ── B3 — PayPal Checkout safety ─────────────────────────────────────────
+  // Which pathway produced the successful payment on this order. `null` until
+  // paid; then `'manual'` (admin) or `'paypal'` (verified capture).
+  payment_source?: 'manual' | 'paypal' | null;
+  // Set true only when a SECOND, distinct real payment was received against
+  // an already-paid order. When true, admin must manually reconcile — the
+  // system must never overwrite the first allocated payment or apply
+  // economics twice.
+  payment_reconciliation_required?: boolean;
 }
 
 // B2 — marketplace owner payout record (manual, admin-only).
@@ -1013,7 +1023,10 @@ export type MarketplaceFinancialEventType =
   | 'GATEWAY_FEE_RECONCILED'
   | 'DELIVERY_COMPLETED'             // B2
   | 'OWNER_PAYABLE_ELIGIBLE'         // B2
-  | 'OWNER_PAYOUT_RECORDED';         // B2
+  | 'OWNER_PAYOUT_RECORDED'          // B2
+  | 'MARKETPLACE_PAYMENT_REFUNDED'   // B3 — PayPal capture refunded
+  | 'MARKETPLACE_PAYMENT_REVERSED'   // B3 — PayPal capture reversed
+  | 'MARKETPLACE_DOUBLE_PAYMENT_FLAGGED'; // B3 — second real payment detected
 
 export interface MarketplaceFinancialEvent {
   id: string;
@@ -1030,3 +1043,49 @@ export interface MarketplaceFinancialEvent {
   metadata: Record<string, unknown>;   // NEVER secrets
   created_at: Date;
 }
+
+// ============================================================
+// Phase B3 — Marketplace PayPal Checkout
+// ============================================================
+// Provider-neutral payment-attempt model for the sponsorship marketplace.
+// Deliberately SEPARATE from PaymentFundingOrder (Promote funding uses that;
+// marketplace uses THIS). Both may share the same PayPal provider + webhook
+// signature verification, but their money purposes, accounting and idempotency
+// domains never merge.
+export type MarketplacePaymentPurpose = 'MARKETPLACE_SPONSORSHIP_PAYMENT';
+export type MarketplacePaymentAttemptProvider = 'paypal';
+export type MarketplacePaymentAttemptStatus =
+  | 'created'          // internal record exists, no provider order yet
+  | 'checkout_created' // PayPal order created, buyer has not approved
+  | 'approved'         // buyer approved on PayPal side, capture not yet complete
+  | 'captured'         // capture verified — SUCCESS
+  | 'cancelled'        // buyer cancelled or attempt voided
+  | 'failed'           // capture explicitly failed
+  | 'reversed';        // capture later reversed/refunded
+
+export interface MarketplacePaymentAttempt {
+  id: string;
+  marketplace_order_id: string;
+  purpose: MarketplacePaymentPurpose;                  // always MARKETPLACE_SPONSORSHIP_PAYMENT
+  provider: MarketplacePaymentAttemptProvider;         // 'paypal'
+  provider_environment: IntegrationEnvironment;        // 'sandbox' | 'live' — from active PayPal config
+  provider_order_id: string | null;                    // unique across attempts once set
+  provider_capture_id: string | null;                  // unique across attempts once set
+  currency: 'USD';
+  amount_minor: number;                                // server-derived from order snapshot; NEVER client
+  status: MarketplacePaymentAttemptStatus;
+  approve_url: string | null;                          // hosted PayPal approval URL
+  return_url: string;
+  cancel_url: string;
+  created_by: string;                                  // buyer user id
+  created_at: Date;
+  updated_at: Date;
+  approved_at: Date | null;
+  captured_at: Date | null;
+  provider_fee_minor: number | null;                   // exact PayPal fee if reported
+  provider_net_minor: number | null;                   // gross − fee, from PayPal breakdown if present
+  failure_code: string | null;
+  failure_message_safe: string | null;
+  is_test_fixture?: boolean;
+}
+

@@ -200,5 +200,17 @@ export async function ensureIndexes(db: Db): Promise<void> {
       // Cross-payout reference identity: (method, normalized) unique across the collection.
       { key: { payout_method: 1, payout_reference_normalized: 1 }, unique: true, name: 'uniq_payout_identity', partialFilterExpression: { payout_method: { $type: 'string' }, payout_reference_normalized: { $type: 'string' } } },
     ]),
+    // Phase B3 — marketplace PayPal checkout attempts. Separate identity space
+    // from Promote funding orders — a provider_order_id / provider_capture_id
+    // uniquely identifies exactly one marketplace attempt.
+    db.collection(COLLECTIONS.MARKETPLACE_PAYMENT_ATTEMPTS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { marketplace_order_id: 1, created_at: -1 }, name: 'by_order_time' },
+      { key: { marketplace_order_id: 1, status: 1 }, name: 'by_order_status' },
+      // Provider identifiers must be unique across all marketplace attempts.
+      // Partial: only when the field is set (attempts start with null).
+      { key: { provider: 1, provider_order_id: 1 }, unique: true, name: 'uniq_provider_order', partialFilterExpression: { provider_order_id: { $type: 'string' } } },
+      { key: { provider: 1, provider_capture_id: 1 }, unique: true, name: 'uniq_provider_capture', partialFilterExpression: { provider_capture_id: { $type: 'string' } } },
+    ]),
   ]);
 }

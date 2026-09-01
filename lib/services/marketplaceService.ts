@@ -14,16 +14,26 @@ import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { HttpError, hasAtLeastRole, ROLES } from '../auth/rbac';
 import { channelRepo } from '../repositories/channelRepo';
-import { channelRateCardRepo, marketplaceFinancialEventRepo, marketplaceOrderRepo, marketplaceOwnerPayoutRepo } from '../repositories/marketplaceRepo';
+import {
+  channelRateCardRepo,
+  marketplaceFinancialEventRepo,
+  marketplaceOrderRepo,
+  marketplaceOwnerPayoutRepo,
+  marketplacePaymentAttemptRepo,
+} from '../repositories/marketplaceRepo';
 import { computeSplit, OWNER_SHARE_BPS, PLATFORM_SHARE_BPS, assertSafeMoney } from '../utils/marketplaceMoney';
+import { getConfiguredOrigin } from '../utils/canonicalOrigin';
 import type {
   Actor,
   Channel,
   ChannelRateCard,
+  IntegrationEnvironment,
   MarketplaceOrder,
   MarketplaceOrderStatus,
   MarketplaceOwnerPayout,
   MarketplacePackageType,
+  MarketplacePaymentAttempt,
+  MarketplacePaymentAttemptStatus,
   MarketplacePaymentMethod,
   OwnerPayableStatus,
   RateCardPackage,
@@ -368,6 +378,14 @@ export const marketplaceService = {
       throw new HttpError(400, `amount_received_minor (${d.amount_received_minor}) must equal snapshot gross_price_minor (${order.snapshot.gross_price_minor})`);
     }
 
+    // B3 — a verified PayPal capture already exists on this order → block
+    // manual double-accounting. Admin must reconcile out-of-band (never
+    // silently apply a second economic confirmation).
+    const paypalCaptured = (await marketplacePaymentAttemptRepo.listByOrder(orderId)).some((a) => a.status === 'captured');
+    if (paypalCaptured && order.payment_source === 'paypal') {
+      throw new HttpError(409, 'This order has already been paid via PayPal — cannot record a second manual payment');
+    }
+
     const normalized = normalizePaymentReference(d.payment_reference);
 
     // (a) Same-order idempotency: if this exact (order, payment_reference) already has a
@@ -401,6 +419,7 @@ export const marketplaceService = {
         status: 'paid',
         economics_status: 'pending_fee_reconciliation',
         payment_method: d.payment_method as MarketplacePaymentMethod,
+        payment_source: 'manual',
         payment_reference_normalized: normalized,
         payment_reference_display: d.payment_reference,
         payment_received_at: new Date(d.payment_received_at),
@@ -418,6 +437,7 @@ export const marketplaceService = {
         status: 'paid',
         economics_status: 'finalized',
         payment_method: d.payment_method as MarketplacePaymentMethod,
+        payment_source: 'manual',
         payment_reference_normalized: normalized,
         payment_reference_display: d.payment_reference,
         payment_received_at: new Date(d.payment_received_at),
@@ -872,6 +892,448 @@ export const marketplaceService = {
     requireAdmin(actor);
     const all = await marketplaceOrderRepo.listAdmin({});
     return all.filter((o) => (filter.status ? o.owner_payable_status === filter.status : ['eligible_for_payout', 'paid_out', 'blocked_fee_reconciliation', 'submitted_for_review', 'manual_reconciliation_required'].includes(o.owner_payable_status)));
+  },
+
+  // ============================================================================
+  // Phase B3 — Marketplace PayPal Checkout
+  // ----------------------------------------------------------------------------
+  // Payment DOMAIN separation. PROMOTE campaign funding (paymentFundingOrder /
+  // paypal_orders) is a totally separate money flow with a separate ledger; this
+  // block owns MARKETPLACE_SPONSORSHIP_PAYMENT only. Reuses the same PayPal
+  // PaymentProvider abstraction, webhook signature verification, and canonical-
+  // origin resolver — never mutates promote records.
+  //
+  // Amount authority: server derives amount from the immutable order snapshot;
+  // client input is IGNORED.
+  //
+  // Race safety: manual admin confirm-payment and buyer PayPal checkout are
+  // interlocked so that at most ONE allocated payment applies economics; a
+  // second real payment is FLAGGED for manual reconciliation, never silently
+  // absorbed.
+  // ============================================================================
+
+  async buyerStartPaypalCheckout(actor: Actor | null, orderId: string, requestOrigin?: string): Promise<{ attempt: MarketplacePaymentAttempt; approve_url: string }> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const order = await marketplaceOrderRepo.findById(orderId);
+    if (!order) throw new HttpError(404, 'Order not found');
+    // Only the authenticated buyer may start checkout.
+    if (!order.buyer_user_id || order.buyer_user_id !== actor.user.id) {
+      throw new HttpError(403, 'Only the buyer of this sponsorship may start PayPal checkout');
+    }
+    if (order.status !== 'awaiting_payment') {
+      throw new HttpError(400, `Order is in status "${order.status}" — payment can only start in "awaiting_payment"`);
+    }
+    if (!order.snapshot) throw new HttpError(400, 'Order economics snapshot missing');
+    assertSafeMoney(order.snapshot.gross_price_minor, 'gross_price_minor');
+
+    // If a manual/PayPal payment has already been fully confirmed against this
+    // order, reject. `order.status !== 'awaiting_payment'` already handles paid
+    // orders; belt-and-braces here for defense in depth.
+    if (order.payment_source) {
+      throw new HttpError(409, 'This order already has an allocated payment');
+    }
+
+    // Idempotency: if there's an existing still-usable attempt, reuse it.
+    const priors = await marketplacePaymentAttemptRepo.listByOrder(orderId);
+    const reusable = priors.find((a) => (a.status === 'created' || a.status === 'checkout_created' || a.status === 'approved') && a.approve_url);
+    if (reusable && reusable.approve_url) {
+      return { attempt: reusable, approve_url: reusable.approve_url };
+    }
+    // A previously captured attempt means we're already paid — reject.
+    if (priors.some((a) => a.status === 'captured')) {
+      throw new HttpError(409, 'This order has already been paid via PayPal');
+    }
+
+    const now = new Date();
+    const { paypalConfigService } = await import('./payments/paypalConfigService');
+    const activeCfg = await paypalConfigService.resolveActive();
+    if (!activeCfg) throw new HttpError(503, 'Payment provider is not configured');
+    const environment: IntegrationEnvironment = activeCfg.environment;
+
+    // Canonical-origin allowlist: only trust request origin if allowlisted.
+    const origin = (requestOrigin || getConfiguredOrigin()).replace(/\/+$/, '');
+    const attemptId = uuidv4();
+    const return_url = `${origin}/dashboard/sponsorships?order=${encodeURIComponent(orderId)}&payment=paypal&attempt=${encodeURIComponent(attemptId)}&status=return`;
+    const cancel_url = `${origin}/dashboard/sponsorships?order=${encodeURIComponent(orderId)}&payment=paypal&attempt=${encodeURIComponent(attemptId)}&status=cancelled`;
+
+    const doc: MarketplacePaymentAttempt = {
+      id: attemptId,
+      marketplace_order_id: orderId,
+      purpose: 'MARKETPLACE_SPONSORSHIP_PAYMENT',
+      provider: 'paypal',
+      provider_environment: environment,
+      provider_order_id: null,
+      provider_capture_id: null,
+      currency: 'USD',
+      amount_minor: order.snapshot.gross_price_minor,     // authoritative
+      status: 'created',
+      approve_url: null,
+      return_url,
+      cancel_url,
+      created_by: actor.user.id,
+      created_at: now,
+      updated_at: now,
+      approved_at: null,
+      captured_at: null,
+      provider_fee_minor: null,
+      provider_net_minor: null,
+      failure_code: null,
+      failure_message_safe: null,
+    };
+    await marketplacePaymentAttemptRepo.insert(doc);
+
+    try {
+      const { getPaymentProvider } = await import('./payments/providerFactory');
+      const provider = getPaymentProvider();
+      const created = await provider.createPayment({
+        funding_id: attemptId,                              // used as PayPal-Request-Id — unique
+        amount_minor: doc.amount_minor,
+        currency: doc.currency,
+        description: `WaveLead sponsorship "${(order.snapshot.package_name || order.package_type).slice(0, 80)}"`,
+        return_url,
+        cancel_url,
+        // NOTE: metadata keys are provider-abstraction generic. The marketplace
+        // canonical mapping never relies on custom_id — we look up by provider_order_id.
+        metadata: { campaign_id: orderId, owner_user_id: order.owner_user_id },
+      });
+      const updated = await marketplacePaymentAttemptRepo.update(attemptId, {
+        provider_order_id: created.provider_order_id,
+        approve_url: created.approve_url,
+        status: 'checkout_created',
+      });
+      return { attempt: updated, approve_url: created.approve_url };
+    } catch (err) {
+      await marketplacePaymentAttemptRepo.update(attemptId, {
+        status: 'failed',
+        failure_code: 'provider_create_failed',
+        failure_message_safe: 'Payment provider could not create the order',
+      });
+      throw new HttpError(502, `Payment provider error: ${(err as Error).message.slice(0, 200)}`);
+    }
+  },
+
+  async getPaymentAttemptForBuyer(actor: Actor | null, attempt_id: string): Promise<MarketplacePaymentAttempt> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const a = await marketplacePaymentAttemptRepo.findById(attempt_id);
+    if (!a) throw new HttpError(404, 'Payment attempt not found');
+    const isCreator = a.created_by === actor.user.id;
+    const isAdmin = hasAtLeastRole(actor.user, ROLES.ADMIN);
+    if (!isCreator && !isAdmin) throw new HttpError(403, 'Not your payment attempt');
+    return a;
+  },
+
+  /**
+   * B3 — buyer-return capture. Idempotent single source of truth for turning
+   * a checkout into a captured marketplace payment.
+   * Buyer authority: only the attempt creator (or admin) may trigger.
+   */
+  async captureMarketplacePaypalOrder(actor: Actor | null, attempt_id: string): Promise<MarketplacePaymentAttempt> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const a = await marketplacePaymentAttemptRepo.findById(attempt_id);
+    if (!a) throw new HttpError(404, 'Payment attempt not found');
+    const isCreator = a.created_by === actor.user.id;
+    const isAdmin = hasAtLeastRole(actor.user, ROLES.ADMIN);
+    if (!isCreator && !isAdmin) throw new HttpError(403, 'Not your payment attempt');
+    return this._captureAttempt(a);
+  },
+
+  /**
+   * B3 — webhook-driven capture (CHECKOUT.ORDER.APPROVED). Same idempotent path.
+   * Returns null if the provider_order_id does not belong to a marketplace attempt,
+   * so the webhook can safely fall through to the promote handler.
+   */
+  async captureMarketplacePaypalOrderByProviderOrderId(provider_order_id: string): Promise<MarketplacePaymentAttempt | null> {
+    const a = await marketplacePaymentAttemptRepo.findByProviderOrderId('paypal', provider_order_id);
+    if (!a) return null;
+    return this._captureAttempt(a);
+  },
+
+  async _captureAttempt(a: MarketplacePaymentAttempt): Promise<MarketplacePaymentAttempt> {
+    if (a.status === 'captured') return a;
+    if (!a.provider_order_id) throw new HttpError(400, 'No provider order to capture');
+    if (a.status === 'cancelled' || a.status === 'failed' || a.status === 'reversed') {
+      throw new HttpError(400, `Cannot capture attempt in status "${a.status}"`);
+    }
+    const { getPaymentProvider } = await import('./payments/providerFactory');
+    const provider = getPaymentProvider();
+    const cap = await provider.capturePayment({ provider_order_id: a.provider_order_id });
+    if (cap.internal_status !== 'paid') {
+      const next: MarketplacePaymentAttemptStatus =
+        cap.internal_status === 'failed' ? 'failed' :
+        cap.internal_status === 'cancelled' ? 'cancelled' :
+        'approved';
+      const updated = await marketplacePaymentAttemptRepo.update(a.id, {
+        status: next,
+        provider_capture_id: cap.provider_capture_id,
+        failure_code: next === 'failed' ? 'capture_failed' : null,
+        failure_message_safe: next === 'failed' ? 'Payment could not be captured' : null,
+      });
+      return updated;
+    }
+    if (cap.currency && cap.currency.toUpperCase() !== a.currency) {
+      // Currency mismatch — never finalize.
+      const updated = await marketplacePaymentAttemptRepo.update(a.id, {
+        status: 'failed',
+        failure_code: 'currency_mismatch',
+        failure_message_safe: 'Captured currency does not match order currency',
+      });
+      return updated;
+    }
+    if (cap.amount_captured_minor !== a.amount_minor) {
+      const updated = await marketplacePaymentAttemptRepo.update(a.id, {
+        status: 'failed',
+        failure_code: 'amount_mismatch',
+        failure_message_safe: 'Captured amount does not match order amount',
+      });
+      return updated;
+    }
+    return this._finalizeCapturedAttempt(a, cap.provider_capture_id!, cap.amount_captured_minor, null, null);
+  },
+
+  /**
+   * B3 — PAYMENT.CAPTURE.COMPLETED webhook path. Authoritative for successful
+   * marketplace payment. Provider fee comes from PayPal's
+   * `seller_receivable_breakdown.paypal_fee` when present; otherwise finalized
+   * economics wait for manual admin reconcile (`pending_fee_reconciliation`).
+   */
+  async finalizeMarketplaceCaptureFromWebhook(
+    provider_order_id: string,
+    provider_capture_id: string,
+    amount_captured_minor: number,
+    currency: string,
+    provider_fee_minor: number | null,
+    provider_net_minor: number | null,
+  ): Promise<MarketplacePaymentAttempt | null> {
+    const a = await marketplacePaymentAttemptRepo.findByProviderOrderId('paypal', provider_order_id);
+    if (!a) return null;
+    if (a.status === 'captured') return a;
+    if (currency && currency.toUpperCase() !== a.currency) {
+      await marketplacePaymentAttemptRepo.update(a.id, {
+        status: 'failed',
+        failure_code: 'currency_mismatch',
+        failure_message_safe: 'Captured currency does not match order currency',
+      });
+      return null;
+    }
+    if (amount_captured_minor !== a.amount_minor) {
+      await marketplacePaymentAttemptRepo.update(a.id, {
+        status: 'failed',
+        failure_code: 'amount_mismatch',
+        failure_message_safe: 'Captured amount does not match order amount',
+      });
+      return null;
+    }
+    return this._finalizeCapturedAttempt(a, provider_capture_id, amount_captured_minor, provider_fee_minor, provider_net_minor);
+  },
+
+  /**
+   * Internal — atomic finalization of a captured attempt. Guarded by the
+   * unique `provider_capture_id` index + a status transition guard so that
+   * concurrent capture+webhook only produce ONE economic confirmation.
+   */
+  async _finalizeCapturedAttempt(
+    a: MarketplacePaymentAttempt,
+    provider_capture_id: string,
+    amount_captured_minor: number,
+    provider_fee_minor: number | null,
+    provider_net_minor: number | null,
+  ): Promise<MarketplacePaymentAttempt> {
+    const now = new Date();
+    // Idempotency: another worker may have already flipped to captured.
+    const transitioned = await marketplacePaymentAttemptRepo.transitionIfIn(
+      a.id,
+      ['created', 'checkout_created', 'approved'],
+      'captured',
+      {
+        provider_capture_id,
+        captured_at: now,
+        approved_at: a.approved_at || now,
+        provider_fee_minor: provider_fee_minor,
+        provider_net_minor: provider_net_minor,
+      },
+    );
+    if (!transitioned) {
+      // Another worker won the race — return the current row.
+      const cur = await marketplacePaymentAttemptRepo.findById(a.id);
+      if (cur && cur.status === 'captured') return cur;
+      // Row moved to a terminal non-captured state under us; return that.
+      return (cur || a);
+    }
+
+    // Now finalize the marketplace order — idempotent by design.
+    const order = await marketplaceOrderRepo.findById(a.marketplace_order_id);
+    if (!order || !order.snapshot) return transitioned;
+
+    // Race protection: if this order already has a DIFFERENT allocated payment
+    // (manual or PayPal via another attempt), do NOT reapply economics. Flag
+    // for manual reconciliation and append an audit event.
+    if (order.payment_source && order.payment_reference_normalized && order.payment_reference_normalized !== provider_capture_id.toLowerCase()) {
+      await marketplaceOrderRepo.update(order.id, {
+        payment_reconciliation_required: true,
+        owner_payable_status: order.owner_payable_status === 'paid_out' ? 'paid_out' : 'manual_reconciliation_required',
+      });
+      try {
+        await marketplaceFinancialEventRepo.append({
+          order_id: order.id,
+          event_type: 'MARKETPLACE_DOUBLE_PAYMENT_FLAGGED',
+          currency: 'USD',
+          gross_amount_minor: order.snapshot.gross_price_minor,
+          gateway_fee_minor: null,
+          net_amount_minor: null,
+          owner_earnings_minor: null,
+          wavelead_commission_minor: null,
+          payment_reference_normalized: provider_capture_id.toLowerCase(),
+          actor_user_id: 'system',
+          metadata: { provider: 'paypal', provider_capture_id, second_source: 'paypal' },
+        });
+      } catch { /* audit best-effort */ }
+      return transitioned;
+    }
+
+    const gross = order.snapshot.gross_price_minor;
+    const fee = provider_fee_minor;
+    const normalizedRef = provider_capture_id.toLowerCase();
+
+    let patch: Partial<MarketplaceOrder>;
+    if (fee === null || fee === undefined) {
+      patch = {
+        status: 'paid',
+        economics_status: 'pending_fee_reconciliation',
+        payment_method: 'paypal',
+        payment_source: 'paypal',
+        payment_reference_normalized: normalizedRef,
+        payment_reference_display: provider_capture_id,
+        payment_received_at: now,
+        amount_received_minor: amount_captured_minor,
+        gateway_fee_minor: null,
+        net_transaction_value_minor: null,
+        owner_earnings_minor: null,
+        wavelead_commission_minor: null,
+        owner_payable_status: 'blocked_fee_reconciliation',
+        paid_at: order.paid_at || now,
+      };
+    } else {
+      const split = computeSplit(gross, fee);
+      patch = {
+        status: 'paid',
+        economics_status: 'finalized',
+        payment_method: 'paypal',
+        payment_source: 'paypal',
+        payment_reference_normalized: normalizedRef,
+        payment_reference_display: provider_capture_id,
+        payment_received_at: now,
+        amount_received_minor: amount_captured_minor,
+        gateway_fee_minor: fee,
+        net_transaction_value_minor: split.net_minor,
+        owner_earnings_minor: split.owner_earnings_minor,
+        wavelead_commission_minor: split.wavelead_commission_minor,
+        owner_payable_status: 'payable_pending_delivery',
+        paid_at: order.paid_at || now,
+      };
+    }
+    await marketplaceOrderRepo.update(order.id, patch);
+
+    try {
+      await marketplaceFinancialEventRepo.append({
+        order_id: order.id,
+        event_type: 'PAYMENT_CONFIRMED',
+        currency: 'USD',
+        gross_amount_minor: gross,
+        gateway_fee_minor: fee ?? null,
+        net_amount_minor: patch.net_transaction_value_minor ?? null,
+        owner_earnings_minor: patch.owner_earnings_minor ?? null,
+        wavelead_commission_minor: patch.wavelead_commission_minor ?? null,
+        payment_reference_normalized: normalizedRef,
+        actor_user_id: 'system',
+        metadata: {
+          payment_source: 'paypal',
+          provider: 'paypal',
+          provider_environment: a.provider_environment,
+          provider_order_id: a.provider_order_id,
+          provider_capture_id,
+          attempt_id: a.id,
+          fee_known: fee !== null && fee !== undefined,
+        },
+      });
+    } catch (e) {
+      // Race with an already-appended event — safe to treat as idempotent success.
+      if (!/E11000|duplicate key/i.test((e as Error).message)) throw e;
+    }
+    return transitioned;
+  },
+
+  /**
+   * B3 — refund/reversal webhook handling for marketplace captures. Does NOT
+   * auto-clawback owner money. Blocks future payout by moving owner_payable
+   * to `manual_reconciliation_required` and appends an audit event. If the
+   * owner has already been paid out, keeps `paid_out` but sets
+   * payment_reconciliation_required so admin explicitly resolves.
+   */
+  async recordMarketplaceRefundOrReversal(
+    provider_order_id: string,
+    event_type: 'MARKETPLACE_PAYMENT_REFUNDED' | 'MARKETPLACE_PAYMENT_REVERSED',
+    amount_minor: number,
+    provider_refund_reference: string,
+  ): Promise<{ attempt: MarketplacePaymentAttempt; order: MarketplaceOrder } | null> {
+    const a = await marketplacePaymentAttemptRepo.findByProviderOrderId('paypal', provider_order_id);
+    if (!a) return null;
+    const now = new Date();
+    // Mark the attempt reversed. Idempotent — repeated webhook deliveries flip
+    // only once because we key financial-event dedup on refund_reference.
+    if (a.status !== 'reversed') {
+      await marketplacePaymentAttemptRepo.update(a.id, {
+        status: 'reversed',
+        failure_code: event_type === 'MARKETPLACE_PAYMENT_REFUNDED' ? 'refunded' : 'reversed',
+        failure_message_safe: 'Capture refunded/reversed after success',
+      });
+    }
+    const order = await marketplaceOrderRepo.findById(a.marketplace_order_id);
+    if (!order) return null;
+    const patch: Partial<MarketplaceOrder> = {
+      payment_reconciliation_required: true,
+    };
+    if (order.owner_payable_status !== 'paid_out') {
+      patch.owner_payable_status = 'manual_reconciliation_required';
+    }
+    const updated = await marketplaceOrderRepo.update(order.id, patch);
+    try {
+      await marketplaceFinancialEventRepo.append({
+        order_id: order.id,
+        event_type,
+        currency: 'USD',
+        gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
+        gateway_fee_minor: null,
+        net_amount_minor: null,
+        owner_earnings_minor: null,
+        wavelead_commission_minor: null,
+        payment_reference_normalized: provider_refund_reference.toLowerCase(),
+        actor_user_id: 'system',
+        metadata: {
+          provider: 'paypal',
+          provider_order_id,
+          provider_refund_reference,
+          amount_minor,
+          owner_was_paid_out: order.owner_payable_status === 'paid_out',
+        },
+      });
+    } catch { /* audit best-effort */ }
+    return { attempt: (await marketplacePaymentAttemptRepo.findById(a.id))!, order: updated };
+  },
+
+  async listPaymentAttemptsAdmin(actor: Actor | null): Promise<MarketplacePaymentAttempt[]> {
+    requireAdmin(actor);
+    return marketplacePaymentAttemptRepo.listAdmin();
+  },
+
+  async listPaymentAttemptsForOrder(actor: Actor | null, orderId: string): Promise<MarketplacePaymentAttempt[]> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const o = await marketplaceOrderRepo.findById(orderId);
+    if (!o) throw new HttpError(404, 'Order not found');
+    const isBuyer = o.buyer_user_id && o.buyer_user_id === actor.user.id;
+    const isOwner = o.owner_user_id === actor.user.id;
+    const isAdmin = hasAtLeastRole(actor.user, ROLES.ADMIN);
+    if (!isBuyer && !isOwner && !isAdmin) throw new HttpError(403, 'Not your order');
+    return marketplacePaymentAttemptRepo.listByOrder(orderId);
   },
 };
 

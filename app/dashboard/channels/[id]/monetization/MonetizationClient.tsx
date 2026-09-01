@@ -163,10 +163,19 @@ export default function MonetizationClient({
                   <Button size="sm" variant="outline" onClick={() => doAction(o.id, 'reject')} disabled={busy}>Reject</Button>
                 </div>
               )}
+              {(o.status === 'owner_accepted' || o.status === 'awaiting_payment') && (
+                <div className="mt-3 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                  <span className="font-medium">Awaiting brand payment</span>
+                  <span className="block text-xs text-amber-900/80 mt-0.5">Once the brand completes payment, this order will be ready for you to start work.</span>
+                </div>
+              )}
               {o.status === 'paid' && o.economics_status === 'finalized' && (
                 <div className="mt-3 flex gap-2">
                   <Button size="sm" onClick={() => doAction(o.id, 'start-work')} disabled={busy}>Start Work</Button>
                 </div>
+              )}
+              {o.status === 'paid' && o.economics_status !== 'finalized' && (
+                <div className="mt-3 text-sm text-muted-foreground">Payment received. Awaiting fee reconciliation before you can start work.</div>
               )}
               {o.status === 'in_progress' && (
                 <div className="mt-3 space-y-2 border-t border-border/60 pt-3">

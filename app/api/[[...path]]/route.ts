@@ -874,22 +874,46 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       }
       try {
         const { campaignFundingService } = await import('@/lib/services/payments/campaignFundingService');
+        const { marketplaceService } = await import('@/lib/services/marketplaceService');
         const resource = (v.resource || {}) as Record<string, unknown>;
         if (v.event_type === 'PAYMENT.CAPTURE.COMPLETED') {
           // PayPal capture resource carries supplementary_data.related_ids.order_id
           const orderId = extractPayPalOrderId(resource);
           const captureId = String(resource.id || '');
-          const amtVal = ((resource.amount || {}) as { value?: string }).value;
-          const amt_minor = amtVal ? Math.round(parseFloat(amtVal) * 100) : 0;
+          const amtObj = (resource.amount || {}) as { value?: string; currency_code?: string };
+          const amt_minor = amtObj.value ? Math.round(parseFloat(amtObj.value) * 100) : 0;
+          const currency = String(amtObj.currency_code || 'USD');
+          // Extract exact PayPal fee if PayPal provided a
+          // seller_receivable_breakdown. Missing → null (never zero).
+          const srb = (resource as { seller_receivable_breakdown?: {
+            paypal_fee?: { value?: string; currency_code?: string };
+            net_amount?: { value?: string; currency_code?: string };
+          }}).seller_receivable_breakdown;
+          const feeVal = srb?.paypal_fee?.value;
+          const netVal = srb?.net_amount?.value;
+          const fee_minor: number | null = typeof feeVal === 'string' ? Math.round(parseFloat(feeVal) * 100) : null;
+          const net_minor: number | null = typeof netVal === 'string' ? Math.round(parseFloat(netVal) * 100) : null;
           if (orderId && captureId && amt_minor > 0) {
-            await campaignFundingService.finalizePaidByProviderOrderId(orderId, captureId, amt_minor);
+            // First try marketplace (B3). Falls through to promote when not found.
+            const mp = await marketplaceService.finalizeMarketplaceCaptureFromWebhook(orderId, captureId, amt_minor, currency, fee_minor, net_minor);
+            if (!mp) {
+              await campaignFundingService.finalizePaidByProviderOrderId(orderId, captureId, amt_minor);
+            }
           }
         } else if (v.event_type === 'CHECKOUT.ORDER.APPROVED') {
           // Buyer approved on PayPal side. Trigger the same idempotent capture
           // pipeline as the browser-return route — either race can win.
           const orderId = String(resource.id || '');
           if (orderId) {
-            try { await campaignFundingService.captureFundingOrderByProviderOrderId(orderId); } catch { /* server-side capture may race with return-callback; the ledger guard dedupes */ }
+            // First check marketplace attempt; if not found, fall through to promote.
+            let handled = false;
+            try {
+              const mp = await marketplaceService.captureMarketplacePaypalOrderByProviderOrderId(orderId);
+              handled = !!mp;
+            } catch { /* server-side capture may race with return-callback; guards dedupe */ }
+            if (!handled) {
+              try { await campaignFundingService.captureFundingOrderByProviderOrderId(orderId); } catch { /* server-side capture may race with return-callback; the ledger guard dedupes */ }
+            }
           }
         } else if (v.event_type === 'PAYMENT.CAPTURE.REFUNDED' || v.event_type === 'PAYMENT.CAPTURE.REVERSED') {
           const orderId = extractPayPalOrderId(resource);
@@ -897,7 +921,16 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
           const amt_minor = amtVal ? Math.round(parseFloat(amtVal) * 100) : 0;
           const refundRef = String(resource.id || '');
           if (orderId && refundRef && amt_minor > 0) {
-            await campaignFundingService.recordRefund(orderId, amt_minor, refundRef);
+            // Marketplace-first routing; refund/reversal blocks marketplace payout.
+            const mp = await marketplaceService.recordMarketplaceRefundOrReversal(
+              orderId,
+              v.event_type === 'PAYMENT.CAPTURE.REFUNDED' ? 'MARKETPLACE_PAYMENT_REFUNDED' : 'MARKETPLACE_PAYMENT_REVERSED',
+              amt_minor,
+              refundRef,
+            );
+            if (!mp) {
+              await campaignFundingService.recordRefund(orderId, amt_minor, refundRef);
+            }
           }
         }
         // PAYMENT.CAPTURE.DENIED is audit-only; the capture flow already marks
@@ -1432,6 +1465,90 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ items }), request);
     }
 
+    // ── Phase B3 — Marketplace PayPal Checkout ───────────────────────────────
+    // Buyer starts PayPal checkout for their sponsorship order.
+    if (path.length === 5 && path[0] === 'marketplace' && path[1] === 'orders' && path[3] === 'paypal' && path[4] === 'create' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const { resolveTrustedOrigin } = await import('@/lib/utils/canonicalOrigin');
+      const actor = await resolveActor(request);
+      const origin = resolveTrustedOrigin(request.headers);
+      const { attempt, approve_url } = await marketplaceService.buyerStartPaypalCheckout(actor, path[2], origin);
+      return applyCors(ok({
+        attempt: {
+          id: attempt.id,
+          marketplace_order_id: attempt.marketplace_order_id,
+          status: attempt.status,
+          currency: attempt.currency,
+          amount_minor: attempt.amount_minor,
+          approve_url,
+          provider_environment: attempt.provider_environment,
+        },
+        approve_url,
+      }), request);
+    }
+    // Buyer captures on return from PayPal (browser return is NOT payment proof — this triggers a server-side capture).
+    if (path.length === 4 && path[0] === 'marketplace' && path[1] === 'payments' && path[3] === 'capture' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const attempt = await marketplaceService.captureMarketplacePaypalOrder(actor, path[2]);
+      return applyCors(ok({
+        attempt: {
+          id: attempt.id, status: attempt.status,
+          marketplace_order_id: attempt.marketplace_order_id,
+          currency: attempt.currency, amount_minor: attempt.amount_minor,
+          failure_message_safe: attempt.failure_message_safe,
+        },
+      }), request);
+    }
+    // Buyer/admin polls attempt status.
+    if (path.length === 3 && path[0] === 'marketplace' && path[1] === 'payments' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const attempt = await marketplaceService.getPaymentAttemptForBuyer(actor, path[2]);
+      return applyCors(ok({
+        attempt: {
+          id: attempt.id, status: attempt.status,
+          marketplace_order_id: attempt.marketplace_order_id,
+          currency: attempt.currency, amount_minor: attempt.amount_minor,
+          failure_message_safe: attempt.failure_message_safe,
+          captured_at: attempt.captured_at,
+        },
+      }), request);
+    }
+    // Buyer/owner/admin: list attempts for an order (for UI).
+    if (path.length === 4 && path[0] === 'marketplace' && path[1] === 'orders' && path[3] === 'payments' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const items = await marketplaceService.listPaymentAttemptsForOrder(actor, path[2]);
+      return applyCors(ok({ items: items.map((a) => ({
+        id: a.id, marketplace_order_id: a.marketplace_order_id,
+        status: a.status, currency: a.currency, amount_minor: a.amount_minor,
+        provider: a.provider, provider_environment: a.provider_environment,
+        provider_order_id: a.provider_order_id ? maskId(a.provider_order_id) : null,
+        provider_capture_id: a.provider_capture_id ? maskId(a.provider_capture_id) : null,
+        created_at: a.created_at, captured_at: a.captured_at,
+        provider_fee_minor: a.provider_fee_minor, provider_net_minor: a.provider_net_minor,
+        failure_message_safe: a.failure_message_safe,
+      })) }), request);
+    }
+    // Admin: list all attempts across all orders.
+    if (route === '/admin/marketplace/payments' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const items = await marketplaceService.listPaymentAttemptsAdmin(actor);
+      return applyCors(ok({ items: items.map((a) => ({
+        id: a.id, marketplace_order_id: a.marketplace_order_id,
+        status: a.status, currency: a.currency, amount_minor: a.amount_minor,
+        provider: a.provider, provider_environment: a.provider_environment,
+        provider_order_id: a.provider_order_id ? maskId(a.provider_order_id) : null,
+        provider_capture_id: a.provider_capture_id ? maskId(a.provider_capture_id) : null,
+        created_at: a.created_at, captured_at: a.captured_at,
+        provider_fee_minor: a.provider_fee_minor, provider_net_minor: a.provider_net_minor,
+        failure_message_safe: a.failure_message_safe,
+      })) }), request);
+    }
+
     return applyCors(fail(404, `Route ${route} not found`), request);
   } catch (err) {
     return applyCors(handleServiceError(err), request);
@@ -1459,3 +1576,10 @@ function extractPayPalOrderId(resource: Record<string, unknown>): string | null 
   }
   return null;
 }
+
+/** Mask a provider identifier for display (never leak full PayPal ids in UI). */
+function maskId(s: string): string {
+  if (s.length <= 8) return `••••${s.slice(-2)}`;
+  return `${s.slice(0, 4)}••••${s.slice(-4)}`;
+}
+

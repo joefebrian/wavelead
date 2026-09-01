@@ -8,6 +8,8 @@ import type {
   MarketplaceOrder,
   MarketplaceOrderStatus,
   MarketplaceOwnerPayout,
+  MarketplacePaymentAttempt,
+  MarketplacePaymentAttemptStatus,
 } from '@/lib/types';
 
 export const channelRateCardRepo = {
@@ -110,5 +112,67 @@ export const marketplaceOwnerPayoutRepo = {
   async listAdmin(): Promise<MarketplaceOwnerPayout[]> {
     const c = await getCollection<MarketplaceOwnerPayout>(COLLECTIONS.MARKETPLACE_OWNER_PAYOUTS);
     return stripIds(await c.find({}).sort({ created_at: -1 }).limit(500).toArray()) as MarketplaceOwnerPayout[];
+  },
+};
+
+
+// ============================================================
+// Phase B3 — Marketplace PayPal Checkout attempts
+// ============================================================
+export const marketplacePaymentAttemptRepo = {
+  async insert(a: MarketplacePaymentAttempt): Promise<MarketplacePaymentAttempt> {
+    const c = await getCollection<MarketplacePaymentAttempt>(COLLECTIONS.MARKETPLACE_PAYMENT_ATTEMPTS);
+    await c.insertOne(a);
+    return stripId(a) as MarketplacePaymentAttempt;
+  },
+  async findById(id: string): Promise<MarketplacePaymentAttempt | null> {
+    const c = await getCollection<MarketplacePaymentAttempt>(COLLECTIONS.MARKETPLACE_PAYMENT_ATTEMPTS);
+    return stripId(await c.findOne({ id })) as MarketplacePaymentAttempt | null;
+  },
+  async findByProviderOrderId(provider: string, provider_order_id: string): Promise<MarketplacePaymentAttempt | null> {
+    const c = await getCollection<MarketplacePaymentAttempt>(COLLECTIONS.MARKETPLACE_PAYMENT_ATTEMPTS);
+    return stripId(await c.findOne({
+      provider: provider as MarketplacePaymentAttempt['provider'],
+      provider_order_id,
+    })) as MarketplacePaymentAttempt | null;
+  },
+  async findByProviderCaptureId(provider: string, provider_capture_id: string): Promise<MarketplacePaymentAttempt | null> {
+    const c = await getCollection<MarketplacePaymentAttempt>(COLLECTIONS.MARKETPLACE_PAYMENT_ATTEMPTS);
+    return stripId(await c.findOne({
+      provider: provider as MarketplacePaymentAttempt['provider'],
+      provider_capture_id,
+    })) as MarketplacePaymentAttempt | null;
+  },
+  async listByOrder(marketplace_order_id: string): Promise<MarketplacePaymentAttempt[]> {
+    const c = await getCollection<MarketplacePaymentAttempt>(COLLECTIONS.MARKETPLACE_PAYMENT_ATTEMPTS);
+    return stripIds(await c.find({ marketplace_order_id }).sort({ created_at: -1 }).toArray()) as MarketplacePaymentAttempt[];
+  },
+  async listAdmin(filter: { status?: MarketplacePaymentAttemptStatus } = {}): Promise<MarketplacePaymentAttempt[]> {
+    const c = await getCollection<MarketplacePaymentAttempt>(COLLECTIONS.MARKETPLACE_PAYMENT_ATTEMPTS);
+    const q: Record<string, unknown> = {};
+    if (filter.status) q.status = filter.status;
+    return stripIds(await c.find(q).sort({ created_at: -1 }).limit(500).toArray()) as MarketplacePaymentAttempt[];
+  },
+  async update(id: string, patch: Partial<MarketplacePaymentAttempt>): Promise<MarketplacePaymentAttempt> {
+    const c = await getCollection<MarketplacePaymentAttempt>(COLLECTIONS.MARKETPLACE_PAYMENT_ATTEMPTS);
+    await c.updateOne({ id }, { $set: { ...patch, updated_at: new Date() } });
+    return stripId(await c.findOne({ id })) as MarketplacePaymentAttempt;
+  },
+  /**
+   * B3 — atomic conditional transition. Only writes when `id` is currently in
+   * `from` status; used to make CAPTURE.COMPLETED idempotent even under a race
+   * with the browser-return capture. Returns the updated document, or `null`
+   * if the transition guard failed (meaning some other worker already moved
+   * the row and the caller must treat this as an idempotent no-op).
+   */
+  async transitionIfIn(id: string, from: MarketplacePaymentAttemptStatus[], to: MarketplacePaymentAttemptStatus, extraPatch: Partial<MarketplacePaymentAttempt> = {}): Promise<MarketplacePaymentAttempt | null> {
+    const c = await getCollection<MarketplacePaymentAttempt>(COLLECTIONS.MARKETPLACE_PAYMENT_ATTEMPTS);
+    const now = new Date();
+    const res = await c.findOneAndUpdate(
+      { id, status: { $in: from } },
+      { $set: { ...extraPatch, status: to, updated_at: now } },
+      { returnDocument: 'after' },
+    );
+    return stripId(res as unknown as MarketplacePaymentAttempt | null);
   },
 };
