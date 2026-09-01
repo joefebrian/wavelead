@@ -89,19 +89,17 @@ export default function MonetizationClient({
   }
 
   if (!isVerified) {
-    // M03.7 — This owner is already assigned to the channel but ownership
-    // has not yet been verified. Surface an actionable path so the owner
-    // isn't stuck with generic gate copy. "channelSlug" is a public route
-    // parameter — no risk exposing it.
-    const isAssignedButUnverified = verificationStatus === 'claimed' || verificationStatus === 'unclaimed';
-    void channelName; void channelId;
+    // M03.7 — canonical unverified condition: verification_status ∉ {'verified','official'}.
+    // Covers 'claimed', 'unclaimed', null, undefined, and any legacy value.
+    // We ALWAYS reach this block only after page.tsx has verified
+    // `channel.owner_id === actor.user.id`, so the "linked to your account"
+    // phrasing is always accurate.
+    void channelName; void channelId; void verificationStatus;
     return (
       <div className="mt-6 wh-card p-5 border-amber-300 bg-amber-50/40" data-testid="ownership-verification-required">
         <div className="font-semibold">Ownership verification required</div>
         <p className="mt-1 text-sm text-muted-foreground">
-          {isAssignedButUnverified
-            ? 'Your channel is linked to your WaveLead account, but ownership has not yet been verified. Complete verification to unlock the sponsorship marketplace.'
-            : 'Only verified channels can publish a sellable rate card. Complete verification first, then return here.'}
+          Your channel is linked to your WaveLead account, but ownership has not yet been verified. Complete verification to unlock the sponsorship marketplace.
         </p>
         <div className="mt-4">
           <a href={`/claim/${channelSlug}`} className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90" data-testid="complete-verification-cta">

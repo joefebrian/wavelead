@@ -291,3 +291,144 @@ describe('M03.7 §5 — unclaimed channel flow remains green', () => {
     expect(after?.verification_status).toBe('verified');
   });
 });
+
+// ============================================================================
+// §6 M03.7 Final Hardening — canonical unverified coverage + no-claim flow
+// ============================================================================
+describe('M03.7 §6 — canonical unverified coverage (all non-verified values)', () => {
+  it('#15 verification_status=null → eligibility surfaces owner-verification-mode', async () => {
+    const owner = await signup('nu15-o');
+    // seedChannel with an explicit null verification_status.
+    const ch = await seedChannel({ slug: `m37-${RUN_TAG}-nu15`, name: 'CH NU15', owner_id: owner.userId });
+    await withDb(async (db) => { await db.collection('channels').updateOne({ id: ch.id }, { $set: { verification_status: null } }); });
+    const e = await claimService.getEligibility(`m37-${RUN_TAG}-nu15`, actorFor(owner.userId));
+    expect(e.canClaim).toBe(true);
+    expect((e as { ownerVerificationMode?: boolean }).ownerVerificationMode).toBe(true);
+    // Marketplace guard blocks — verification not verified.
+    await expect(marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'p', description: 'x', price_minor: 500, deliverables: ['p'], currency: 'USD', is_active: true }],
+    })).rejects.toMatchObject({ status: 403 });
+  });
+  it('#16 verification_status field ABSENT (legacy) → eligibility surfaces owner-verification-mode', async () => {
+    const owner = await signup('nu16-o');
+    const ch = await seedChannel({ slug: `m37-${RUN_TAG}-nu16`, name: 'CH NU16', owner_id: owner.userId });
+    await withDb(async (db) => { await db.collection('channels').updateOne({ id: ch.id }, { $unset: { verification_status: '' } }); });
+    const e = await claimService.getEligibility(`m37-${RUN_TAG}-nu16`, actorFor(owner.userId));
+    expect(e.canClaim).toBe(true);
+    expect((e as { ownerVerificationMode?: boolean }).ownerVerificationMode).toBe(true);
+    // Marketplace guard blocks — field absent means definitely not verified.
+    await expect(marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'p', description: 'x', price_minor: 500, deliverables: ['p'], currency: 'USD', is_active: true }],
+    })).rejects.toMatchObject({ status: 403 });
+  });
+  it('#17 verification_status="verified" → NOT owner-verification-mode; marketplace unlocked', async () => {
+    const owner = await signup('v17-o');
+    const ch = await seedChannel({ slug: `m37-${RUN_TAG}-v17`, name: 'CH V17', owner_id: owner.userId, verification_status: 'verified' });
+    void ch;
+    const e = await claimService.getEligibility(`m37-${RUN_TAG}-v17`, actorFor(owner.userId));
+    // Already verified with owner → cannot claim.
+    expect(e.canClaim).toBe(false);
+    expect((e as { alreadyOwned?: boolean }).alreadyOwned).toBe(true);
+  });
+  it('#18 verification_status="official" → NOT owner-verification-mode; marketplace unlocked', async () => {
+    const owner = await signup('v18-o');
+    const ch = await seedChannel({ slug: `m37-${RUN_TAG}-v18`, name: 'CH V18', owner_id: owner.userId, verification_status: 'official' });
+    void ch;
+    const e = await claimService.getEligibility(`m37-${RUN_TAG}-v18`, actorFor(owner.userId));
+    expect(e.canClaim).toBe(false);
+    // Marketplace guard: official is also treated as verified.
+    const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'p', description: 'x', price_minor: 500, deliverables: ['p'], currency: 'USD', is_active: true }],
+    });
+    expect(card.channel_id).toBe(ch.id);
+  });
+});
+
+describe('M03.7 §7 — verifyCurrentOwner without any claim record', () => {
+  it('#19 admin verifies current owner even when NO claim exists — no synthetic claim is created', async () => {
+    const owner = await signup('nc19-o');
+    const admin = await signup('nc19-a', 'super_admin');
+    const ch = await seedChannel({ slug: `m37-${RUN_TAG}-nc19`, name: 'CH NC19', owner_id: owner.userId, verification_status: 'claimed' });
+    // Sanity: no claim rows exist for this channel BEFORE.
+    const beforeClaims = await withDb(async (db) => db.collection(COLLECTIONS.CHANNEL_CLAIMS).countDocuments({ channel_id: ch.id }));
+    expect(beforeClaims).toBe(0);
+    // Verify current owner.
+    const res = await claimModerationService.verifyCurrentOwner(actorFor(admin.userId, 'super_admin'), ch.id, { moderator_notes: 'no-claim path' });
+    expect(res.ok).toBe(true);
+    expect(res.channel.owner_id).toBe(owner.userId);            // preserved
+    expect(res.channel.verification_status).toBe('verified');
+    // NO synthetic claim was created.
+    const afterClaims = await withDb(async (db) => db.collection(COLLECTIONS.CHANNEL_CLAIMS).find({ channel_id: ch.id }).toArray());
+    expect(afterClaims.length).toBe(0);
+    // Audit still written.
+    const audit = await withDb(async (db) => db.collection('audit_logs').findOne({ entity_id: ch.id, action: 'CHANNEL_OWNER_VERIFIED' }));
+    expect(audit).toBeTruthy();
+    expect(audit!.actor_user_id).toBe(admin.userId);
+    // Marketplace unlocks for the (preserved) owner.
+    const card = await marketplaceService.replaceRateCard(actorFor(owner.userId), ch.id, {
+      packages: [{ type: 'sponsored_post', name: 'p', description: 'x', price_minor: 500, deliverables: ['p'], currency: 'USD', is_active: true }],
+    });
+    expect(card.channel_id).toBe(ch.id);
+  });
+  it('#20 no-claim verification with verification_status=null (legacy)', async () => {
+    const owner = await signup('nc20-o');
+    const admin = await signup('nc20-a', 'super_admin');
+    const ch = await seedChannel({ slug: `m37-${RUN_TAG}-nc20`, name: 'CH NC20', owner_id: owner.userId });
+    await withDb(async (db) => { await db.collection('channels').updateOne({ id: ch.id }, { $set: { verification_status: null } }); });
+    const res = await claimModerationService.verifyCurrentOwner(actorFor(admin.userId, 'super_admin'), ch.id, {});
+    expect(res.ok).toBe(true);
+    expect(res.channel.owner_id).toBe(owner.userId);
+    expect(res.channel.verification_status).toBe('verified');
+  });
+  it('#21 no-claim verification with verification_status field absent (legacy)', async () => {
+    const owner = await signup('nc21-o');
+    const admin = await signup('nc21-a', 'super_admin');
+    const ch = await seedChannel({ slug: `m37-${RUN_TAG}-nc21`, name: 'CH NC21', owner_id: owner.userId });
+    await withDb(async (db) => { await db.collection('channels').updateOne({ id: ch.id }, { $unset: { verification_status: '' } }); });
+    const res = await claimModerationService.verifyCurrentOwner(actorFor(admin.userId, 'super_admin'), ch.id, {});
+    expect(res.ok).toBe(true);
+    expect(res.channel.verification_status).toBe('verified');
+  });
+  it('#22 takeover protection unchanged when NO claim exists — a stranger still cannot claim', async () => {
+    const owner = await signup('nc22-o');
+    const stranger = await signup('nc22-x');
+    const ch = await seedChannel({ slug: `m37-${RUN_TAG}-nc22`, name: 'CH NC22', owner_id: owner.userId });
+    await withDb(async (db) => { await db.collection('channels').updateOne({ id: ch.id }, { $set: { verification_status: null } }); });
+    await expect(claimService.submit(actorFor(stranger.userId), `m37-${RUN_TAG}-nc22`, {
+      verification_method: 'manual', claimant_note: 'attempt',
+      evidence_urls: [{ evidence_type: 'other', evidence_url: 'https://ex-nc22.test/p.png' }],
+    })).rejects.toMatchObject({ status: 409 });
+    const after = await channelRepo.findById(ch.id);
+    expect(after?.owner_id).toBe(owner.userId);
+  });
+});
+
+describe('M03.7 §8 — claim-based verifyCurrentOwner still works', () => {
+  it('#23 with an existing pending claim from the current owner, verifyCurrentOwner marks it approved and preserves owner_id', async () => {
+    const owner = await signup('cb23-o');
+    const admin = await signup('cb23-a', 'super_admin');
+    const ch = await seedChannel({ slug: `m37-${RUN_TAG}-cb23`, name: 'CH CB23', owner_id: owner.userId, verification_status: 'claimed' });
+    // Insert a pending self-claim.
+    const claimId = uuidv4();
+    const now = new Date();
+    await withDb(async (db) => {
+      await db.collection(COLLECTIONS.CHANNEL_CLAIMS).insertOne({
+        id: claimId, channel_id: ch.id, claimant_user_id: owner.userId,
+        verification_method: 'manual', claimant_note: 'self',
+        evidence_urls: [], evidence_metadata: {}, claimant_email: owner.email,
+        website_domain: null, email_domain: 't.test', domain_match: false,
+        status: 'pending', moderator_notes: null, request_more_info_message: null,
+        reject_reason: null, submitted_at: now, reviewed_at: null, reviewed_by: null,
+        approved_at: null, rejected_at: null, created_at: now, updated_at: now,
+      } as unknown as Record<string, unknown>);
+    });
+    await claimModerationService.verifyCurrentOwner(actorFor(admin.userId, 'super_admin'), ch.id, {});
+    // Claim should now be approved.
+    const after = await withDb(async (db) => db.collection(COLLECTIONS.CHANNEL_CLAIMS).findOne({ id: claimId }));
+    expect(after?.status).toBe('approved');
+    const channelAfter = await channelRepo.findById(ch.id);
+    expect(channelAfter?.owner_id).toBe(owner.userId);
+    expect(channelAfter?.verification_status).toBe('verified');
+  });
+});
+

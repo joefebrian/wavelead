@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
 import { moderationService } from '@/lib/services/moderationService';
 import { countryByCode } from '@/lib/constants/countries';
+import ChannelOwnerVerifyClient from './ChannelOwnerVerifyClient';
 import { userRepo } from '@/lib/repositories/userRepo';
 import { ArrowLeft, ExternalLink, Globe } from 'lucide-react';
 import ModerationActions from './ActionsClient';
@@ -174,6 +175,40 @@ export default async function ReviewChannelPage({ params }: { params: Promise<Pa
             }}
           />
         </div>
+
+        {/* M03.7 — Ownership Administration.
+            Rendered ONLY when the channel is approved, has an assigned owner,
+            and ownership is not yet verified/official. Lets a moderator flip
+            verification_status='verified' without fabricating a claim, and
+            without ever reassigning owner_id. Matches the canonical unverified
+            condition: verification_status ∉ {'verified','official'}. */}
+        {channel.status === 'approved'
+          && !!channel.owner_id
+          && channel.verification_status !== 'verified'
+          && channel.verification_status !== 'official' && (
+          <div className="mt-8 wh-card p-5" data-testid="ownership-admin-panel">
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">Ownership Administration</div>
+            <div className="mt-3 grid gap-2 text-sm">
+              <div><span className="text-muted-foreground">Channel:</span> {channel.name} <span className="text-xs text-muted-foreground">(<code>{channel.slug}</code>)</span></div>
+              <div>
+                <span className="text-muted-foreground">Current Owner:</span>{' '}
+                {submitter ? (
+                  <>{submitter.display_name || submitter.email} <span className="text-xs text-muted-foreground">({submitter.email})</span></>
+                ) : (
+                  <span className="text-muted-foreground">Unknown user (id <code>{channel.owner_id}</code>)</span>
+                )}
+              </div>
+              <div><span className="text-muted-foreground">Listing Status:</span> {channel.status}</div>
+              <div><span className="text-muted-foreground">Ownership Status:</span> <code>{channel.verification_status ?? '—'}</code> (unverified)</div>
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              A claim record is <span className="font-medium">not required</span> to verify the current owner. Use this action when the assignment is legitimate but ownership has never been verified through the claim flow.
+            </p>
+            <div className="mt-4">
+              <ChannelOwnerVerifyClient channelId={channel.id} />
+            </div>
+          </div>
+        )}
       </main>
       <Footer />
     </>

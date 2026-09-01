@@ -47,8 +47,8 @@ export const claimService = {
     if (channel.status !== 'approved') {
       return { canClaim: false, reason: 'Only approved channels can be claimed.' };
     }
-    // If already verified with an owner, only support "report an issue" path.
-    if (channel.owner_id && channel.verification_status === 'verified') {
+    // If already verified (or official) with an owner, only support "report an issue" path.
+    if (channel.owner_id && (channel.verification_status === 'verified' || channel.verification_status === 'official')) {
       return {
         canClaim: false,
         alreadyOwned: true,
@@ -110,7 +110,7 @@ export const claimService = {
     const channel = await channelRepo.findBySlug(channelSlug);
     if (!channel) throw new HttpError(404, 'Channel not found');
     if (channel.status !== 'approved') throw new HttpError(400, 'Only approved channels can be claimed');
-    if (channel.owner_id && channel.verification_status === 'verified') {
+    if (channel.owner_id && (channel.verification_status === 'verified' || channel.verification_status === 'official')) {
       throw new HttpError(409, 'This channel already has a verified owner');
     }
     // ── M03.7 — takeover protection. Never allow a claim by a user who is
