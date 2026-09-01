@@ -1,8 +1,8 @@
 'use client';
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertTriangle } from 'lucide-react';
 import type { MarketplaceOrder, MarketplaceOwnerPayout, MarketplacePaymentMethod } from '@/lib/types';
 
 interface Kpis {
@@ -136,7 +136,7 @@ export default function AdminMarketplaceClient({ initialItems, initialKpis }: { 
                     <td className="px-3 py-2"><Badge className={payableStyle(o.owner_payable_status)}>{o.owner_payable_status.replace(/_/g, ' ')}</Badge></td>
                     <td className="px-3 py-2">
                       {o.owner_payable_status === 'eligible_for_payout' && (
-                        <Button size="sm" onClick={() => setPayoutModalOrder(o)}>Record Payout</Button>
+                        <Button size="sm" onClick={() => setPayoutModalOrder(o)} data-testid={`open-record-external-payout-${o.id}`}>Record External Payout</Button>
                       )}
                     </td>
                   </tr>
@@ -193,30 +193,93 @@ export default function AdminMarketplaceClient({ initialItems, initialKpis }: { 
   );
 }
 
+/**
+ * B2.1 — Manual payout safety.
+ * WaveLead does NOT transfer money from this action. It only records a payout
+ * that already happened externally (bank / manual PayPal). Because it flips
+ * owner_payable_status → paid_out, the admin must type the exact phrase below.
+ * The client check is UX only — the server independently requires the same
+ * phrase and rejects anything else with 400 (no payout row, no event, no
+ * order mutation).
+ */
+const PAYOUT_CONFIRM_PHRASE = 'PAYOUT COMPLETED EXTERNALLY';
+
 function RecordPayoutModal({ order, onClose, onDone, busy, setBusy }: { order: MarketplaceOrder; onClose: () => void; onDone: () => Promise<void>; busy: string | null; setBusy: (b: string | null) => void }) {
   const [method, setMethod] = useState<MarketplacePaymentMethod>('bank_transfer');
   const [reference, setReference] = useState('');
   const [paidAt, setPaidAt] = useState(new Date().toISOString().slice(0, 16));
   const [notes, setNotes] = useState('');
+  const [confirmText, setConfirmText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [recorded, setRecorded] = useState<{ order: MarketplaceOrder; payout: MarketplaceOwnerPayout } | null>(null);
+
+  // Server-authoritative amount. Rendered read-only; never submitted.
+  const amountMinor = order.owner_earnings_minor ?? 0;
+  const amountUsd = `$${(amountMinor / 100).toFixed(2)}`;
+  const phraseOk = confirmText === PAYOUT_CONFIRM_PHRASE;
+
   async function submit() {
     setBusy('payout'); setError(null);
     try {
       const r = await fetch(`/api/admin/marketplace/orders/${order.id}/record-payout`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ payout_method: method, payout_reference: reference.trim(), paid_at: new Date(paidAt).toISOString(), notes: notes.trim() || null }),
+        body: JSON.stringify({
+          payout_method: method,
+          payout_reference: reference.trim(),
+          paid_at: new Date(paidAt).toISOString(),
+          notes: notes.trim() || null,
+          // Sent verbatim — the server is the authority on this phrase.
+          confirm: confirmText,
+        }),
       });
       const j = await r.json();
-      if (!r.ok || !j.ok) throw new Error(j?.error || 'Payout failed');
-      await onDone();
+      if (!r.ok || !j.ok) throw new Error(j?.error || 'Could not record external payout');
+      setRecorded({ order: j.data.order, payout: j.data.payout });
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(null); }
   }
+
+  if (recorded) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-y-auto">
+        <div className="wh-card bg-background p-5 max-w-md w-full my-8" data-testid="external-payout-success">
+          <div className="font-semibold text-lg text-emerald-700">External payout recorded</div>
+          <p className="mt-1 text-xs text-muted-foreground">A payout completed outside WaveLead has been logged against this order. No transfer was initiated by WaveLead.</p>
+          <dl className="mt-4 grid gap-2 text-sm">
+            <Row k="Payable status" v={<Badge className={payableStyle(recorded.order.owner_payable_status)}>{recorded.order.owner_payable_status.replace(/_/g, ' ')}</Badge>} />
+            <Row k="Payout amount" v={<span className="font-mono font-semibold">{`$${(recorded.payout.amount_minor / 100).toFixed(2)} ${recorded.payout.currency}`}</span>} />
+            <Row k="Payout method" v={<span className="text-xs">{recorded.payout.payout_method}</span>} />
+            <Row k="Payout reference" v={<span className="font-mono text-xs">{recorded.payout.payout_reference_display}</span>} />
+            <Row k="Paid at" v={<span className="text-xs">{new Date(recorded.payout.paid_at).toLocaleString()}</span>} />
+            <Row k="Recorded by" v={<span className="font-mono text-xs">{recorded.payout.created_by.slice(0, 8)}</span>} />
+          </dl>
+          <div className="flex justify-end mt-4">
+            <Button onClick={() => { void onDone(); }} data-testid="external-payout-success-close">Done</Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="wh-card bg-background p-5 max-w-md w-full">
-        <div className="font-semibold text-lg">Record owner payout</div>
-        <p className="mt-1 text-xs text-muted-foreground">Server-derived amount: <span className="font-mono font-semibold">${((order.owner_earnings_minor ?? 0) / 100).toFixed(2)}</span> (owner earnings on order <span className="font-mono">{order.id.slice(0, 8)}</span>). Amount cannot be edited.</p>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-y-auto">
+      <div className="wh-card bg-background p-5 max-w-md w-full my-8" data-testid="record-external-payout-modal">
+        <div className="font-semibold text-lg">Record External Payout</div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          WaveLead does not send money from this action. Use this only after the owner payout has been completed externally.
+        </p>
+
+        {/* Read-only, server-authoritative summary */}
+        <dl className="mt-3 rounded-md border border-border bg-muted/40 p-3 grid gap-1.5 text-sm" data-testid="payout-summary">
+          <Row k="Owner" v={<span className="font-mono text-xs">{order.owner_user_id.slice(0, 8)}</span>} />
+          <Row k="Channel" v={<span className="text-xs">{order.snapshot?.channel_name || order.channel_slug}</span>} />
+          <Row k="Order" v={<span className="font-mono text-xs">{order.id.slice(0, 8)}</span>} />
+          <Row k="Owner Earnings" v={<span className="font-mono">{amountUsd}</span>} />
+          <Row k="Currency" v={<span className="font-mono text-xs">USD</span>} />
+          <Row k="Payout Amount" v={<span className="font-mono font-semibold text-emerald-700" data-testid="payout-amount-readonly">{amountUsd}</span>} />
+          <p className="text-[11px] text-muted-foreground mt-1">Payout amount is derived by the server from finalized owner earnings and cannot be edited.</p>
+        </dl>
+
         <div className="mt-3 grid gap-3">
           <label className="text-sm"><span className="block text-xs uppercase text-muted-foreground mb-1">Payout method</span>
             <select value={method} onChange={(e) => setMethod(e.target.value as MarketplacePaymentMethod)} className={inputCls}>
@@ -225,20 +288,46 @@ function RecordPayoutModal({ order, onClose, onDone, busy, setBusy }: { order: M
               <option value="other">Other</option>
             </select></label>
           <label className="text-sm"><span className="block text-xs uppercase text-muted-foreground mb-1">Payout reference (external txn / batch id)</span>
-            <input value={reference} onChange={(e) => setReference(e.target.value)} className={inputCls} placeholder="OUT-2026-001234" /></label>
+            <input value={reference} onChange={(e) => setReference(e.target.value)} className={inputCls} placeholder="OUT-2026-001234" data-testid="payout-reference" /></label>
           <label className="text-sm"><span className="block text-xs uppercase text-muted-foreground mb-1">Paid at</span>
             <input type="datetime-local" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} className={inputCls} /></label>
           <label className="text-sm"><span className="block text-xs uppercase text-muted-foreground mb-1">Notes (optional)</span>
             <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></label>
-          {error && <div className="text-sm text-rose-600">{error}</div>}
+
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-3" data-testid="payout-warning">
+            <div className="flex gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-900">
+                This action records a payout that has already happened externally. It does not initiate a bank or PayPal transfer.
+              </p>
+            </div>
+            <label className="block text-sm mt-3">
+              <span className="block text-xs uppercase text-amber-900 mb-1">Type <span className="font-mono font-semibold">{PAYOUT_CONFIRM_PHRASE}</span> to confirm</span>
+              <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} className={inputCls} placeholder={PAYOUT_CONFIRM_PHRASE} autoComplete="off" spellCheck={false} data-testid="payout-confirm-phrase" />
+            </label>
+            {confirmText.length > 0 && !phraseOk && (
+              <p className="mt-1 text-[11px] text-rose-700">Phrase does not match exactly (case sensitive).</p>
+            )}
+          </div>
+
+          {error && <div className="text-sm text-rose-600" data-testid="payout-error">{error}</div>}
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={onClose} disabled={busy !== null}>Cancel</Button>
-            <Button onClick={submit} disabled={busy !== null || !reference.trim()}>
-              {busy === 'payout' ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Recording…</> : 'Record payout'}
+            <Button onClick={submit} disabled={busy !== null || !reference.trim() || !phraseOk} data-testid="submit-record-external-payout">
+              {busy === 'payout' ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Recording…</> : 'Record External Payout'}
             </Button>
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function Row({ k, v }: { k: string; v: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <dt className="text-xs uppercase text-muted-foreground">{k}</dt>
+      <dd className="text-right">{v}</dd>
     </div>
   );
 }

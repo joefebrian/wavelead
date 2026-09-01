@@ -717,9 +717,19 @@ export const marketplaceService = {
       payout_reference: z.string().trim().min(1).max(200),
       paid_at: z.string().datetime(),
       notes: z.string().trim().max(2000).optional().nullable(),
+      // B2.1 — explicit confirmation phrase. Enforced server-side; frontend must
+      // require the admin to type this exact phrase before submitting.
+      confirm: z.literal('PAYOUT COMPLETED EXTERNALLY'),
     });
     const parsed = schema.safeParse(input);
-    if (!parsed.success) throw new HttpError(400, `Invalid input: ${parsed.error.issues[0]?.message}`);
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      // If the failing field is `confirm`, surface the exact phrase requirement.
+      if (issue?.path[0] === 'confirm') {
+        throw new HttpError(400, 'You must confirm by sending confirm="PAYOUT COMPLETED EXTERNALLY" — this action does not send money and only records a payout completed externally');
+      }
+      throw new HttpError(400, `Invalid input: ${issue?.message}`);
+    }
     const d = parsed.data;
 
     const order = await marketplaceOrderRepo.findById(orderId);

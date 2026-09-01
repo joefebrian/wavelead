@@ -342,7 +342,7 @@ describe('B2 §6 — Manual payout record', () => {
     const { payout, order: updated } = await marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
       payout_method: 'bank_transfer',
       payout_reference: `OUT-${RUN_TAG}-17`,
-      paid_at: new Date().toISOString(),
+      paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED EXTERNALLY',
       // Attempted client override — MUST be ignored (Zod does not include it).
       amount_minor: 999_999_00,
       owner_user_id: 'attacker',
@@ -356,14 +356,14 @@ describe('B2 §6 — Manual payout record', () => {
   it('#18 normal user cannot record payout (403)', async () => {
     const { buyer, order } = await readyForPayout('p18');
     await expect(marketplaceService.adminRecordPayout(actorFor(buyer.userId), order.id, {
-      payout_method: 'bank_transfer', payout_reference: 'x', paid_at: new Date().toISOString(),
+      payout_method: 'bank_transfer', payout_reference: 'x', paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED EXTERNALLY',
     })).rejects.toMatchObject({ status: 403 });
   });
 
   it('#19 owner (non-admin) cannot record payout (403)', async () => {
     const { owner, order } = await readyForPayout('p19');
     await expect(marketplaceService.adminRecordPayout(actorFor(owner.userId), order.id, {
-      payout_method: 'bank_transfer', payout_reference: 'x', paid_at: new Date().toISOString(),
+      payout_method: 'bank_transfer', payout_reference: 'x', paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED EXTERNALLY',
     })).rejects.toMatchObject({ status: 403 });
   });
 
@@ -371,7 +371,7 @@ describe('B2 §6 — Manual payout record', () => {
     const { admin, order } = await readyForPayout('p20');
     const { payout, order: updated } = await marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
       payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-20`,
-      paid_at: new Date().toISOString(),
+      paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED EXTERNALLY',
     });
     expect(updated.owner_payable_status).toBe('paid_out');
     expect(updated.paid_out_at).toBeTruthy();
@@ -395,11 +395,11 @@ describe('B2 §7 — Payout idempotency + cross-payout identity', () => {
     const { admin, order } = await readyForPayout('i21');
     const ref = `OUT-${RUN_TAG}-21`;
     const first = await marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
-      payout_method: 'bank_transfer', payout_reference: ref, paid_at: new Date().toISOString(),
+      payout_method: 'bank_transfer', payout_reference: ref, paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED EXTERNALLY',
     });
     // Retry same method + ref on same order → same payout returned.
     const retry = await marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
-      payout_method: 'bank_transfer', payout_reference: ref, paid_at: new Date().toISOString(),
+      payout_method: 'bank_transfer', payout_reference: ref, paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED EXTERNALLY',
     });
     expect(retry.payout.id).toBe(first.payout.id);
     // Only one row in the collection for this order.
@@ -410,11 +410,11 @@ describe('B2 §7 — Payout idempotency + cross-payout identity', () => {
   it('#22 second payout for the SAME order is rejected (409)', async () => {
     const { admin, order } = await readyForPayout('i22');
     await marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
-      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-22-A`, paid_at: new Date().toISOString(),
+      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-22-A`, paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED EXTERNALLY',
     });
     // Different reference on the same paid_out order → 409.
     await expect(marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
-      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-22-B`, paid_at: new Date().toISOString(),
+      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-22-B`, paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED EXTERNALLY',
     })).rejects.toMatchObject({ status: 409 });
   });
 
@@ -423,10 +423,10 @@ describe('B2 §7 — Payout idempotency + cross-payout identity', () => {
     const { order: orderB } = await readyForPayout('i23b');
     const shared = `OUT-${RUN_TAG}-23-SHARED`;
     await marketplaceService.adminRecordPayout(actorFor(adminA.userId, 'admin'), orderA.id, {
-      payout_method: 'bank_transfer', payout_reference: shared, paid_at: new Date().toISOString(),
+      payout_method: 'bank_transfer', payout_reference: shared, paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED EXTERNALLY',
     });
     await expect(marketplaceService.adminRecordPayout(actorFor(adminA.userId, 'admin'), orderB.id, {
-      payout_method: 'bank_transfer', payout_reference: shared, paid_at: new Date().toISOString(),
+      payout_method: 'bank_transfer', payout_reference: shared, paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED EXTERNALLY',
     })).rejects.toMatchObject({ status: 409 });
     // Order B remains eligible, not paid_out.
     const bAfter = await withDb(async (db) => db.collection(COLLECTIONS.MARKETPLACE_ORDERS).findOne({ id: orderB.id }));
@@ -441,10 +441,10 @@ describe('B2 §7 — Payout idempotency + cross-payout identity', () => {
     const ref = `OUT-${RUN_TAG}-24`;
     // Record twice (second is idempotent no-op).
     await marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
-      payout_method: 'bank_transfer', payout_reference: ref, paid_at: new Date().toISOString(),
+      payout_method: 'bank_transfer', payout_reference: ref, paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED EXTERNALLY',
     });
     await marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
-      payout_method: 'bank_transfer', payout_reference: ref, paid_at: new Date().toISOString(),
+      payout_method: 'bank_transfer', payout_reference: ref, paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED EXTERNALLY',
     });
     const events = await withDb(async (db) => db.collection(COLLECTIONS.MARKETPLACE_FINANCIAL_EVENTS).find({ order_id: order.id, event_type: 'OWNER_PAYOUT_RECORDED' }).toArray());
     expect(events.length).toBe(1);
@@ -457,7 +457,7 @@ describe('B2 §7 — Payout idempotency + cross-payout identity', () => {
     const originalNet = pre.net_transaction_value_minor;
     const originalFee = pre.gateway_fee_minor;
     await marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), pre.id, {
-      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-25`, paid_at: new Date().toISOString(),
+      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-25`, paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED EXTERNALLY',
     });
     const after = await withDb(async (db) => db.collection(COLLECTIONS.MARKETPLACE_ORDERS).findOne({ id: pre.id }));
     expect(after?.owner_earnings_minor).toBe(originalOwner);
@@ -483,7 +483,7 @@ describe('B2 §8 — Refund guard', () => {
   it('#26 paid_out order refund attempt sets manual_reconciliation_required (no auto reversal)', async () => {
     const { admin, order } = await readyForPayout('rf26');
     await marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
-      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-26`, paid_at: new Date().toISOString(),
+      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-26`, paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED EXTERNALLY',
     });
     const guard = await marketplaceService.adminInitiateRefund(actorFor(admin.userId, 'admin'), order.id, { reason: 'buyer requested refund after post ran' });
     expect(guard.requires_manual).toBe(true);
@@ -510,5 +510,186 @@ describe('B2 §8 — Refund guard', () => {
     expect(done.status).toBe('completed');
     // Owner cannot start work again after completion.
     await expect(marketplaceService.startWork(actorFor(owner.userId), order.id)).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+// ============================================================================
+// §11 B2.1 — Manual payout safety: explicit confirmation phrase
+//
+// Recording a payout flips owner_payable_status → paid_out. WaveLead does NOT
+// send money from this action, so the server independently requires the exact
+// phrase `PAYOUT COMPLETED EXTERNALLY`. Client-side validation is UX only.
+// A rejected confirmation must produce:
+//   - 400
+//   - zero payout rows
+//   - zero OWNER_PAYOUT_RECORDED events
+//   - unchanged owner_payable_status
+// ============================================================================
+describe('B2.1 §11 — Manual payout confirmation phrase', () => {
+  const CONFIRM = 'PAYOUT COMPLETED EXTERNALLY';
+
+  async function readyForPayout(tag: string) {
+    const state = await createPaidOrder(tag);
+    await marketplaceService.startWork(actorFor(state.owner.userId), state.order.id);
+    await marketplaceService.submitDelivery(actorFor(state.owner.userId), state.order.id, { delivery_notes: 'ok', delivery_urls: [] });
+    const done = await marketplaceService.buyerAcceptDelivery(actorFor(state.buyer.userId), state.order.id);
+    return { ...state, order: done };
+  }
+
+  async function payoutRows(orderId: string) {
+    return withDb(async (db) => db.collection(COLLECTIONS.MARKETPLACE_OWNER_PAYOUTS).find({ order_id: orderId }).toArray());
+  }
+  async function payoutEvents(orderId: string) {
+    return withDb(async (db) => db.collection(COLLECTIONS.MARKETPLACE_FINANCIAL_EVENTS).find({ order_id: orderId, event_type: 'OWNER_PAYOUT_RECORDED' }).toArray());
+  }
+  async function orderRow(orderId: string) {
+    return withDb(async (db) => db.collection(COLLECTIONS.MARKETPLACE_ORDERS).findOne({ id: orderId }));
+  }
+
+  it('#28 payout WITHOUT confirmation phrase is rejected (400)', async () => {
+    const { admin, order } = await readyForPayout('c28');
+    await expect(marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
+      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-28`, paid_at: new Date().toISOString(),
+    })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('#29 payout with INCORRECT confirmation phrase is rejected (400) — all near-miss variants', async () => {
+    const { admin, order } = await readyForPayout('c29');
+    const bad = [
+      '',
+      'payout completed externally',            // wrong case
+      'Payout Completed Externally',            // wrong case
+      ' PAYOUT COMPLETED EXTERNALLY',           // leading whitespace
+      'PAYOUT COMPLETED EXTERNALLY ',           // trailing whitespace
+      'PAYOUT COMPLETED EXTERNALLY!',           // extra punctuation
+      'PAYOUT COMPLETED',                       // truncated
+      'PAYOUT_COMPLETED_EXTERNALLY',            // underscores
+      'CONFIRM',
+      'yes',
+      'true',
+    ];
+    for (const confirm of bad) {
+      await expect(marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
+        payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-29`, paid_at: new Date().toISOString(), confirm,
+      })).rejects.toMatchObject({ status: 400 });
+    }
+    // Non-string types must also be rejected (no truthiness bypass).
+    for (const confirm of [true, 1, null, {}, ['PAYOUT COMPLETED EXTERNALLY']]) {
+      await expect(marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
+        payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-29`, paid_at: new Date().toISOString(), confirm,
+      } as unknown as Record<string, unknown>)).rejects.toMatchObject({ status: 400 });
+    }
+  });
+
+  it('#30 rejected confirmation creates ZERO payout rows', async () => {
+    const { admin, order } = await readyForPayout('c30');
+    expect((await payoutRows(order.id)).length).toBe(0);
+    await expect(marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
+      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-30`, paid_at: new Date().toISOString(),
+    })).rejects.toMatchObject({ status: 400 });
+    await expect(marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
+      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-30`, paid_at: new Date().toISOString(), confirm: 'nope',
+    })).rejects.toMatchObject({ status: 400 });
+    expect((await payoutRows(order.id)).length).toBe(0);
+    // The payout reference was never consumed, so it is still allocatable.
+    const { payout } = await marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
+      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-30`, paid_at: new Date().toISOString(), confirm: CONFIRM,
+    });
+    expect(payout.payout_reference_display).toBe(`OUT-${RUN_TAG}-30`);
+    expect((await payoutRows(order.id)).length).toBe(1);
+  });
+
+  it('#31 rejected confirmation appends ZERO OWNER_PAYOUT_RECORDED events', async () => {
+    const { admin, order } = await readyForPayout('c31');
+    const before = await payoutEvents(order.id);
+    expect(before.length).toBe(0);
+    await expect(marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
+      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-31`, paid_at: new Date().toISOString(),
+    })).rejects.toMatchObject({ status: 400 });
+    await expect(marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
+      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-31`, paid_at: new Date().toISOString(), confirm: 'PAYOUT COMPLETED',
+    })).rejects.toMatchObject({ status: 400 });
+    expect((await payoutEvents(order.id)).length).toBe(0);
+  });
+
+  it('#32 rejected confirmation leaves owner_payable_status + order fields unchanged', async () => {
+    const { admin, order } = await readyForPayout('c32');
+    const before = await orderRow(order.id);
+    expect(before?.owner_payable_status).toBe('eligible_for_payout');
+    await expect(marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
+      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-32`, paid_at: new Date().toISOString(), confirm: 'payout completed externally',
+    })).rejects.toMatchObject({ status: 400 });
+    const after = await orderRow(order.id);
+    expect(after?.owner_payable_status).toBe('eligible_for_payout');
+    expect(after?.paid_out_at ?? null).toBeNull();
+    expect(after?.payout_id ?? null).toBeNull();
+    // Finalized 90/10 economics untouched by the rejected attempt.
+    expect(after?.owner_earnings_minor).toBe(before?.owner_earnings_minor);
+    expect(after?.wavelead_commission_minor).toBe(before?.wavelead_commission_minor);
+    expect(after?.net_transaction_value_minor).toBe(before?.net_transaction_value_minor);
+    expect(after?.gateway_fee_minor).toBe(before?.gateway_fee_minor);
+  });
+
+  it('#33 exact phrase succeeds and payout amount stays server-authoritative', async () => {
+    const { admin, order } = await readyForPayout('c33');
+    const { payout, order: updated } = await marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
+      payout_method: 'bank_transfer',
+      payout_reference: `OUT-${RUN_TAG}-33`,
+      paid_at: new Date().toISOString(),
+      notes: 'wire sent from ops bank account',
+      confirm: CONFIRM,
+      // Attempted client overrides — must be ignored.
+      amount_minor: 1,
+      currency: 'EUR',
+      owner_user_id: 'attacker',
+    } as unknown as Record<string, unknown>);
+    expect(payout.amount_minor).toBe(order.owner_earnings_minor);
+    expect(payout.currency).toBe('USD');
+    expect(payout.owner_user_id).toBe(order.owner_user_id);
+    expect(payout.created_by).toBe(admin.userId);
+    expect(updated.owner_payable_status).toBe('paid_out');
+    expect((await payoutEvents(order.id)).length).toBe(1);
+  });
+
+  it('#34 confirmation phrase does not weaken idempotency or cross-order reference safety', async () => {
+    const { admin, order: orderA } = await readyForPayout('c34a');
+    const { order: orderB } = await readyForPayout('c34b');
+    const ref = `OUT-${RUN_TAG}-34`;
+    const first = await marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), orderA.id, {
+      payout_method: 'bank_transfer', payout_reference: ref, paid_at: new Date().toISOString(), confirm: CONFIRM,
+    });
+    // Same order + same identity + valid phrase → idempotent.
+    const retry = await marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), orderA.id, {
+      payout_method: 'bank_transfer', payout_reference: ref, paid_at: new Date().toISOString(), confirm: CONFIRM,
+    });
+    expect(retry.payout.id).toBe(first.payout.id);
+    expect((await payoutRows(orderA.id)).length).toBe(1);
+    // Same order + different identity → 409 (second payout blocked).
+    await expect(marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), orderA.id, {
+      payout_method: 'bank_transfer', payout_reference: `${ref}-OTHER`, paid_at: new Date().toISOString(), confirm: CONFIRM,
+    })).rejects.toMatchObject({ status: 409 });
+    // Same identity + different order → 409 (cross-order reuse blocked).
+    await expect(marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), orderB.id, {
+      payout_method: 'bank_transfer', payout_reference: ref, paid_at: new Date().toISOString(), confirm: CONFIRM,
+    })).rejects.toMatchObject({ status: 409 });
+    expect((await payoutRows(orderB.id)).length).toBe(0);
+  });
+
+  it('#35 authorization is checked before the confirmation phrase (non-admin never records)', async () => {
+    const { buyer, owner, order } = await readyForPayout('c35');
+    // Valid phrase but wrong role → 403, and no state change.
+    await expect(marketplaceService.adminRecordPayout(actorFor(buyer.userId), order.id, {
+      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-35-B`, paid_at: new Date().toISOString(), confirm: CONFIRM,
+    })).rejects.toMatchObject({ status: 403 });
+    await expect(marketplaceService.adminRecordPayout(actorFor(owner.userId), order.id, {
+      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-35-O`, paid_at: new Date().toISOString(), confirm: CONFIRM,
+    })).rejects.toMatchObject({ status: 403 });
+    await expect(marketplaceService.adminRecordPayout(null, order.id, {
+      payout_method: 'bank_transfer', payout_reference: `OUT-${RUN_TAG}-35-N`, paid_at: new Date().toISOString(), confirm: CONFIRM,
+    })).rejects.toMatchObject({ status: 401 });
+    expect((await payoutRows(order.id)).length).toBe(0);
+    expect((await payoutEvents(order.id)).length).toBe(0);
+    const after = await orderRow(order.id);
+    expect(after?.owner_payable_status).toBe('eligible_for_payout');
   });
 });

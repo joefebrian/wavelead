@@ -5393,3 +5393,58 @@ agent_communication:
 
       READY FOR SAVE TO GITHUB:             YES
       STOP.
+
+  - agent: "main"
+    message: |
+      PHASE B2.1 — MANUAL PAYOUT SAFETY + FINAL RELEASE GATE (COMPLETE)
+
+      SCOPE (financial-safety hardening only; no economics changes)
+        1. Admin action renamed "Record Payout" → "Record External Payout".
+        2. Server-side mandatory confirmation phrase: confirm === "PAYOUT COMPLETED EXTERNALLY"
+           (zod z.literal in marketplaceService.adminRecordPayout). Client cannot bypass.
+        3. Read-only server-authoritative payout summary in the modal
+           (Owner / Channel / Order / Owner Earnings / Currency / Payout Amount).
+        4. Truthful warning copy + success wording "External payout recorded".
+
+      TARGETED TESTS
+        tests/m08b2_delivery_payout.test.ts:  35/35 PASS
+          (+8 new B2.1 §11 tests: #28 missing phrase 400, #29 11 wrong-phrase +
+           5 non-string variants 400, #30 zero payout rows on reject, #31 zero
+           OWNER_PAYOUT_RECORDED events on reject, #32 owner_payable_status +
+           finalized economics unchanged on reject, #33 exact phrase succeeds with
+           server-authoritative amount, #34 idempotency + cross-order ref safety
+           preserved, #35 authz enforced before phrase — 401/403)
+        tests/m08b1_marketplace.test.ts:      43/43 PASS
+        Fixed: duplicated `confirm` object key in test #20.
+
+      FULL SUITE (single run)
+        428/431 PASS — 3 failures, all pre-existing m07_security primary
+        super-admin identity tests caused by foundation.test.ts unscoped
+        users.deleteMany({}). m060 refund idempotency passed this run.
+        NO NEW FAILURES.
+
+      TYPECHECK: PASS      BUILD: PASS
+
+      PAYOUT INDEX BOOTSTRAP
+        lib/db/indexes.ts → ensureIndexes() creates on marketplace_owner_payouts:
+        uniq_id, uniq_order (unique {order_id}), by_owner_time, and
+        uniq_payout_identity (unique {payout_method, payout_reference_normalized}
+        with $type:'string' partialFilterExpression). ensureIndexes() is invoked
+        from getDb() in lib/db/mongo.ts on first connection → idempotent, no manual
+        production createIndex step. Verified live in dev DB via getIndexes().
+
+      REFUND UI: NOT PRESENT in marketplace admin UI (B2 refund guard has no UI
+      surface) → no change made. The only refund UI is the Promote/PayPal funding
+      console (app/admin/payments/*), which DOES call a real provider refund and is
+      already truthfully labelled "Execute PayPal refund now" — untouched.
+
+      RESPONSIVE SMOKE (deterministic dev fixtures, no real payout submitted)
+        390px:  OWNER paid→Start Work / in_progress→Submit Delivery /
+                submitted_for_review→Awaiting buyer review / completed→Eligible for
+                payout $218.25. BUYER delivery notes + 2 proof URLs + Accept
+                Delivery. ADMIN Owner Payables → Record External Payout modal,
+                warning visible, read-only amount, phrase gate blocks submit.
+                No horizontal overflow (scrollWidth 390 === clientWidth 390).
+        1440px: same surfaces, clean spacing, no clipping (1440 === 1440).
+
+      PAYPAL / PROMOTE / PHASE A / SAAS: UNCHANGED.
