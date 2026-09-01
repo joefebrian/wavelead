@@ -579,6 +579,10 @@ export const marketplaceService = {
     const order = await marketplaceOrderRepo.findById(orderId);
     if (!order) throw new HttpError(404, 'Order not found');
     if (order.owner_user_id !== actor.user.id) throw new HttpError(403, 'Only the channel owner may start work');
+    // B3.1 — a refund/reversal or double-payment must block normal fulfillment.
+    if (order.payment_reconciliation_required) {
+      throw new HttpError(409, 'Cannot start work: payment reconciliation required for this order');
+    }
     if (order.status !== 'paid') throw new HttpError(400, `Cannot start work: order status is '${order.status}', not 'paid'`);
     if (order.economics_status !== 'finalized') throw new HttpError(400, 'Cannot start work: order economics are not finalized (gateway fee may be unknown)');
     if (order.owner_payable_status !== 'payable_pending_delivery') throw new HttpError(400, `Cannot start work: owner payable status is '${order.owner_payable_status}'`);
@@ -621,6 +625,10 @@ export const marketplaceService = {
     const order = await marketplaceOrderRepo.findById(orderId);
     if (!order) throw new HttpError(404, 'Order not found');
     if (order.owner_user_id !== actor.user.id) throw new HttpError(403, 'Only the channel owner may submit delivery');
+    // B3.1 — refund/reversal/double-payment must block delivery progression.
+    if (order.payment_reconciliation_required) {
+      throw new HttpError(409, 'Cannot submit delivery: payment reconciliation required for this order');
+    }
     if (order.status !== 'in_progress') throw new HttpError(400, `Cannot submit delivery: order status is '${order.status}', not 'in_progress'`);
 
     return marketplaceOrderRepo.update(orderId, {
@@ -754,6 +762,11 @@ export const marketplaceService = {
 
     const order = await marketplaceOrderRepo.findById(orderId);
     if (!order) throw new HttpError(404, 'Order not found');
+    // B3.1 — refund/reversal/double-payment must block payout recording (even
+    // when the order was already at eligible_for_payout when the event landed).
+    if (order.payment_reconciliation_required && order.owner_payable_status !== 'paid_out') {
+      throw new HttpError(409, 'Cannot record payout: payment reconciliation required for this order');
+    }
     if (order.status !== 'completed') throw new HttpError(400, `Cannot record payout: order status is '${order.status}', not 'completed'`);
     if (order.economics_status !== 'finalized') throw new HttpError(400, 'Cannot record payout: order economics are not finalized');
     if (order.owner_payable_status !== 'eligible_for_payout' && order.owner_payable_status !== 'paid_out') {
@@ -1031,9 +1044,16 @@ export const marketplaceService = {
     if (!actor) throw new HttpError(401, 'You must be signed in');
     const a = await marketplacePaymentAttemptRepo.findById(attempt_id);
     if (!a) throw new HttpError(404, 'Payment attempt not found');
-    const isCreator = a.created_by === actor.user.id;
+    // B3.1 — buyer-triggered capture authority.
+    // Browser-return capture requires the AUTHENTICATED marketplace buyer of the
+    // order this attempt belongs to (or admin). Knowing the attempt id alone
+    // must not be sufficient. Server/provider remain authoritative for amount,
+    // currency, capture id and payment status — those never come from browser.
+    const order = await marketplaceOrderRepo.findById(a.marketplace_order_id);
+    if (!order) throw new HttpError(404, 'Marketplace order not found');
     const isAdmin = hasAtLeastRole(actor.user, ROLES.ADMIN);
-    if (!isCreator && !isAdmin) throw new HttpError(403, 'Not your payment attempt');
+    const isBuyer = !!order.buyer_user_id && order.buyer_user_id === actor.user.id;
+    if (!isAdmin && !isBuyer) throw new HttpError(403, 'Not your marketplace order');
     return this._captureAttempt(a);
   },
 
@@ -1277,9 +1297,20 @@ export const marketplaceService = {
   ): Promise<{ attempt: MarketplacePaymentAttempt; order: MarketplaceOrder } | null> {
     const a = await marketplacePaymentAttemptRepo.findByProviderOrderId('paypal', provider_order_id);
     if (!a) return null;
-    const now = new Date();
-    // Mark the attempt reversed. Idempotent — repeated webhook deliveries flip
-    // only once because we key financial-event dedup on refund_reference.
+    // B3.1 — service-layer idempotency guard: if this exact refund_reference
+    // was already recorded on this order (as the same event_type), treat as
+    // a no-op. The global PayPal event dedup already prevents webhook replay
+    // from re-invoking this function; this belt-and-braces guard covers any
+    // direct or duplicated call path (tests, manual admin retry).
+    const refNormalized = provider_refund_reference.toLowerCase();
+    const priorEvents = await marketplaceFinancialEventRepo.listByOrder(a.marketplace_order_id);
+    const alreadyRecorded = priorEvents.some((e) => e.event_type === event_type && e.payment_reference_normalized === refNormalized);
+    if (alreadyRecorded) {
+      const orderNow = await marketplaceOrderRepo.findById(a.marketplace_order_id);
+      const attemptNow = await marketplacePaymentAttemptRepo.findById(a.id);
+      if (orderNow && attemptNow) return { attempt: attemptNow, order: orderNow };
+    }
+    // Mark the attempt reversed. Idempotent — repeated calls flip only once.
     if (a.status !== 'reversed') {
       await marketplacePaymentAttemptRepo.update(a.id, {
         status: 'reversed',
@@ -1296,27 +1327,29 @@ export const marketplaceService = {
       patch.owner_payable_status = 'manual_reconciliation_required';
     }
     const updated = await marketplaceOrderRepo.update(order.id, patch);
-    try {
-      await marketplaceFinancialEventRepo.append({
-        order_id: order.id,
-        event_type,
-        currency: 'USD',
-        gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
-        gateway_fee_minor: null,
-        net_amount_minor: null,
-        owner_earnings_minor: null,
-        wavelead_commission_minor: null,
-        payment_reference_normalized: provider_refund_reference.toLowerCase(),
-        actor_user_id: 'system',
-        metadata: {
-          provider: 'paypal',
-          provider_order_id,
-          provider_refund_reference,
-          amount_minor,
-          owner_was_paid_out: order.owner_payable_status === 'paid_out',
-        },
-      });
-    } catch { /* audit best-effort */ }
+    if (!alreadyRecorded) {
+      try {
+        await marketplaceFinancialEventRepo.append({
+          order_id: order.id,
+          event_type,
+          currency: 'USD',
+          gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
+          gateway_fee_minor: null,
+          net_amount_minor: null,
+          owner_earnings_minor: null,
+          wavelead_commission_minor: null,
+          payment_reference_normalized: refNormalized,
+          actor_user_id: 'system',
+          metadata: {
+            provider: 'paypal',
+            provider_order_id,
+            provider_refund_reference,
+            amount_minor,
+            owner_was_paid_out: order.owner_payable_status === 'paid_out',
+          },
+        });
+      } catch { /* audit best-effort */ }
+    }
     return { attempt: (await marketplacePaymentAttemptRepo.findById(a.id))!, order: updated };
   },
 
@@ -1344,6 +1377,11 @@ export const marketplaceService = {
 export function deriveOwnerPayableAfterCompletion(order: MarketplaceOrder): OwnerPayableStatus {
   // If we're already paid_out, don't downgrade.
   if (order.owner_payable_status === 'paid_out') return 'paid_out';
+  // B3.1 — a refund/reversal or double-payment must NEVER produce eligibility.
+  // Historical delivery data is preserved, but payout stays blocked pending
+  // admin reconciliation.
+  if (order.payment_reconciliation_required) return 'manual_reconciliation_required';
+  if (order.owner_payable_status === 'manual_reconciliation_required') return 'manual_reconciliation_required';
   // Must be paid + finalized.
   if (order.status !== 'paid' && order.status !== 'in_progress' && order.status !== 'submitted_for_review' && order.status !== 'completed') return 'not_applicable';
   if (order.economics_status !== 'finalized') return 'blocked_fee_reconciliation';

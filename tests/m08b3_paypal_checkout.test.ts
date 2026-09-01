@@ -569,3 +569,192 @@ describe('B3 §13 — marketplace event routing does not alter Promote', () => {
     expect(res).toBeNull();
   });
 });
+
+// ============================================================================
+// §14 B3.1 — Buyer-triggered capture authority (browser-return endpoint)
+// ============================================================================
+describe('B3.1 §14 — buyer capture authority', () => {
+  it('#28 anonymous browser capture → 401', async () => {
+    const { buyer, order } = await bookAndAccept('cap28');
+    const { attempt } = await marketplaceService.buyerStartPaypalCheckout(actorFor(buyer.userId), order.id);
+    await expect(marketplaceService.captureMarketplacePaypalOrder(null, attempt.id)).rejects.toMatchObject({ status: 401 });
+    // Server-authoritative: attempt still not captured.
+    const a = await marketplacePaymentAttemptRepo.findById(attempt.id);
+    expect(a?.status).toBe('checkout_created');
+  });
+  it('#29 unrelated authenticated buyer → 403', async () => {
+    const { buyer, order } = await bookAndAccept('cap29');
+    const { attempt } = await marketplaceService.buyerStartPaypalCheckout(actorFor(buyer.userId), order.id);
+    // A different authenticated user who is NOT the order buyer.
+    const stranger = await signup(`b3-${RUN_TAG}-cap29-x@t.test`);
+    await expect(marketplaceService.captureMarketplacePaypalOrder(actorFor(stranger.userId), attempt.id)).rejects.toMatchObject({ status: 403 });
+    // The seller/owner is also NOT authorized to trigger buyer-side capture.
+    await expect(marketplaceService.captureMarketplacePaypalOrder(actorFor(order.owner_user_id), attempt.id)).rejects.toMatchObject({ status: 403 });
+    const a = await marketplacePaymentAttemptRepo.findById(attempt.id);
+    expect(a?.status).toBe('checkout_created');
+  });
+  it('#30 correct marketplace buyer can trigger capture; server ignores browser-supplied state', async () => {
+    const { buyer, order } = await bookAndAccept('cap30');
+    const { attempt } = await marketplaceService.buyerStartPaypalCheckout(actorFor(buyer.userId), order.id);
+    mock.overrideCaptureAmount = attempt.amount_minor;
+    const captured = await marketplaceService.captureMarketplacePaypalOrder(actorFor(buyer.userId), attempt.id);
+    expect(captured.status).toBe('captured');
+    // Server derived the captured amount + currency + capture id from the provider,
+    // never from the browser.
+    expect(captured.amount_minor).toBe(attempt.amount_minor);
+    expect(captured.currency).toBe('USD');
+    expect(captured.provider_capture_id).toBeTruthy();
+  });
+  it('#31 CHECKOUT.ORDER.APPROVED webhook capture still works without a buyer session (provider-authoritative)', async () => {
+    const { buyer, order } = await bookAndAccept('cap31');
+    const { attempt } = await marketplaceService.buyerStartPaypalCheckout(actorFor(buyer.userId), order.id);
+    mock.overrideCaptureAmount = attempt.amount_minor;
+    // NOTE: no `actor` here — this is the webhook path.
+    const captured = await marketplaceService.captureMarketplacePaypalOrderByProviderOrderId(attempt.provider_order_id!);
+    expect(captured?.status).toBe('captured');
+  });
+});
+
+// ============================================================================
+// §15 B3.1 — Refund/reversal blocks fulfillment
+// ============================================================================
+describe('B3.1 §15 — refund/reversal blocks fulfillment', () => {
+  async function paidOrder(tag: string, priceMinor = 10000, feeMinor = 300) {
+    const { owner, buyer, order } = await bookAndAccept(tag, priceMinor);
+    const { attempt } = await marketplaceService.buyerStartPaypalCheckout(actorFor(buyer.userId), order.id);
+    await marketplaceService.finalizeMarketplaceCaptureFromWebhook(
+      attempt.provider_order_id!, `PP-CAP-${uuidv4().slice(0, 12)}`, priceMinor, 'USD', feeMinor, priceMinor - feeMinor,
+    );
+    return { owner, buyer, order: (await marketplaceOrderRepo.findById(order.id))!, attempt };
+  }
+
+  it('#32 refunded (before Start Work) blocks Start Work with 409', async () => {
+    const { owner, order, attempt } = await paidOrder('rb32');
+    await marketplaceService.recordMarketplaceRefundOrReversal(
+      attempt.provider_order_id!, 'MARKETPLACE_PAYMENT_REFUNDED', 10000, `PP-REF-${uuidv4().slice(0, 8)}`,
+    );
+    await expect(marketplaceService.startWork(actorFor(owner.userId), order.id)).rejects.toMatchObject({ status: 409 });
+  });
+  it('#33 reversed (before Start Work) blocks Start Work with 409', async () => {
+    const { owner, order, attempt } = await paidOrder('rb33');
+    await marketplaceService.recordMarketplaceRefundOrReversal(
+      attempt.provider_order_id!, 'MARKETPLACE_PAYMENT_REVERSED', 10000, `PP-REV-${uuidv4().slice(0, 8)}`,
+    );
+    await expect(marketplaceService.startWork(actorFor(owner.userId), order.id)).rejects.toMatchObject({ status: 409 });
+  });
+  it('#34 refund arriving mid-fulfillment: Submit Delivery is blocked, delivery history preserved', async () => {
+    const { owner, order, attempt } = await paidOrder('rb34');
+    // Owner already started work before the refund.
+    const started = await marketplaceService.startWork(actorFor(owner.userId), order.id);
+    expect(started.status).toBe('in_progress');
+    // Now refund arrives.
+    await marketplaceService.recordMarketplaceRefundOrReversal(
+      attempt.provider_order_id!, 'MARKETPLACE_PAYMENT_REFUNDED', 10000, `PP-REF-${uuidv4().slice(0, 8)}`,
+    );
+    // Historical status/started_at MUST remain — we do not silently rewrite delivery data.
+    const after = await marketplaceOrderRepo.findById(order.id);
+    expect(after?.status).toBe('in_progress');
+    expect(after?.started_at).toBeTruthy();
+    expect(after?.payment_reconciliation_required).toBe(true);
+    // Submit Delivery must reject.
+    await expect(marketplaceService.submitDelivery(actorFor(owner.userId), order.id, {
+      delivery_notes: 'x', delivery_urls: [], proof_description: null,
+    })).rejects.toMatchObject({ status: 409 });
+  });
+  it('#35 refund arriving after submitted_for_review: buyer accept does NOT produce eligible_for_payout', async () => {
+    const { owner, buyer, order, attempt } = await paidOrder('rb35');
+    await marketplaceService.startWork(actorFor(owner.userId), order.id);
+    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, {
+      delivery_notes: 'done', delivery_urls: [], proof_description: null,
+    });
+    // Refund lands while in submitted_for_review.
+    await marketplaceService.recordMarketplaceRefundOrReversal(
+      attempt.provider_order_id!, 'MARKETPLACE_PAYMENT_REFUNDED', 10000, `PP-REF-${uuidv4().slice(0, 8)}`,
+    );
+    // Buyer accepts (business flow may still fire); owner MUST NOT become eligible_for_payout.
+    const completed = await marketplaceService.buyerAcceptDelivery(actorFor(buyer.userId), order.id);
+    expect(completed.status).toBe('completed');
+    expect(completed.owner_payable_status).toBe('manual_reconciliation_required');
+    expect(completed.payment_reconciliation_required).toBe(true);
+  });
+  it('#36 refund/reversal blocks admin from recording an owner payout (409)', async () => {
+    const { owner, buyer, order, attempt } = await paidOrder('rb36');
+    // Full happy path to completion.
+    await marketplaceService.startWork(actorFor(owner.userId), order.id);
+    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, {
+      delivery_notes: 'done', delivery_urls: [], proof_description: null,
+    });
+    const completed = await marketplaceService.buyerAcceptDelivery(actorFor(buyer.userId), order.id);
+    expect(completed.owner_payable_status).toBe('eligible_for_payout');
+    // Refund arrives after eligibility was set.
+    await marketplaceService.recordMarketplaceRefundOrReversal(
+      attempt.provider_order_id!, 'MARKETPLACE_PAYMENT_REFUNDED', 10000, `PP-REF-${uuidv4().slice(0, 8)}`,
+    );
+    const admin = await signup(`b3-${RUN_TAG}-rb36-a@t.test`, 'admin');
+    await expect(marketplaceService.adminRecordPayout(actorFor(admin.userId, 'admin'), order.id, {
+      payout_method: 'bank_transfer', payout_reference: `rb36-${uuidv4()}`,
+      paid_at: new Date().toISOString(), notes: null,
+      confirm: 'PAYOUT COMPLETED EXTERNALLY',
+    })).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+// ============================================================================
+// §16 B3.1 — Webhook retry idempotency (marketplace refund/reversal)
+// ============================================================================
+describe('B3.1 §16 — refund/reversal service idempotency', () => {
+  it('#37 same REFUNDED refund_reference delivered twice does not double-append the financial event', async () => {
+    const { buyer, order } = await bookAndAccept('id37', 10000);
+    const { attempt } = await marketplaceService.buyerStartPaypalCheckout(actorFor(buyer.userId), order.id);
+    mock.overrideCaptureAmount = attempt.amount_minor;
+    await marketplaceService.captureMarketplacePaypalOrder(actorFor(buyer.userId), attempt.id);
+    const refRef = `PP-REF-${uuidv4().slice(0, 8)}`;
+    const r1 = await marketplaceService.recordMarketplaceRefundOrReversal(
+      attempt.provider_order_id!, 'MARKETPLACE_PAYMENT_REFUNDED', 10000, refRef,
+    );
+    const r2 = await marketplaceService.recordMarketplaceRefundOrReversal(
+      attempt.provider_order_id!, 'MARKETPLACE_PAYMENT_REFUNDED', 10000, refRef,
+    );
+    expect(r1?.attempt.status).toBe('reversed');
+    expect(r2?.attempt.status).toBe('reversed');
+    const events = await marketplaceFinancialEventRepo.listByOrder(order.id);
+    expect(events.filter((e) => e.event_type === 'MARKETPLACE_PAYMENT_REFUNDED').length).toBe(1);
+    // Order state stays stably in reconciliation required.
+    const o = await marketplaceOrderRepo.findById(order.id);
+    expect(o?.owner_payable_status).toBe('manual_reconciliation_required');
+    expect(o?.payment_reconciliation_required).toBe(true);
+  });
+  it('#38 same REVERSED refund_reference delivered twice is idempotent', async () => {
+    const { buyer, order } = await bookAndAccept('id38', 10000);
+    const { attempt } = await marketplaceService.buyerStartPaypalCheckout(actorFor(buyer.userId), order.id);
+    mock.overrideCaptureAmount = attempt.amount_minor;
+    await marketplaceService.captureMarketplacePaypalOrder(actorFor(buyer.userId), attempt.id);
+    const refRef = `PP-REV-${uuidv4().slice(0, 8)}`;
+    await marketplaceService.recordMarketplaceRefundOrReversal(
+      attempt.provider_order_id!, 'MARKETPLACE_PAYMENT_REVERSED', 10000, refRef,
+    );
+    await marketplaceService.recordMarketplaceRefundOrReversal(
+      attempt.provider_order_id!, 'MARKETPLACE_PAYMENT_REVERSED', 10000, refRef,
+    );
+    const events = await marketplaceFinancialEventRepo.listByOrder(order.id);
+    expect(events.filter((e) => e.event_type === 'MARKETPLACE_PAYMENT_REVERSED').length).toBe(1);
+  });
+  it('#39 global PayPal webhook dedup (paymentWebhookEventRepo) prevents replay from re-entering marketplace processing', async () => {
+    // We assert the existing dedup interface is present — it is the same
+    // paymentWebhookEventRepo used by promote; marketplace never adds a second
+    // dedup system.
+    const { paymentWebhookEventRepo } = await import('@/lib/repositories/paymentRepo');
+    const eventId = `evt-${RUN_TAG}-${Math.random()}`;
+    const a = await paymentWebhookEventRepo.recordIfAbsent({
+      id: uuidv4(), provider: 'paypal', provider_event_id: eventId, event_type: 'PAYMENT.CAPTURE.REFUNDED',
+      raw_payload: {}, processed: false, processed_at: null, process_error: null, received_at: new Date(),
+    });
+    const b = await paymentWebhookEventRepo.recordIfAbsent({
+      id: uuidv4(), provider: 'paypal', provider_event_id: eventId, event_type: 'PAYMENT.CAPTURE.REFUNDED',
+      raw_payload: {}, processed: false, processed_at: null, process_error: null, received_at: new Date(),
+    });
+    expect(a.inserted).toBe(true);
+    expect(b.inserted).toBe(false); // duplicate delivery is a safe no-op
+  });
+});
+
