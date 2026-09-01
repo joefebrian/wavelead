@@ -26,7 +26,7 @@ export default async function AdminMarketplacePage() {
       <main className="container py-10 max-w-6xl">
         <AdminNav active="/admin/marketplace" />
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Marketplace</h1>
-        <p className="mt-1 text-muted-foreground">Sponsorship marketplace orders, payments and economics. Manual off-platform payment confirmation. No PayPal marketplace integration yet.</p>
+        <p className="mt-1 text-muted-foreground">Sponsorship marketplace orders, payments and economics. Buyer PayPal Checkout and admin manual / off-platform payment confirmation both supported. Owner payouts remain manual (external).</p>
         <AdminMarketplaceClient initialItems={items} initialKpis={kpis} />
       </main>
       <Footer />
