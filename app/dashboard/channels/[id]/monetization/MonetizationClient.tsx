@@ -186,9 +186,17 @@ export default function MonetizationClient({
               {o.status === 'completed' && (
                 <div className="mt-3 text-sm">
                   {o.owner_payable_status === 'paid_out' ? (
-                    <span className="text-emerald-700 font-medium">Paid — ${((o.owner_earnings_minor ?? 0) / 100).toFixed(2)} received {o.paid_out_at ? `on ${new Date(o.paid_out_at).toLocaleDateString()}` : ''}</span>
+                    <div>
+                      <span className="text-emerald-700 font-medium">External payout completed — ${((o.owner_earnings_minor ?? 0) / 100).toFixed(2)}</span>
+                      {o.paid_out_at && (
+                        <span className="block text-xs text-muted-foreground mt-0.5">Paid at {new Date(o.paid_out_at).toLocaleString()}. Payout method and reference are on record with WaveLead.</span>
+                      )}
+                    </div>
                   ) : o.owner_payable_status === 'eligible_for_payout' ? (
-                    <span className="text-emerald-700 font-medium">Eligible for payout — ${((o.owner_earnings_minor ?? 0) / 100).toFixed(2)} pending WaveLead disbursement</span>
+                    <div>
+                      <span className="text-emerald-700 font-medium">Awaiting external payout — ${((o.owner_earnings_minor ?? 0) / 100).toFixed(2)}</span>
+                      <span className="block text-xs text-muted-foreground mt-0.5">Your sponsorship earnings are eligible for payout. WaveLead will coordinate the payout externally.</span>
+                    </div>
                   ) : o.owner_payable_status === 'manual_reconciliation_required' ? (
                     <span className="text-amber-700 font-medium">Payout reconciliation required — contact WaveLead</span>
                   ) : (

@@ -10,7 +10,7 @@ export default function BrandAcceptDeliveryButton({ orderId }: { orderId: string
 
   async function onAccept() {
     if (busy) return;
-    if (!confirm('Confirm that the delivery meets the sponsorship brief? This completes the order and releases the owner for payout.')) return;
+    if (!confirm('Confirm that the delivery meets the sponsorship brief? This completes the order and makes the owner\'s earnings eligible for external payout.')) return;
     setBusy(true); setErr(null);
     try {
       const r = await fetch(`/api/marketplace/orders/${orderId}/accept-delivery`, {

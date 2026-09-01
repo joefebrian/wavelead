@@ -5448,3 +5448,21 @@ agent_communication:
         1440px: same surfaces, clean spacing, no clipping (1440 === 1440).
 
       PAYPAL / PROMOTE / PHASE A / SAAS: UNCHANGED.
+
+  - agent: "main"
+    message: |
+      B2.1 RELEASE COPY PATCH (copy/UI wording only — zero logic change)
+        Owner monetization order card:
+          eligible_for_payout: "Eligible for payout — $X pending WaveLead disbursement"
+            → "Awaiting external payout — $X" + "Your sponsorship earnings are eligible
+              for payout. WaveLead will coordinate the payout externally."
+          paid_out: "Paid — $X received on <date>"
+            → "External payout completed — $X" + "Paid at <datetime>. Payout method and
+              reference are on record with WaveLead."
+        Buyer accept-delivery confirm: "releases the owner for payout"
+            → "makes the owner's earnings eligible for external payout"
+        Swept app/lib/components for disburse / automatic payout / payout sent /
+        transfer processing → 0 remaining occurrences.
+        Files: app/dashboard/channels/[id]/monetization/MonetizationClient.tsx,
+               app/dashboard/sponsorships/BrandAcceptDeliveryButton.tsx
+        TYPECHECK: PASS. 390px render verified (no "disbursement" in DOM, no overflow).
