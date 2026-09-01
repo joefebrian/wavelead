@@ -15,8 +15,8 @@ const PKG_TYPES: { value: MarketplacePackageType; label: string }[] = [
 type DraftPackage = Omit<RateCardPackage, 'id' | 'created_at' | 'updated_at'>;
 
 export default function MonetizationClient({
-  channelId, channelName, isVerified, initialCard, initialOrders,
-}: { channelId: string; channelName: string; isVerified: boolean; initialCard: ChannelRateCard | null; initialOrders: MarketplaceOrder[] }) {
+  channelId, channelName, channelSlug, isVerified, verificationStatus, initialCard, initialOrders,
+}: { channelId: string; channelName: string; channelSlug: string; isVerified: boolean; verificationStatus: string | null; initialCard: ChannelRateCard | null; initialOrders: MarketplaceOrder[] }) {
   const [tab, setTab] = useState<'ratecard' | 'requests'>('ratecard');
   const [packages, setPackages] = useState<DraftPackage[]>(() =>
     (initialCard?.packages || []).map(({ id: _id, created_at: _ca, updated_at: _ua, ...rest }) => { void _id; void _ca; void _ua; return rest; }));
@@ -89,10 +89,26 @@ export default function MonetizationClient({
   }
 
   if (!isVerified) {
+    // M03.7 — This owner is already assigned to the channel but ownership
+    // has not yet been verified. Surface an actionable path so the owner
+    // isn't stuck with generic gate copy. "channelSlug" is a public route
+    // parameter — no risk exposing it.
+    const isAssignedButUnverified = verificationStatus === 'claimed' || verificationStatus === 'unclaimed';
+    void channelName; void channelId;
     return (
-      <div className="mt-6 wh-card p-5 border-amber-300 bg-amber-50/40">
-        <div className="font-semibold">Sponsorship marketplace requires verification</div>
-        <p className="mt-1 text-sm text-muted-foreground">Only verified channels can publish a sellable rate card. Complete verification first, then return here.</p>
+      <div className="mt-6 wh-card p-5 border-amber-300 bg-amber-50/40" data-testid="ownership-verification-required">
+        <div className="font-semibold">Ownership verification required</div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {isAssignedButUnverified
+            ? 'Your channel is linked to your WaveLead account, but ownership has not yet been verified. Complete verification to unlock the sponsorship marketplace.'
+            : 'Only verified channels can publish a sellable rate card. Complete verification first, then return here.'}
+        </p>
+        <div className="mt-4">
+          <a href={`/claim/${channelSlug}`} className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90" data-testid="complete-verification-cta">
+            Complete verification
+          </a>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">A moderator reviews your evidence before verification is granted.</p>
       </div>
     );
   }

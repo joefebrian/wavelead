@@ -70,8 +70,11 @@ export const claimModerationService = {
     }
 
     // Atomic ownership assignment. Only assign if the channel is still
-    // approved and does NOT yet have a verified owner. This prevents two
-    // concurrent approvals from both winning.
+    // approved and either (a) has no assigned owner_id, or (b) the assigned
+    // owner_id equals this claim's claimant (i.e. the CURRENT owner is
+    // self-verifying). This prevents two concurrent approvals from both
+    // winning AND blocks silent takeover of an already-assigned channel
+    // via approval of a claim from a different user.
     const channelsColl = await getCollection<Channel>(COLLECTIONS.CHANNELS);
     const now = new Date();
     const assign = (await channelsColl.findOneAndUpdate(
@@ -81,13 +84,14 @@ export const claimModerationService = {
         $or: [
           { owner_id: null },
           { owner_id: { $exists: false } },
-          { verification_status: { $ne: 'verified' } },
+          { owner_id: claim.claimant_user_id },     // self-verification (same-user, unverified)
         ],
       },
       {
         $set: {
           owner_id: claim.claimant_user_id,
           verification_status: 'verified',
+          verified_at: now,
           updated_at: now,
         },
       },
@@ -97,7 +101,7 @@ export const claimModerationService = {
       ? ((assign as { value: Channel }).value ?? null)
       : (assign as Channel | null);
     if (!updated || updated.owner_id !== claim.claimant_user_id) {
-      throw new HttpError(409, 'Channel is no longer eligible (may already be owned or not approved)');
+      throw new HttpError(409, 'Channel is no longer eligible for this claim (it may already have a different owner). Use "Verify Current Owner" if the claimant is the existing owner.');
     }
 
     // Cancel any other active claims on this channel — a channel can have
@@ -202,5 +206,110 @@ export const claimModerationService = {
       created_at: now,
     });
     return { ok: true };
+  },
+
+  /**
+   * M03.7 — "Verify Current Owner" admin action.
+   * Used when a channel is already assigned to a legitimate owner (owner_id
+   * set) but `verification_status` has not yet been flipped to 'verified' —
+   * for example, when moderation approved the channel listing but nobody
+   * completed the ownership-verification workflow.
+   *
+   * Contract:
+   *   - Preserves the existing `owner_id` — this action MUST NOT reassign
+   *     ownership. To assign ownership, use the claim-approval flow instead.
+   *   - Requires the channel to already have an owner_id.
+   *   - Refuses if the channel is not approved or already verified.
+   *   - Sets `verification_status = 'verified'` + `verified_at = now`.
+   *   - Writes a `CHANNEL_OWNER_VERIFIED` audit event carrying the acting
+   *     admin's id and the preserved owner_id.
+   *   - Never creates a claim owned by the acting admin.
+   */
+  async verifyCurrentOwner(actor: Actor | null, channelId: string, body?: unknown) {
+    requireRole(actor, ROLES.MODERATOR);
+    const notesRaw = body && typeof body === 'object' && body !== null && 'moderator_notes' in body
+      ? (body as { moderator_notes?: unknown }).moderator_notes
+      : undefined;
+    const moderator_notes = typeof notesRaw === 'string' && notesRaw.trim().length > 0
+      ? notesRaw.trim().slice(0, 2000)
+      : null;
+
+    const channel = await channelRepo.findById(channelId);
+    if (!channel) throw new HttpError(404, 'Channel not found');
+    if (channel.status !== 'approved') {
+      throw new HttpError(409, `Channel is in status "${channel.status}" — only approved channels can have ownership verified.`);
+    }
+    if (!channel.owner_id) {
+      throw new HttpError(409, 'Channel has no assigned owner. Approve an ownership claim first to assign an owner.');
+    }
+    if (channel.verification_status === 'verified' || channel.verification_status === 'official') {
+      throw new HttpError(409, 'Channel ownership is already verified.');
+    }
+
+    const now = new Date();
+    const preservedOwnerId = channel.owner_id;
+
+    // Atomic update: verify ONLY if the currently-assigned owner_id is unchanged.
+    const channelsColl = await getCollection<Channel>(COLLECTIONS.CHANNELS);
+    const res = (await channelsColl.findOneAndUpdate(
+      { id: channelId, owner_id: preservedOwnerId, status: 'approved', verification_status: { $ne: 'verified' } },
+      { $set: { verification_status: 'verified', verified_at: now, updated_at: now } },
+      { returnDocument: 'after' },
+    )) as unknown as (Channel | { value: Channel } | null);
+    const updated: Channel | null = res && typeof res === 'object' && 'value' in (res as object)
+      ? ((res as { value: Channel }).value ?? null)
+      : (res as Channel | null);
+    if (!updated || updated.owner_id !== preservedOwnerId || updated.verification_status !== 'verified') {
+      throw new HttpError(409, 'Channel state changed under this operation. Refresh and try again.');
+    }
+
+    // Best-effort: if the current owner has an active claim (pending or
+    // needs_information), mark it approved so it stops appearing in the queue.
+    // A missing/no claim is fine — the audit trail lives on the channel and the
+    // audit_events row we insert below.
+    try {
+      const activeClaim = (await (await getCollection<ChannelClaim>(COLLECTIONS.CHANNEL_CLAIMS)).findOne({
+        channel_id: channelId, claimant_user_id: preservedOwnerId, status: { $in: ['pending', 'needs_information'] },
+      })) as ChannelClaim | null;
+      if (activeClaim) {
+        await claimRepo.update(activeClaim.id, {
+          status: 'approved',
+          approved_at: now,
+          reviewed_at: now,
+          reviewed_by: actor!.user.id,
+          moderator_notes: moderator_notes || activeClaim.moderator_notes,
+        });
+        await auditRepo.insert({
+          id: uuidv4(),
+          actor_user_id: actor!.user.id,
+          action: 'CLAIM_APPROVED',
+          entity_type: 'channel_claim',
+          entity_id: activeClaim.id,
+          before_data: { status: activeClaim.status },
+          after_data: { status: 'approved', via: 'verify_current_owner', channel_id: channelId, owner_id: preservedOwnerId },
+          created_at: now,
+        });
+      }
+    } catch { /* auxiliary bookkeeping only — never fail the verification */ }
+
+    await auditRepo.insert({
+      id: uuidv4(),
+      actor_user_id: actor!.user.id,
+      action: 'CHANNEL_OWNER_VERIFIED',
+      entity_type: 'channel',
+      entity_id: channelId,
+      before_data: { owner_id: preservedOwnerId, verification_status: channel.verification_status },
+      after_data: { owner_id: preservedOwnerId, verification_status: 'verified', verified_at: now, admin_action: 'verify_current_owner', moderator_notes },
+      created_at: now,
+    });
+
+    return {
+      ok: true,
+      channel: {
+        id: updated.id, slug: updated.slug, name: updated.name,
+        owner_id: updated.owner_id, verification_status: updated.verification_status,
+        verified_at: updated.verified_at ?? now,
+      },
+    };
   },
 };

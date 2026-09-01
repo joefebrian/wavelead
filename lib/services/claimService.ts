@@ -55,6 +55,37 @@ export const claimService = {
         reason: 'This channel already has a verified owner.',
       };
     }
+    // ── M03.7 — assigned-but-not-yet-verified ownership state. ──────────────
+    // Channel has an owner_id but verification_status is not 'verified'.
+    // - The current owner may submit ownership evidence (self-verification).
+    // - Any OTHER signed-in user must NOT be allowed to file a claim here —
+    //   approving such a claim would silently transfer ownership. Route them
+    //   into the ownership-dispute / report-ownership flow instead.
+    if (channel.owner_id) {
+      if (!actor) return { canClaim: false, needsAuth: true, reason: 'Sign in to complete ownership verification for this channel.' };
+      if (channel.owner_id !== actor.user.id) {
+        return {
+          canClaim: false,
+          alreadyOwned: true,
+          reason: 'This channel is already linked to a WaveLead owner. If you believe this is wrong, please report an ownership issue.',
+        };
+      }
+      // Actor IS the current owner and channel is not yet verified.
+      const active = await findActiveClaim(channel.id, actor.user.id);
+      if (active) {
+        return {
+          canClaim: false,
+          ownerVerificationMode: true,
+          existingClaim: {
+            id: active.id, status: active.status,
+            submitted_at: active.submitted_at,
+            request_more_info_message: active.request_more_info_message,
+          },
+        };
+      }
+      return { canClaim: true, ownerVerificationMode: true };
+    }
+    // Unclaimed channel — standard claim flow.
     if (!actor) return { canClaim: true, needsAuth: true };
     const active = await findActiveClaim(channel.id, actor.user.id);
     if (active) {
@@ -81,6 +112,13 @@ export const claimService = {
     if (channel.status !== 'approved') throw new HttpError(400, 'Only approved channels can be claimed');
     if (channel.owner_id && channel.verification_status === 'verified') {
       throw new HttpError(409, 'This channel already has a verified owner');
+    }
+    // ── M03.7 — takeover protection. Never allow a claim by a user who is
+    // not the currently-assigned owner on an already-owned channel. This
+    // is enforced BOTH here and in claim-moderation approval (defence in
+    // depth). Route the caller to the ownership-dispute flow instead.
+    if (channel.owner_id && channel.owner_id !== actor.user.id) {
+      throw new HttpError(409, 'This channel is already linked to a WaveLead owner. Please report an ownership issue instead of filing a new claim.');
     }
 
     // Duplicate active claim guard.

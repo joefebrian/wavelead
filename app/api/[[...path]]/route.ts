@@ -443,6 +443,13 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const { claimModerationService } = await import('@/lib/services/claimModerationService');
       return applyCors(ok(await claimModerationService.requestInfo(await resolveActor(request), path[2], await safeJson(request))), request);
     }
+    // M03.7 — Admin "Verify Current Owner": preserves owner_id, flips
+    // verification_status to 'verified' without creating a claim owned by
+    // the admin. See claimModerationService.verifyCurrentOwner.
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'channels' && path[3] === 'verify-current-owner' && method === 'POST') {
+      const { claimModerationService } = await import('@/lib/services/claimModerationService');
+      return applyCors(ok(await claimModerationService.verifyCurrentOwner(await resolveActor(request), path[2], await safeJson(request))), request);
+    }
 
     // ---------- OWNER CHANNEL MANAGEMENT (M03.6) ----------
     if (route === '/me/channels' && method === 'GET') {

@@ -25,6 +25,7 @@ export default async function ClaimPage({ params }: { params: Promise<Params> })
   if (!channel) notFound();
   const actor = await resolveActorFromCookies();
   const eligibility = await claimService.getEligibility(slug, actor);
+  const ownerVerificationMode = (eligibility as { ownerVerificationMode?: boolean }).ownerVerificationMode === true;
 
   return (
     <>
@@ -35,9 +36,15 @@ export default async function ClaimPage({ params }: { params: Promise<Params> })
             {channel.name.charAt(0).toUpperCase()}
           </div>
           <div>
-            <div className="text-xs uppercase tracking-wider text-muted-foreground">Claim ownership</div>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">
+              {ownerVerificationMode ? 'Ownership verification' : 'Claim ownership'}
+            </div>
             <h1 className="text-2xl md:text-3xl font-bold">{channel.name}</h1>
-            <p className="text-sm text-muted-foreground mt-1">Verify that you run this WhatsApp Channel to appear as its Verified Owner on WaveLead.</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {ownerVerificationMode
+                ? 'This channel is already linked to your WaveLead account. Submit ownership evidence to complete verification so you can publish a sponsorship rate card.'
+                : 'Verify that you run this WhatsApp Channel to appear as its Verified Owner on WaveLead.'}
+            </p>
           </div>
         </div>
 

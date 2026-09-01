@@ -29,7 +29,7 @@ export default async function OwnerMonetizationPage({ params }: { params: Promis
         <div className="text-xs text-muted-foreground">Channel monetization</div>
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight">{channel.name}</h1>
         <p className="mt-1 text-sm text-muted-foreground">Manage your sponsorship rate card and incoming sponsorship requests.</p>
-        <MonetizationClient channelId={id} channelName={channel.name} isVerified={isVerified} initialCard={card} initialOrders={orders} />
+        <MonetizationClient channelId={id} channelName={channel.name} channelSlug={channel.slug} isVerified={isVerified} verificationStatus={vs || null} initialCard={card} initialOrders={orders} />
       </main>
       <Footer />
     </>

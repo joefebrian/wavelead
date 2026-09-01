@@ -44,6 +44,11 @@ export default async function AdminClaimDetailPage({ params }: { params: Promise
   try { data = await claimModerationService.getDetail(actor, id); }
   catch { notFound(); }
   const { claim, channel, claimant, prior_claims } = data;
+  // M03.7 — Ownership state relative to this claim.
+  const alreadyAssigned = !!channel?.owner_id;
+  const claimantIsCurrentOwner = alreadyAssigned && channel!.owner_id === claim.claimant_user_id;
+  const differentOwnerTakeover = alreadyAssigned && !claimantIsCurrentOwner;
+  const alreadyVerified = channel?.verification_status === 'verified' || channel?.verification_status === 'official';
 
   return (
     <>
@@ -58,6 +63,26 @@ export default async function AdminClaimDetailPage({ params }: { params: Promise
             <div className="mt-1 text-sm text-muted-foreground">Submitted {new Date(claim.submitted_at).toLocaleString()}</div>
           </div>
         </div>
+
+        {/* M03.7 — Ownership state banners. */}
+        {differentOwnerTakeover && !alreadyVerified && (
+          <div className="mt-6 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900" data-testid="claim-takeover-warning">
+            <div className="font-semibold">⚠ This channel already has an assigned owner different from this claimant.</div>
+            <p className="mt-1">Approving this claim would REPLACE the existing owner. Only do so if you have verified that the current assignment is incorrect. If the current owner is legitimate, reject this claim and use <span className="font-semibold">Verify Current Owner</span> on the channel instead.</p>
+          </div>
+        )}
+        {differentOwnerTakeover && alreadyVerified && (
+          <div className="mt-6 rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm">
+            <div className="font-semibold text-destructive">Channel already has a VERIFIED different owner.</div>
+            <p className="mt-1">This claim will be blocked by server-side takeover protection. Reject it and direct the claimant to <code className="text-xs">/report/channel/{channel?.slug}</code> if they have an ownership dispute.</p>
+          </div>
+        )}
+        {claimantIsCurrentOwner && !alreadyVerified && (
+          <div className="mt-6 rounded-md border border-sky-300 bg-sky-50 p-4 text-sm text-sky-900" data-testid="claim-self-verification-notice">
+            <div className="font-semibold">Self-verification claim</div>
+            <p className="mt-1">The claimant is already the assigned owner of this channel; approving this claim will simply flip <code>verification_status</code> to <code>verified</code>. You may also use <span className="font-semibold">Verify Current Owner</span> on the channel to accomplish the same result without a claim.</p>
+          </div>
+        )}
 
         <div className="mt-6 grid md:grid-cols-3 gap-6">
           <div className="md:col-span-2 grid gap-4">
@@ -151,7 +176,13 @@ export default async function AdminClaimDetailPage({ params }: { params: Promise
         </div>
 
         <div className="mt-8">
-          <ClaimActionsClient claimId={claim.id} currentStatus={claim.status} />
+          <ClaimActionsClient
+            claimId={claim.id}
+            currentStatus={claim.status}
+            channelId={channel?.id ?? null}
+            channelSlug={channel?.slug ?? null}
+            showVerifyCurrentOwner={claimantIsCurrentOwner && !alreadyVerified}
+          />
         </div>
       </main>
       <Footer />

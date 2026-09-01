@@ -58,6 +58,9 @@ export interface Channel {
   owner_id: string | null;
   status: ChannelStatus;
   verification_status: VerificationStatus;
+  // Set alongside `verification_status === 'verified' | 'official'`. Populated by
+  // the claim-approval path and by the admin "Verify Current Owner" action.
+  verified_at?: Date | null;
   is_official: boolean;
   is_featured: boolean;
   is_nsfw: boolean;
