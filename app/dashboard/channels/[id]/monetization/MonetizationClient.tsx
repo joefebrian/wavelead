@@ -185,6 +185,11 @@ export default function MonetizationClient({
               </div>
               <div className="mt-2 text-sm">
                 <span className="text-muted-foreground">Package: </span>{o.package_type} · <span className="font-medium">${((o.snapshot?.gross_price_minor ?? o.quoted_price_minor ?? 0) / 100).toFixed(2)}</span>
+                {typeof o.owner_earnings_minor === 'number' && (
+                  <span className="ml-3">
+                    <span className="text-muted-foreground">Your Earnings: </span><span className="font-semibold text-emerald-700">${(o.owner_earnings_minor / 100).toFixed(2)}</span>
+                  </span>
+                )}
               </div>
               <div className="mt-1 text-sm text-muted-foreground line-clamp-3">{o.brief.brief}</div>
               {o.status === 'requested' && (
@@ -249,7 +254,7 @@ export default function MonetizationClient({
                 </div>
               )}
               {o.status === 'completed' && (
-                <div className="mt-3 text-sm">
+                <div className="mt-3 text-sm space-y-2">
                   {o.owner_payable_status === 'paid_out' ? (
                     <div>
                       <span className="text-emerald-700 font-medium">External payout completed — ${((o.owner_earnings_minor ?? 0) / 100).toFixed(2)}</span>
@@ -258,15 +263,41 @@ export default function MonetizationClient({
                       )}
                     </div>
                   ) : o.owner_payable_status === 'eligible_for_payout' ? (
-                    <div>
-                      <span className="text-emerald-700 font-medium">Awaiting external payout — ${((o.owner_earnings_minor ?? 0) / 100).toFixed(2)}</span>
-                      <span className="block text-xs text-muted-foreground mt-0.5">Your sponsorship earnings are eligible for payout. WaveLead will coordinate the payout externally.</span>
-                    </div>
+                    (() => {
+                      const availAtMs = o.payout_available_at ? new Date(o.payout_available_at as unknown as string).getTime() : 0;
+                      const nowMs = Date.now();
+                      const stillHeld = availAtMs > nowMs;
+                      return (
+                        <div>
+                          {stillHeld ? (
+                            <>
+                              <span className="text-primary font-medium">Delivery completed — ${((o.owner_earnings_minor ?? 0) / 100).toFixed(2)}</span>
+                              <span className="block text-xs text-muted-foreground mt-0.5">
+                                Your earnings are in the settlement period and will become available for payout on {new Date(availAtMs).toLocaleString()}.
+                                {o.payout_requested_at && ' A payout has already been requested — WaveLead will complete the transfer externally.'}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-emerald-700 font-medium">Available for payout — ${((o.owner_earnings_minor ?? 0) / 100).toFixed(2)}</span>
+                              <span className="block text-xs text-muted-foreground mt-0.5">
+                                {o.payout_requested_at ? 'A payout has been requested — WaveLead will coordinate the transfer externally.' : 'Head to your Earnings dashboard to request an external payout.'}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })()
                   ) : o.owner_payable_status === 'manual_reconciliation_required' ? (
                     <span className="text-amber-700 font-medium">Payout reconciliation required — contact WaveLead</span>
                   ) : (
                     <span className="text-muted-foreground">Completed. Payable status: {o.owner_payable_status}</span>
                   )}
+                  <div>
+                    <a href="/dashboard/earnings" className="inline-flex items-center gap-1 text-sm text-primary underline hover:no-underline">
+                      View Earnings →
+                    </a>
+                  </div>
                 </div>
               )}
             </div>
