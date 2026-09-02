@@ -10,7 +10,7 @@ import { claimService } from '@/lib/services/claimService';
 import { sponsorshipLeadService } from '@/lib/services/sponsorshipLeadService';
 import { personaService } from '@/lib/services/personaService';
 import PersonaOnboarding from './PersonaOnboarding';
-import { KeyRound, ShieldCheck, Send, Megaphone, Wallet, Handshake, Compass, Shield, Users, Cog, Activity, Kanban } from 'lucide-react';
+import { KeyRound, ShieldCheck, Send, Megaphone, Wallet, Handshake, Compass, Shield, Users, Cog, Activity, Kanban, BarChart3 } from 'lucide-react';
 
 export const metadata: Metadata = { title: 'Dashboard', robots: { index: false, follow: false } };
 export const dynamic = 'force-dynamic';
@@ -82,61 +82,117 @@ export default async function DashboardPage() {
 
         <PersonaOnboarding initial={personaState} />
 
-        <div className="mt-8 grid gap-4 md:grid-cols-3">
-          <Link href="/dashboard/channels" className="wh-card p-5 hover:border-primary/40 transition">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground"><ShieldCheck className="h-4 w-4" /> My channels</div>
-            <div className="mt-2 text-3xl font-bold">{channels.length}</div>
-            <div className="mt-3 text-xs text-muted-foreground">Manage the channels you own.</div>
-          </Link>
-          <Link href="/dashboard/promotions" className="wh-card p-5 hover:border-primary/40 transition">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Megaphone className="h-4 w-4" /> Campaigns</div>
-            <div className="mt-2 text-3xl font-bold">→</div>
-            <div className="mt-3 text-xs text-muted-foreground">Grow your channel with a paid promotion.</div>
-          </Link>
-          <Link href="/dashboard/billing" className="wh-card p-5 hover:border-primary/40 transition">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Wallet className="h-4 w-4" /> Billing</div>
-            <div className="mt-2 text-3xl font-bold">→</div>
-            <div className="mt-3 text-xs text-muted-foreground">Funding, receipts, and refunds.</div>
-          </Link>
-          <Link href="/dashboard/claims" className="wh-card p-5 hover:border-primary/40 transition">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground"><KeyRound className="h-4 w-4" /> Active claims</div>
-            <div className="mt-2 text-3xl font-bold">{activeClaims}</div>
-            <div className="mt-3 text-xs text-muted-foreground">Track claim submissions & moderator requests.</div>
-          </Link>
-          <Link href="/dashboard/sponsorships" className="wh-card p-5 hover:border-primary/40 transition">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> My Sponsorships</div>
-            <div className="mt-2 text-3xl font-bold">→</div>
-            <div className="mt-3 text-xs text-muted-foreground">Sponsorship packages you&apos;ve requested from channels.</div>
-          </Link>
-          <Link
-            href="/dashboard/sponsorships/pipeline"
-            className="wh-card p-5 hover:border-primary/40 transition"
-            data-testid="nav-pipeline-card"
-          >
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Kanban className="h-4 w-4" /> Pipeline
-              <span className="ml-1 text-[10px] font-semibold uppercase tracking-wider text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">Pro</span>
+        {(() => {
+          // Persona-aware nav emphasis. Same links, single account, single
+          // session — only the grouping/ordering changes. Persona=null keeps
+          // the existing behavior so pre-persona users are not disrupted.
+          const p = personaState.persona;
+          const OwnerCards = (
+            <>
+              <Link href="/dashboard/channels" className="wh-card p-5 hover:border-primary/40 transition" data-testid="owner-card-channels">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><ShieldCheck className="h-4 w-4" /> My channels</div>
+                <div className="mt-2 text-3xl font-bold">{channels.length}</div>
+                <div className="mt-3 text-xs text-muted-foreground">Manage the channels you own.</div>
+              </Link>
+              <Link href="/dashboard/promotions" className="wh-card p-5 hover:border-primary/40 transition" data-testid="owner-card-promote">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Megaphone className="h-4 w-4" /> Promote</div>
+                <div className="mt-2 text-3xl font-bold">→</div>
+                <div className="mt-3 text-xs text-muted-foreground">Grow your channel with a paid campaign.</div>
+              </Link>
+              <Link href="/dashboard/sponsorships/pipeline" className="wh-card p-5 hover:border-primary/40 transition" data-testid="nav-pipeline-card">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Kanban className="h-4 w-4" /> Pipeline
+                  <span className="ml-1 text-[10px] font-semibold uppercase tracking-wider text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">Pro</span>
+                </div>
+                <div className="mt-2 text-3xl font-bold">→</div>
+                <div className="mt-3 text-xs text-muted-foreground">Track active sponsorship opportunities across your channels.</div>
+              </Link>
+              <Link href="/dashboard/earnings" className="wh-card p-5 hover:border-primary/40 transition" data-testid="owner-card-earnings">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><BarChart3 className="h-4 w-4" /> Earnings</div>
+                <div className="mt-2 text-3xl font-bold">→</div>
+                <div className="mt-3 text-xs text-muted-foreground">Pending, available, and paid-out sponsorship earnings.</div>
+              </Link>
+              <Link href="/dashboard/claims" className="wh-card p-5 hover:border-primary/40 transition" data-testid="owner-card-claims">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><KeyRound className="h-4 w-4" /> Active claims</div>
+                <div className="mt-2 text-3xl font-bold">{activeClaims}</div>
+                <div className="mt-3 text-xs text-muted-foreground">Track claim submissions & moderator requests.</div>
+              </Link>
+              <Link href="/submit" className="wh-card p-5 hover:border-primary/40 transition" data-testid="owner-card-submit">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Send className="h-4 w-4" /> Submit a channel</div>
+                <div className="mt-2 text-3xl font-bold">+</div>
+                <div className="mt-3 text-xs text-muted-foreground">Add a new WhatsApp Channel to WaveLead.</div>
+              </Link>
+            </>
+          );
+          const BrandCards = (
+            <>
+              <Link href="/channels" className="wh-card p-5 hover:border-primary/40 transition" data-testid="brand-card-discover">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Compass className="h-4 w-4" /> Discover channels</div>
+                <div className="mt-2 text-3xl font-bold">→</div>
+                <div className="mt-3 text-xs text-muted-foreground">Browse WhatsApp Channels and their sponsorship packages.</div>
+              </Link>
+              <Link href="/dashboard/sponsorships" className="wh-card p-5 hover:border-primary/40 transition" data-testid="brand-card-sponsorships">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> My Sponsorships</div>
+                <div className="mt-2 text-3xl font-bold">→</div>
+                <div className="mt-3 text-xs text-muted-foreground">Track your sponsorship bookings and deliveries.</div>
+              </Link>
+              <Link href="/dashboard/billing" className="wh-card p-5 hover:border-primary/40 transition" data-testid="brand-card-billing">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Wallet className="h-4 w-4" /> Billing & Payments</div>
+                <div className="mt-2 text-3xl font-bold">→</div>
+                <div className="mt-3 text-xs text-muted-foreground">Payment history, receipts, and refunds.</div>
+              </Link>
+              {myLeads.length > 0 && (
+                <div className="wh-card p-5" data-testid="brand-card-my-leads">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> Sponsorship requests</div>
+                  <div className="mt-2 text-3xl font-bold">{myLeads.length}</div>
+                  <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
+                    {myLeads.slice(0, 3).map((l) => (
+                      <li key={l.id}><span className="font-medium text-foreground">{l.channel_name_snapshot}</span> · <span className="uppercase tracking-wide">{l.status}</span></li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          );
+
+          if (p === 'owner') {
+            return (
+              <section className="mt-8" data-testid="owner-nav-section">
+                <h2 className="text-xs uppercase tracking-wider text-muted-foreground mb-3">Channel Owner</h2>
+                <div className="grid gap-4 md:grid-cols-3">{OwnerCards}</div>
+              </section>
+            );
+          }
+          if (p === 'brand') {
+            return (
+              <section className="mt-8" data-testid="brand-nav-section">
+                <h2 className="text-xs uppercase tracking-wider text-muted-foreground mb-3">Brand / Sponsor</h2>
+                <div className="grid gap-4 md:grid-cols-3">{BrandCards}</div>
+              </section>
+            );
+          }
+          if (p === 'both') {
+            return (
+              <>
+                <section className="mt-8" data-testid="owner-nav-section">
+                  <h2 className="text-xs uppercase tracking-wider text-muted-foreground mb-3">Channel Owner</h2>
+                  <div className="grid gap-4 md:grid-cols-3">{OwnerCards}</div>
+                </section>
+                <section className="mt-8" data-testid="brand-nav-section">
+                  <h2 className="text-xs uppercase tracking-wider text-muted-foreground mb-3">Brand / Sponsor</h2>
+                  <div className="grid gap-4 md:grid-cols-3">{BrandCards}</div>
+                </section>
+              </>
+            );
+          }
+          // Persona is null — keep the un-grouped view exactly as pre-persona users saw it.
+          return (
+            <div className="mt-8 grid gap-4 md:grid-cols-3">
+              {OwnerCards}
+              {BrandCards}
             </div>
-            <div className="mt-2 text-3xl font-bold">→</div>
-            <div className="mt-3 text-xs text-muted-foreground">Track active sponsorship opportunities across your channels — request to completion.</div>
-          </Link>
-          <Link href="/submit" className="wh-card p-5 hover:border-primary/40 transition">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Send className="h-4 w-4" /> Submit a channel</div>
-            <div className="mt-2 text-3xl font-bold">+</div>
-            <div className="mt-3 text-xs text-muted-foreground">Add a new WhatsApp Channel to WaveLead.</div>
-          </Link>
-          {myLeads.length > 0 && (
-            <div className="wh-card p-5">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> My sponsorship requests</div>
-              <div className="mt-2 text-3xl font-bold">{myLeads.length}</div>
-              <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
-                {myLeads.slice(0, 3).map((l) => (
-                  <li key={l.id}><span className="font-medium text-foreground">{l.channel_name_snapshot}</span> · <span className="uppercase tracking-wide">{l.status}</span></li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
+          );
+        })()}
 
         <div className="mt-8 flex flex-wrap gap-2">
           <Link href="/dashboard/channels"><Button variant="outline">My channels</Button></Link>

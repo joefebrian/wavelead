@@ -133,6 +133,14 @@ describe('Phase 3 Persona §2 — Owner', () => {
     expect(html).toContain('data-testid="owner-checklist"');
     expect(html).not.toContain('data-testid="brand-checklist"');
     expect(html).not.toContain('data-testid="persona-picker"');
+    // Owner nav emphasis — owner section is rendered, brand section is NOT.
+    expect(html).toContain('data-testid="owner-nav-section"');
+    expect(html).not.toContain('data-testid="brand-nav-section"');
+    expect(html).toContain('data-testid="owner-card-channels"');
+    expect(html).toContain('data-testid="owner-card-promote"');
+    expect(html).toContain('data-testid="owner-card-earnings"');
+    expect(html).toContain('data-testid="nav-pipeline-card"');
+    expect(html).not.toContain('data-testid="brand-card-discover"');
   });
 });
 
@@ -158,6 +166,13 @@ describe('Phase 3 Persona §3 — Brand', () => {
     const html = await page.text();
     expect(html).toContain('data-testid="brand-checklist"');
     expect(html).not.toContain('data-testid="owner-checklist"');
+    // Brand nav emphasis — brand section rendered, owner section NOT.
+    expect(html).toContain('data-testid="brand-nav-section"');
+    expect(html).not.toContain('data-testid="owner-nav-section"');
+    expect(html).toContain('data-testid="brand-card-discover"');
+    expect(html).toContain('data-testid="brand-card-sponsorships"');
+    expect(html).toContain('data-testid="brand-card-billing"');
+    expect(html).not.toContain('data-testid="owner-card-channels"');
   });
 });
 
@@ -181,6 +196,11 @@ describe('Phase 3 Persona §4 — Both', () => {
     expect(html).toContain('data-testid="persona-view-brand"');
     // Owner checklist shown by default; brand accessible via toggle.
     expect(html).toContain('data-testid="owner-checklist"');
+    // BOTH persona shows BOTH nav sections.
+    expect(html).toContain('data-testid="owner-nav-section"');
+    expect(html).toContain('data-testid="brand-nav-section"');
+    expect(html).toContain('data-testid="owner-card-channels"');
+    expect(html).toContain('data-testid="brand-card-discover"');
   });
 });
 
