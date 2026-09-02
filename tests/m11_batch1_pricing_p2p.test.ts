@@ -49,11 +49,13 @@ describe('Commercial launch B1 §2 — P2P Labs attribution', () => {
     const h = await html('/');
     expect(h).toContain('data-testid="footer-attribution"');
     expect(h).toContain('P2P Labs');
-    // Company column now includes Cookie Policy + Cookie Preferences (Batch 3 will make preferences interactive).
+    // Company column now includes Cookie Policy. Cookie Preferences link is
+    // held back until Batch 3 activates the real consent manager (per user
+    // directive: no fake / dead links in production).
     expect(h).toContain('/privacy');
     expect(h).toContain('/terms');
     expect(h).toContain('/cookies');
-    expect(h).toContain('Cookie Preferences');
+    expect(h).not.toContain('#cookie-preferences');
     expect(h).toContain('mailto:hello@p2plabs.asia');
   });
 

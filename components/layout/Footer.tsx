@@ -23,7 +23,7 @@ export default function Footer() {
         <FCol title="Discover" links={[['/channels','All Channels'],['/trending','Trending'],['/top','Top Channels'],['/categories','Categories'],['/country/indonesia','Countries']]} />
         <FCol title="For Owners" links={[['/submit','Submit Channel'],['/dashboard','Owner Dashboard'],['/pricing','Pricing']]} />
         <FCol title="For Brands" links={[['/for-brands','Overview'],['/channels','Discover Channels'],['/top','Top Channels']]} />
-        <FCol title="Company" links={[['/about','About'],['/privacy','Privacy'],['/terms','Terms'],['/cookies','Cookie Policy'],['#cookie-preferences','Cookie Preferences'],['mailto:hello@p2plabs.asia','Contact']]} />
+        <FCol title="Company" links={[['/about','About'],['/privacy','Privacy'],['/terms','Terms'],['/cookies','Cookie Policy'],['mailto:hello@p2plabs.asia','Contact']]} />
       </div>
       <div className="border-t border-border/60">
         <div className="container py-4 flex flex-col md:flex-row items-center justify-between gap-2 text-xs text-muted-foreground">
