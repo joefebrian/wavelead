@@ -149,6 +149,21 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ user: actor.user }), request);
     }
 
+    // Phase 3 — SaaS entitlements introspection. Returns the effective plan
+    // + resolved entitlements for the current actor. Non-authoritative — the
+    // client uses this only to hint UI; every mutating endpoint re-checks
+    // entitlements server-side via requireEntitlement / requireQuota.
+    if (route === '/entitlements/me' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const { resolveEntitlements, getUserPlan, serializeEntitlements } = await import('@/lib/entitlements');
+      const ent = resolveEntitlements(actor);
+      return applyCors(ok({
+        plan: actor ? getUserPlan(actor.user) : 'free',
+        is_admin_bypass: !!(actor && (actor.user.role === 'admin' || actor.user.role === 'super_admin')),
+        entitlements: serializeEntitlements(ent),
+      }), request);
+    }
+
     // ---------- PREVIEW-ONLY QA BOOTSTRAP ----------
     // Idempotent provisioning of the three canonical QA personas so a human
     // reviewer can log in and exercise M06.0 flows. Passwords are read from

@@ -7,12 +7,61 @@ import { Check, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import type { PublicUser } from '@/lib/types';
 
-interface Plan { name: string; price: string; blurb: string; features: string[]; cta: string; highlight?: boolean; kind: 'free' | 'pro' | 'enterprise'; }
+interface Plan { name: string; price: string; blurb: string; features: string[]; cta: string; highlight?: boolean; kind: 'free' | 'pro' | 'enterprise'; status?: string; }
 
 const PLANS: Plan[] = [
-  { kind: 'free', name: 'Free', price: '$0', blurb: 'Discovery, analytics, promotion & ownership — all free today.', cta: 'Get started', features: ['Public directory access', 'Claim & manage your channel', 'Follow-intent analytics dashboard', 'Promote channel (pay per campaign, USD via PayPal)', 'Verified badge on approval'] },
-  { kind: 'pro', name: 'Pro', price: 'Later', blurb: 'A future bundled subscription with discounted promotion.', cta: 'Notify me', highlight: true, features: ['Everything in Free', 'Discounted promotion rates', 'Advanced growth tools (planned)', 'Priority support (planned)'] },
-  { kind: 'enterprise', name: 'Enterprise', price: 'Custom', blurb: 'For brands, publishers & networks.', cta: 'Contact sales', features: ['Bulk channel management', 'Custom growth partnership', 'API access (planned)', 'Dedicated support'] },
+  {
+    kind: 'free',
+    name: 'Free',
+    price: '$0',
+    status: 'Active',
+    blurb: 'Start and monetize your channel — the full sponsorship money loop, no plan required.',
+    cta: 'Get Started',
+    features: [
+      '1 owned / managed channel',
+      'Claim & verify your channel',
+      'Basic sponsorship marketplace (receive brand requests, deliver work)',
+      'Basic earnings dashboard & external payout request',
+      'Promote (pay per campaign, USD via PayPal)',
+      'Basic rate card & delivery / payment protection',
+      'Basic channel analytics',
+    ],
+  },
+  {
+    kind: 'pro',
+    name: 'Pro',
+    price: 'Coming Soon',
+    status: 'Coming Soon',
+    highlight: true,
+    blurb: 'Grow with advanced revenue and performance intelligence.',
+    cta: 'Join Pro Waitlist',
+    features: [
+      'Everything in Free',
+      'Multiple managed channels',
+      'Advanced analytics & longer history',
+      'Revenue dashboard & sponsorship pipeline intelligence',
+      'Rate-card benchmarks & pricing intelligence',
+      'Promote performance intelligence',
+      'Advanced exports & reports',
+    ],
+  },
+  {
+    kind: 'enterprise',
+    name: 'Enterprise',
+    price: 'Custom',
+    status: 'Contact Sales',
+    blurb: 'Operate channel portfolios and teams at scale.',
+    cta: 'Contact Sales',
+    features: [
+      'Everything in Pro',
+      'Multi-channel workspace with team seats & RBAC',
+      'Higher / unlimited channel limits',
+      'Portfolio analytics & bulk operations',
+      'Campaign / revenue operations tooling',
+      'Advanced reports & exports',
+      'Account management & future API access',
+    ],
+  },
 ];
 
 const ENTERPRISE_COMPANY_TYPES = [
@@ -66,7 +115,20 @@ export default function PricingClient() {
           >
             <div className="flex items-center justify-between">
               <div className="text-lg font-semibold">{plan.name}</div>
-              {plan.highlight && <span className="text-[10px] font-semibold uppercase tracking-wider text-primary bg-primary/10 px-2 py-1 rounded-full">Popular</span>}
+              {plan.status && (
+                <span
+                  className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded-full ${
+                    plan.status === 'Active'
+                      ? 'text-emerald-700 bg-emerald-100'
+                      : plan.status === 'Coming Soon'
+                      ? 'text-primary bg-primary/10'
+                      : 'text-muted-foreground bg-muted'
+                  }`}
+                  data-testid={`pricing-status-${plan.kind}`}
+                >
+                  {plan.status}
+                </span>
+              )}
             </div>
             <div className="mt-3 text-3xl font-bold">{plan.price}</div>
             <p className="text-sm text-muted-foreground mt-1">{plan.blurb}</p>
@@ -108,7 +170,7 @@ export default function PricingClient() {
           </div>
         ))}
       </div>
-      <p className="mt-10 text-center text-xs text-muted-foreground">Pricing shown is directional. Pro subscription bundling is coming soon; today&apos;s Promote Channel capacity is billed per campaign in USD via PayPal.</p>
+      <p className="mt-10 text-center text-xs text-muted-foreground">Free covers the full sponsorship money loop today. Pro subscription bundling is coming soon; Promote capacity is billed per campaign in USD via PayPal.</p>
 
       <ProWaitlistDialog open={proOpen} onOpenChange={setProOpen} me={me} />
       <EnterpriseDialog open={entOpen} onOpenChange={setEntOpen} me={me} />

@@ -27,6 +27,9 @@ export interface User {
   session_version?: number;         // incremented on password change / admin reset / disable
   must_change_password?: boolean;   // set by admin reset; enforced on /change-password
   password_updated_at?: Date | null;
+  // Phase 3 — SaaS entitlements. Missing/unknown resolves to 'free' at read
+  // time via getUserPlan() — no data migration required.
+  plan?: 'free' | 'pro' | 'enterprise' | null;
 }
 
 export type PublicUser = Omit<User, 'password_hash'>;

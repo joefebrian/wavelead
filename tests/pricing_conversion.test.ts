@@ -69,9 +69,13 @@ describe('Pricing conversion §1 — Pricing CTAs', () => {
     expect(html).toContain('data-testid="cta-pro"');
     expect(html).toContain('data-testid="cta-enterprise"');
     // Pro CTA copy check
-    expect(html).toContain('Notify me');
-    expect(html).toContain('Get started');
-    expect(html).toContain('Contact sales');
+    expect(html).toContain('Join Pro Waitlist');
+    expect(html).toContain('Get Started');
+    expect(html).toContain('Contact Sales');
+    // Phase 3 status pills present
+    expect(html).toContain('data-testid="pricing-status-free"');
+    expect(html).toContain('data-testid="pricing-status-pro"');
+    expect(html).toContain('data-testid="pricing-status-enterprise"');
   });
 
   it('#2 authenticated user sees the Free CTA the same (client-side routes to /dashboard on click) — SSR carries the button', async () => {

@@ -125,6 +125,16 @@ export const claimService = {
     const active = await findActiveClaim(channel.id, actor.user.id);
     if (active) throw new HttpError(409, 'You already have an active claim for this channel');
 
+    // Phase 3 — SaaS entitlement: enforce max_managed_channels quota BEFORE
+    // accepting a claim that would grant a new ownership. A claim for a
+    // channel already owned by the actor (verification-upgrade path) does
+    // not count against the quota because it does not add ownership.
+    if (!channel.owner_id || channel.owner_id !== actor.user.id) {
+      const ownedCount = await channelRepo.count({ owner_id: actor.user.id });
+      const { requireQuota } = await import('../entitlements');
+      requireQuota(actor, 'max_managed_channels', ownedCount);
+    }
+
     const emailDomain = extractEmailDomain(actor.user.email);
     const websiteDomain = extractDomain(channel.website_url);
     const domainMatch = !!(emailDomain && websiteDomain && emailDomain === websiteDomain);

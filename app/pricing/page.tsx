@@ -11,8 +11,8 @@ export default function PricingPage() {
       <Header />
       <main className="container py-16">
         <div className="max-w-2xl mx-auto text-center">
-          <h1 className="text-4xl md:text-5xl font-bold">Simple, creator-friendly pricing</h1>
-          <p className="text-muted-foreground mt-4">Discovery is always free. Follow-intent analytics, verified profiles, and channel promotion (via PayPal) are already shipped. Pro subscription plans and local IDR checkout are coming soon.</p>
+          <h1 className="text-4xl md:text-5xl font-bold">Pricing built for creators who monetize</h1>
+          <p className="text-muted-foreground mt-4">Free covers the full sponsorship money loop — claim your channel, receive brand requests, deliver work, and get paid. Paid tiers add growth &amp; revenue intelligence and multi-channel operations when you&apos;re ready.</p>
         </div>
         <PricingClient />
       </main>
