@@ -1555,6 +1555,14 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
         failure_message_safe: a.failure_message_safe,
       })) }), request);
     }
+    // B3.2 — Admin-triggered PayPal capture-details fee lookup + backfill.
+    // Only usable on captured PayPal attempts whose fee is still null.
+    if (path.length === 5 && path[0] === 'admin' && path[1] === 'marketplace' && path[2] === 'payments' && path[4] === 'reconcile-fee-from-provider' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const r = await marketplaceService.adminReconcileFeeFromProvider(actor, path[3]);
+      return applyCors(ok(r), request);
+    }
 
     return applyCors(fail(404, `Route ${route} not found`), request);
   } catch (err) {

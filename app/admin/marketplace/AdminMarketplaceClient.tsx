@@ -225,9 +225,10 @@ export default function AdminMarketplaceClient({ initialItems, initialKpis }: { 
                 <th className="px-3 py-2">Capture</th>
                 <th className="px-3 py-2">Created</th>
                 <th className="px-3 py-2">Captured</th>
+                <th className="px-3 py-2">Actions</th>
               </tr></thead>
               <tbody>
-                {payments.length === 0 && (<tr><td colSpan={12} className="px-3 py-6 text-center text-muted-foreground">No marketplace payment attempts.</td></tr>)}
+                {payments.length === 0 && (<tr><td colSpan={13} className="px-3 py-6 text-center text-muted-foreground">No marketplace payment attempts.</td></tr>)}
                 {payments.map((a) => (
                   <tr key={a.id} className="border-b border-border/60" data-testid={`payment-row-${a.id}`}>
                     <td className="px-3 py-2 font-mono text-xs">{a.id.slice(0, 8)}</td>
@@ -242,6 +243,21 @@ export default function AdminMarketplaceClient({ initialItems, initialKpis }: { 
                     <td className="px-3 py-2 font-mono text-xs">{a.provider_capture_id || '—'}</td>
                     <td className="px-3 py-2 text-xs">{new Date(a.created_at).toLocaleString()}</td>
                     <td className="px-3 py-2 text-xs">{a.captured_at ? new Date(a.captured_at).toLocaleString() : '—'}</td>
+                    <td className="px-3 py-2">
+                      {a.status === 'captured' && a.provider_fee_minor == null && a.provider === 'paypal' && (
+                        <Button size="sm" variant="outline" onClick={async () => {
+                          setBusy(a.id);
+                          try {
+                            const r = await fetch(`/api/admin/marketplace/payments/${a.id}/reconcile-fee-from-provider`, { method: 'POST', credentials: 'include' });
+                            const j = await r.json();
+                            if (!r.ok || !j.ok) alert(j?.error || 'Failed');
+                            await refetchPayments();
+                          } finally { setBusy(null); }
+                        }} disabled={busy === a.id} data-testid={`reconcile-fee-${a.id}`}>
+                          {busy === a.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Reconcile fee from PayPal'}
+                        </Button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

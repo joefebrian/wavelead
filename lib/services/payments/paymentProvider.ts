@@ -41,6 +41,11 @@ export interface CapturePaymentResult {
   internal_status: PaymentInternalStatus;
   amount_captured_minor: number;
   currency: string;
+  // B3.2 — exact provider fee/net when the capture response carries a
+  // seller_receivable_breakdown. May be null when the breakdown is absent
+  // (some sandbox flows, some funding sources). NEVER estimated.
+  provider_fee_minor?: number | null;
+  provider_net_minor?: number | null;
   raw: unknown;
 }
 
@@ -50,6 +55,22 @@ export interface RetrievePaymentResult {
   amount_minor: number;
   currency: string;
   provider_capture_id: string | null;
+  raw: unknown;
+}
+
+// B3.2 — authoritative capture-details lookup (`/v2/payments/captures/:id`)
+// returns the seller_receivable_breakdown reliably even when the initial
+// capture response did not. Used by fee backfill.
+export interface RetrieveCaptureInput {
+  provider_capture_id: string;
+}
+export interface RetrieveCaptureResult {
+  provider_capture_id: string;
+  internal_status: PaymentInternalStatus;
+  amount_minor: number;
+  currency: string;
+  provider_fee_minor: number | null;
+  provider_net_minor: number | null;
   raw: unknown;
 }
 
@@ -86,6 +107,7 @@ export interface PaymentProvider {
   createPayment(input: CreatePaymentInput): Promise<CreatePaymentResult>;
   capturePayment(input: CapturePaymentInput): Promise<CapturePaymentResult>;
   retrievePayment(input: CapturePaymentInput): Promise<RetrievePaymentResult>;
+  retrieveCapture?(input: RetrieveCaptureInput): Promise<RetrieveCaptureResult>;
   createRefund(input: RefundInput): Promise<RefundResult>;
   verifyWebhook(input: WebhookVerifyInput): Promise<WebhookVerifyResult>;
 }

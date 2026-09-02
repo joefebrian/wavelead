@@ -174,7 +174,16 @@ export class PayPalPaymentProvider implements PaymentProvider {
       status?: string;
       purchase_units?: Array<{
         payments?: {
-          captures?: Array<{ id: string; status: string; amount: { currency_code: string; value: string } }>;
+          captures?: Array<{
+            id: string;
+            status: string;
+            amount: { currency_code: string; value: string };
+            seller_receivable_breakdown?: {
+              gross_amount?: { currency_code: string; value: string };
+              paypal_fee?: { currency_code: string; value: string };
+              net_amount?: { currency_code: string; value: string };
+            };
+          }>;
         };
       }>;
       message?: string;
@@ -223,6 +232,13 @@ export class PayPalPaymentProvider implements PaymentProvider {
       internal_status: mapCaptureStatus(cap.status),
       amount_captured_minor: fromCurrencyValue(cap.amount.value),
       currency: cap.amount.currency_code,
+      // B3.2 — extract exact PayPal fee/net when present.
+      provider_fee_minor: cap.seller_receivable_breakdown?.paypal_fee?.value
+        ? fromCurrencyValue(cap.seller_receivable_breakdown.paypal_fee.value)
+        : null,
+      provider_net_minor: cap.seller_receivable_breakdown?.net_amount?.value
+        ? fromCurrencyValue(cap.seller_receivable_breakdown.net_amount.value)
+        : null,
       raw: j,
     };
   }
@@ -246,6 +262,58 @@ export class PayPalPaymentProvider implements PaymentProvider {
       amount_minor: amt ? fromCurrencyValue(amt.value) : 0,
       currency: amt?.currency_code || 'USD',
       provider_capture_id: cap?.id ?? null,
+      raw: j,
+    };
+  }
+
+  /**
+   * B3.2 — authoritative capture-details lookup. Unlike `retrievePayment`
+   * (which hits the order endpoint and may not carry the fee), this hits
+   * `/v2/payments/captures/:id` directly. The seller_receivable_breakdown
+   * is populated once PayPal has computed the fee for the capture.
+   * Exact fee only — this function NEVER estimates.
+   */
+  async retrieveCapture(input: { provider_capture_id: string }): Promise<{
+    provider_capture_id: string;
+    internal_status: PaymentInternalStatus;
+    amount_minor: number;
+    currency: string;
+    provider_fee_minor: number | null;
+    provider_net_minor: number | null;
+    raw: unknown;
+  }> {
+    const token = await getAccessToken();
+    const c = await cfg();
+    const res = await this._fetch(`${c.base}/v2/payments/captures/${encodeURIComponent(input.provider_capture_id)}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    });
+    const j = (await res.json()) as {
+      id?: string;
+      status?: string;
+      amount?: { currency_code: string; value: string };
+      seller_receivable_breakdown?: {
+        gross_amount?: { currency_code: string; value: string };
+        paypal_fee?: { currency_code: string; value: string };
+        net_amount?: { currency_code: string; value: string };
+      };
+      message?: string;
+      name?: string;
+      details?: Array<{ issue?: string; description?: string }>;
+    };
+    if (!res.ok) {
+      throw new Error(`retrieveCapture failed (${res.status}): ${j.message || j.name || 'unknown'}`);
+    }
+    return {
+      provider_capture_id: input.provider_capture_id,
+      internal_status: mapCaptureStatus(j.status),
+      amount_minor: j.amount?.value ? fromCurrencyValue(j.amount.value) : 0,
+      currency: j.amount?.currency_code || 'USD',
+      provider_fee_minor: j.seller_receivable_breakdown?.paypal_fee?.value
+        ? fromCurrencyValue(j.seller_receivable_breakdown.paypal_fee.value)
+        : null,
+      provider_net_minor: j.seller_receivable_breakdown?.net_amount?.value
+        ? fromCurrencyValue(j.seller_receivable_breakdown.net_amount.value)
+        : null,
       raw: j,
     };
   }

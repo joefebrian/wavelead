@@ -1107,7 +1107,7 @@ export const marketplaceService = {
       });
       return updated;
     }
-    return this._finalizeCapturedAttempt(a, cap.provider_capture_id!, cap.amount_captured_minor, null, null);
+    return this._finalizeCapturedAttempt(a, cap.provider_capture_id!, cap.amount_captured_minor, cap.provider_fee_minor ?? null, cap.provider_net_minor ?? null);
   },
 
   /**
@@ -1126,7 +1126,23 @@ export const marketplaceService = {
   ): Promise<MarketplacePaymentAttempt | null> {
     const a = await marketplacePaymentAttemptRepo.findByProviderOrderId('paypal', provider_order_id);
     if (!a) return null;
-    if (a.status === 'captured') return a;
+    // B3.2 — fee backfill path. If the attempt is already captured but the
+    // fee was unknown at capture time (browser-return path had no seller_-
+    // receivable_breakdown), a later CAPTURE.COMPLETED webhook carrying the
+    // exact fee is our chance to finalize economics. This is separately
+    // idempotent — subsequent replays with the same fee no-op.
+    if (a.status === 'captured') {
+      if (provider_fee_minor !== null && provider_fee_minor !== undefined && a.provider_fee_minor === null) {
+        // Optional sanity: the webhook capture id must match the attempt's
+        // capture id (both should be the SAME capture). If they diverge,
+        // do NOT backfill — this is a different capture event and requires
+        // manual review.
+        if (a.provider_capture_id && provider_capture_id && a.provider_capture_id !== provider_capture_id) return a;
+        await this._backfillCaptureFee(a.id, provider_fee_minor, provider_net_minor);
+        return (await marketplacePaymentAttemptRepo.findById(a.id))!;
+      }
+      return a;
+    }
     if (currency && currency.toUpperCase() !== a.currency) {
       await marketplacePaymentAttemptRepo.update(a.id, {
         status: 'failed',
@@ -1367,6 +1383,136 @@ export const marketplaceService = {
     const isAdmin = hasAtLeastRole(actor.user, ROLES.ADMIN);
     if (!isBuyer && !isOwner && !isAdmin) throw new HttpError(403, 'Not your order');
     return marketplacePaymentAttemptRepo.listByOrder(orderId);
+  },
+
+  // ============================================================================
+  // Phase B3.2 — Automatic PayPal Fee Reconciliation
+  // ----------------------------------------------------------------------------
+  // Centralized "we now know the exact fee — finalize economics" path. Used
+  // by BOTH the webhook backfill (finalizeMarketplaceCaptureFromWebhook) AND
+  // the admin-triggered PayPal capture-details lookup. Never estimates a fee.
+  //
+  // Idempotency guard: only runs when `attempt.provider_fee_minor === null`.
+  // Post-condition: attempt.provider_fee_minor set, order.economics_status
+  // = 'finalized', order.owner_payable_status advanced to
+  // 'payable_pending_delivery' (unless overridden by refund/reversal safety
+  // state), one GATEWAY_FEE_RECONCILED financial event appended, and NO
+  // duplicate PAYMENT_CONFIRMED added.
+  // ============================================================================
+  async _backfillCaptureFee(
+    attempt_id: string,
+    provider_fee_minor: number,
+    provider_net_minor: number | null,
+  ): Promise<MarketplacePaymentAttempt> {
+    // Atomic idempotency: only update when fee is currently null. Repeated
+    // webhook / admin calls that would apply the same fee become no-ops.
+    const patched = await marketplacePaymentAttemptRepo.transitionIfIn(attempt_id, ['captured'], 'captured', {
+      provider_fee_minor,
+      provider_net_minor: provider_net_minor ?? null,
+    });
+    if (!patched) {
+      // Row moved terminal (reversed/failed). Nothing to backfill.
+      const cur = await marketplacePaymentAttemptRepo.findById(attempt_id);
+      return cur!;
+    }
+    // Second guard: another worker may have flipped the fee between our read
+    // and this write. Detect and no-op.
+    if (patched.provider_fee_minor !== provider_fee_minor && patched.provider_fee_minor !== null) {
+      return patched;
+    }
+
+    const order = await marketplaceOrderRepo.findById(patched.marketplace_order_id);
+    if (!order || !order.snapshot) return patched;
+
+    // Defense-in-depth: never rewrite historical economics or bypass
+    // reconciliation flags.
+    if (order.payment_reconciliation_required) return patched;
+    // If the order was already finalized somehow (e.g. an earlier webhook
+    // ran through the initial-capture code path), do not double-append.
+    if (order.economics_status === 'finalized' && order.gateway_fee_minor !== null && order.gateway_fee_minor !== undefined) return patched;
+
+    const gross = order.snapshot.gross_price_minor;
+    const split = computeSplit(gross, provider_fee_minor);
+    const patch: Partial<MarketplaceOrder> = {
+      economics_status: 'finalized',
+      gateway_fee_minor: provider_fee_minor,
+      net_transaction_value_minor: split.net_minor,
+      owner_earnings_minor: split.owner_earnings_minor,
+      wavelead_commission_minor: split.wavelead_commission_minor,
+      owner_payable_status: order.owner_payable_status === 'paid_out' ? 'paid_out' : 'payable_pending_delivery',
+    };
+    await marketplaceOrderRepo.update(order.id, patch);
+
+    try {
+      await marketplaceFinancialEventRepo.append({
+        order_id: order.id,
+        event_type: 'GATEWAY_FEE_RECONCILED',
+        currency: 'USD',
+        gross_amount_minor: gross,
+        gateway_fee_minor: provider_fee_minor,
+        net_amount_minor: split.net_minor,
+        owner_earnings_minor: split.owner_earnings_minor,
+        wavelead_commission_minor: split.wavelead_commission_minor,
+        payment_reference_normalized: (patched.provider_capture_id || '').toLowerCase(),
+        actor_user_id: 'system',
+        metadata: {
+          source: 'automatic_backfill',
+          provider: 'paypal',
+          provider_capture_id: patched.provider_capture_id,
+          attempt_id: patched.id,
+          fee_source: 'provider',
+        },
+      });
+    } catch (e) {
+      // Duplicate append (rare race) is a safe no-op for idempotency.
+      if (!/E11000|duplicate key/i.test((e as Error).message)) throw e;
+    }
+    return (await marketplacePaymentAttemptRepo.findById(patched.id))!;
+  },
+
+  /**
+   * Admin-triggered "reconcile fee from PayPal" — read-only PayPal call to
+   * `/v2/payments/captures/:id`, then apply the same idempotent backfill.
+   * Used when the CAPTURE.COMPLETED webhook did not arrive or arrived
+   * without the seller_receivable_breakdown.
+   */
+  async adminReconcileFeeFromProvider(actor: Actor | null, attempt_id: string): Promise<{
+    ok: boolean;
+    fee_before: number | null;
+    fee_after: number | null;
+    net_after: number | null;
+    provider_fee_returned: number | null;
+  }> {
+    requireAdmin(actor);
+    const a = await marketplacePaymentAttemptRepo.findById(attempt_id);
+    if (!a) throw new HttpError(404, 'Payment attempt not found');
+    if (a.provider !== 'paypal') throw new HttpError(400, 'This attempt is not a PayPal attempt');
+    if (a.status !== 'captured') throw new HttpError(409, `Attempt is in status "${a.status}" — only captured attempts can be fee-reconciled`);
+    if (!a.provider_capture_id) throw new HttpError(400, 'Attempt has no provider capture id yet');
+    if (a.provider_fee_minor !== null && a.provider_fee_minor !== undefined) {
+      return { ok: true, fee_before: a.provider_fee_minor, fee_after: a.provider_fee_minor, net_after: a.provider_net_minor ?? null, provider_fee_returned: a.provider_fee_minor };
+    }
+
+    const { getPaymentProvider } = await import('./payments/providerFactory');
+    const provider = getPaymentProvider();
+    if (typeof (provider as { retrieveCapture?: unknown }).retrieveCapture !== 'function') {
+      throw new HttpError(501, 'Configured payment provider does not support capture-details lookup');
+    }
+    const cap = await (provider as { retrieveCapture: (i: { provider_capture_id: string }) => Promise<{
+      provider_fee_minor: number | null; provider_net_minor: number | null;
+    }> }).retrieveCapture({ provider_capture_id: a.provider_capture_id });
+    if (cap.provider_fee_minor === null || cap.provider_fee_minor === undefined) {
+      return { ok: false, fee_before: null, fee_after: null, net_after: null, provider_fee_returned: null };
+    }
+    await this._backfillCaptureFee(a.id, cap.provider_fee_minor, cap.provider_net_minor ?? null);
+    const after = (await marketplacePaymentAttemptRepo.findById(a.id))!;
+    return {
+      ok: true,
+      fee_before: null,
+      fee_after: after.provider_fee_minor ?? null,
+      net_after: after.provider_net_minor ?? null,
+      provider_fee_returned: cap.provider_fee_minor,
+    };
   },
 };
 
