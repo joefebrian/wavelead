@@ -158,11 +158,42 @@ export function getSettlementHoldHours(): number {
 /**
  * B3.2 Gate C — deterministically hash a verification code for storage.
  * Uses HMAC-SHA256 with a server-side secret; the raw code is never
- * persisted.
+ * persisted. In production, a real secret is REQUIRED — no fallback to
+ * hardcoded defaults (fail-closed).
  */
 function hashVerificationCode(code: string): string {
-  const secret = process.env.PAYOUT_METHOD_VERIFY_SECRET || process.env.SESSION_SECRET || 'wavelead-mvp-secret';
+  const secret = process.env.PAYOUT_METHOD_VERIFY_SECRET || process.env.SESSION_SECRET;
+  if (!secret) {
+    // Fail-closed in production. In dev/test allow a stable fallback.
+    if (process.env.NODE_ENV === 'production') {
+      throw new HttpError(500, 'Payout verification is unavailable: server secret not configured');
+    }
+    return createHmac('sha256', 'wavelead-mvp-dev-secret').update(code.trim()).digest('hex');
+  }
   return createHmac('sha256', secret).update(code.trim()).digest('hex');
+}
+
+/**
+ * B3.2 Gate C — production-safety helper. Returns true iff WaveLead has
+ * an active transactional email delivery primitive configured. We check
+ * for env vars belonging to any well-known provider (SendGrid, Resend,
+ * Postmark, Mailgun, AWS SES) or a raw SMTP configuration. Do NOT wire
+ * up email inside this gate — this helper only lets the payout method
+ * flow degrade safely when no delivery service exists.
+ */
+export function hasEmailDelivery(): boolean {
+  return !!(
+    process.env.SENDGRID_API_KEY ||
+    process.env.RESEND_API_KEY ||
+    process.env.POSTMARK_API_TOKEN ||
+    process.env.MAILGUN_API_KEY ||
+    process.env.AWS_SES_REGION ||
+    process.env.SMTP_HOST
+  );
+}
+
+function isProduction(): boolean {
+  return process.env.NODE_ENV === 'production';
 }
 
 function generateVerificationCode(): string {
@@ -1234,8 +1265,9 @@ export const marketplaceService = {
   async ownerUpsertPayoutMethod(actor: Actor | null, input: unknown): Promise<{
     method: OwnerPayoutMethodMasked;
     verification_required: boolean;
-    verification_code_dev?: string;   // only present when a new code was generated
-    email_delivery_pending?: true;    // marker for the eventual production email hook
+    verification_code_dev?: string;              // present ONLY in non-production
+    email_delivery_pending?: true;               // set when no email primitive is wired
+    verification_delivery: 'sent' | 'unavailable' | 'dev_only';
   }> {
     if (!actor) throw new HttpError(401, 'You must be signed in');
     const schema = z.object({ paypal_email: z.string().trim().min(3).max(320) });
@@ -1251,15 +1283,10 @@ export const marketplaceService = {
     // Idempotent same-email path.
     if (existing && existing.paypal_email_normalized === normalized) {
       if (existing.verified_at) {
-        return { method: maskPayoutMethod(existing), verification_required: false };
+        return { method: maskPayoutMethod(existing), verification_required: false, verification_delivery: 'sent' };
       }
       const code = await this._reissueVerificationCode(existing.id);
-      return {
-        method: maskPayoutMethod(existing),
-        verification_required: true,
-        verification_code_dev: code,
-        email_delivery_pending: true,
-      };
+      return this._verificationResponse(existing, code);
     }
 
     // New/different email: deactivate old, insert new (unverified).
@@ -1282,11 +1309,56 @@ export const marketplaceService = {
       updated_at: now,
     };
     await ownerPayoutMethodRepo.insert(method);
+    return this._verificationResponse(method, code);
+  },
+
+  /**
+   * Internal — shape the verification response with production-safe fields.
+   *
+   * Production rules:
+   *   • NEVER return `verification_code_dev` (regardless of email delivery)
+   *   • If NO email delivery primitive exists → `verification_delivery='unavailable'`,
+   *     method stays pending forever, automated verify path is closed;
+   *     manual admin external payout remains the launch fallback.
+   *   • If email delivery exists → `verification_delivery='sent'` (the actual
+   *     email hook lives elsewhere; this service layer only stores the hash
+   *     and returns the delivery status).
+   *
+   * Non-production: `verification_code_dev` is returned so local dev/test
+   * can exercise the full flow without wiring an email service.
+   */
+  _verificationResponse(method: OwnerPayoutMethod, code: string): {
+    method: OwnerPayoutMethodMasked;
+    verification_required: boolean;
+    verification_code_dev?: string;
+    email_delivery_pending?: true;
+    verification_delivery: 'sent' | 'unavailable' | 'dev_only';
+  } {
+    if (isProduction()) {
+      if (hasEmailDelivery()) {
+        // Production email delivery is present — the email-hook layer is
+        // responsible for actually sending the code. Do NOT return the code.
+        return {
+          method: maskPayoutMethod(method),
+          verification_required: true,
+          verification_delivery: 'sent',
+        };
+      }
+      // Production without email delivery — verification cannot proceed.
+      return {
+        method: maskPayoutMethod(method),
+        verification_required: true,
+        email_delivery_pending: true,
+        verification_delivery: 'unavailable',
+      };
+    }
+    // Non-production — return the code so tests + local dev can verify.
     return {
       method: maskPayoutMethod(method),
       verification_required: true,
       verification_code_dev: code,
       email_delivery_pending: true,
+      verification_delivery: 'dev_only',
     };
   },
 
