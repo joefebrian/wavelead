@@ -92,7 +92,21 @@ export interface Channel {
   // discovery surface (browse, direct lookup, search, homepage). Never
   // settable via public API; never leaked to public responses.
   is_test_fixture?: boolean;
+  // M11-Batch2B — Verified Owner Activation.
+  // Separate from ownership verification: `verification_status` still
+  // expresses whether WaveLead has approved the ownership relationship;
+  // this field expresses whether the owner has completed the $1 activation
+  // transaction that unlocks the public "Owner Verified" state.
+  activation_status?: ChannelActivationStatus;
+  activation_active_at?: Date | null;   // set when payment finalizes with credit issuance
+  activation_revoked_at?: Date | null;  // set when a refund flips status back to 'revoked'
 }
+
+// M11-Batch2B — Channel activation lifecycle. Deliberately small.
+export type ChannelActivationStatus = 'not_required' | 'pending' | 'active' | 'revoked';
+export const CHANNEL_ACTIVATION_STATUSES: readonly ChannelActivationStatus[] = [
+  'not_required', 'pending', 'active', 'revoked',
+] as const;
 
 export type PublicChannel = Omit<
   Channel,
@@ -1338,5 +1352,67 @@ export interface AnalyticsEvent {
   occurred_at: Date;
   created_at: Date;
 }
+
+// -------- M11-Batch2B: $1 Verified Owner Activation + WaveLead Credit --------
+export type ActivationPaymentStatus =
+  | 'created'                             // row inserted, no PayPal order yet
+  | 'checkout_created'                    // PayPal order id + approve_url present
+  | 'pending'                             // provider returned non-terminal
+  | 'captured_pending_fee'                // captured, but fee not yet known — NO CREDIT
+  | 'captured_finalized'                  // captured + fee known + credit issued
+  | 'failed'
+  | 'cancelled'
+  | 'partially_refunded'
+  | 'refunded';
+
+export type ActivationPurpose = 'CHANNEL_OWNER_ACTIVATION';
+export type ActivationEnvironment = 'sandbox' | 'live';
+
+export interface ChannelActivationPayment {
+  id: string;
+  channel_id: string;
+  owner_user_id: string;
+  purpose: ActivationPurpose;                   // 'CHANNEL_OWNER_ACTIVATION'
+  provider: 'paypal';
+  provider_environment: ActivationEnvironment;  // 'sandbox' in Batch 2B; 'live' when unlocked
+  currency: 'USD';
+  gross_amount_minor: number;                   // server-derived, always 100 for $1
+  amount_captured_minor: number;
+  amount_refunded_minor: number;
+  provider_fee_minor: number | null;            // null until fee reconciled
+  provider_net_minor: number | null;            // null until fee reconciled
+  status: ActivationPaymentStatus;
+  provider_order_id: string | null;
+  provider_capture_id: string | null;
+  approve_url: string | null;
+  return_url: string;
+  cancel_url: string;
+  captured_at: Date | null;
+  finalized_at: Date | null;                    // when credit was issued
+  refunded_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+// Append-only WaveLead Credit ledger. NEVER exposed as a mutable balance.
+// Balance = SUM(amount_minor) over event rows for a user in a currency.
+export type WaveLeadCreditEventType =
+  | 'ACTIVATION_CREDIT_ISSUED'
+  | 'ACTIVATION_CREDIT_REVERSED';                // reserved for a future refund reversal path
+export type WaveLeadCreditSourceType = 'channel_activation_payment';
+
+export interface WaveLeadCreditEvent {
+  id: string;
+  user_id: string;
+  currency: 'USD';
+  amount_minor: number;                          // signed; issuance positive, reversal negative
+  event_type: WaveLeadCreditEventType;
+  source_type: WaveLeadCreditSourceType;
+  source_id: string;                             // e.g. channel_activation_payment.id
+  provider_capture_id: string | null;
+  idempotency_key: string;                       // e.g. 'activation_credit:{payment_id}'
+  created_at: Date;
+}
+
 
 

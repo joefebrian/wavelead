@@ -384,7 +384,9 @@ describe('M03 \u2014 Public verified badge & regression', () => {
   });
 
   it('sanitizer exposes is_verified/is_official/has_owner and hides internals', async () => {
-    const ch = await createApprovedChannel({ owner_id: 'x', verification_status: 'verified' });
+    // M11-Batch2B: public is_verified now requires ownership approved AND
+    // activation active — seed the fixture accordingly.
+    const ch = await createApprovedChannel({ owner_id: 'x', verification_status: 'verified', activation_status: 'active' });
     const r = await api<{ channel: Record<string, unknown> }>(`/channels/${ch.slug}`);
     expect(r.status).toBe(200);
     expect(r.body.data!.channel.is_verified).toBe(true);
@@ -393,6 +395,16 @@ describe('M03 \u2014 Public verified badge & regression', () => {
     expect(r.body.data!.channel).not.toHaveProperty('verification_status');
     expect(r.body.data!.channel).not.toHaveProperty('owner_id');
     expect(r.body.data!.channel).not.toHaveProperty('reviewed_by');
+  });
+
+  it('M11-Batch2B invariant: ownership approved BUT activation not active → is_verified stays false', async () => {
+    const ch = await createApprovedChannel({ owner_id: 'x', verification_status: 'verified' /* no activation_status */ });
+    const r = await api<{ channel: { is_verified: boolean; has_owner: boolean } }>(`/channels/${ch.slug}`);
+    expect(r.status).toBe(200);
+    // Public "Owner Verified" badge withheld until $1 activation is finalized.
+    expect(r.body.data!.channel.is_verified).toBe(false);
+    // But ownership relationship is preserved.
+    expect(r.body.data!.channel.has_owner).toBe(true);
   });
 
   it('Follow-Intent tracking regression: /go/<approved> still 302s to whatsapp', async () => {

@@ -402,18 +402,107 @@ frontend_m02:
 
 test_plan:
   current_focus:
+    - "M11-Batch2B — Verified Owner Activation ($1 SANDBOX; wavelead_credit_events ledger; refund revokes activation only)"
     - "M11-Batch3 — Cookie Consent + First-Party Analytics (consent manager, server-enforced ingest, first-party visitor_id, policy pages)"
     - "M11-Batch2A — Follower Evidence (owner-submitted, admin-verified snapshots + Owner Verified badge rename)"
-    - "M03.7 FINAL HARDENING — Ownership Verification Patch (assigned+unverified state; no-claim admin verification; takeover protection)"
-    - "M05.0 FINAL SYNC — /api/health must return git commit SHA (11e3105)"
-    - "M05.0 POST /api/channels/enrich smoke tests (SSRF, duplicate, new, cache, sensitive-field firewall)"
-    - "M05.0 /submit UI live release verification (browser-level, responsive 375-1920)"
-    - "M02 moderation regression (submit → admin approve/reject)"
-    - "M03 ownership/claim regression"
-    - "M04 analytics regression (owner endpoints, rollup, CSV)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+# ---------- M11 BATCH 2B — VERIFIED OWNER ACTIVATION ----------
+backend_m11_batch2b:
+  - task: "M11-Batch2B $1 sandbox activation, WaveLead Credit ledger, refund-safe activation revocation"
+    implemented: true
+    working: true
+    file: "lib/services/channelActivationService.ts, lib/types.ts, lib/db/collections.ts, lib/db/indexes.ts, lib/utils/sanitize.ts, app/api/[[...path]]/route.ts, app/dashboard/channels/[id]/ChannelActivationCard.tsx, app/dashboard/channels/[id]/page.tsx, tests/m11_batch2b_activation.test.ts, tests/m11_batch2a_follower_evidence.test.ts (fixture), tests/m03.test.ts (invariant test)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Ownership vs activation are STRICTLY separated:
+            • channel.verification_status remains authoritative for ownership
+              approval. It is NEVER touched by the activation flow.
+            • channel.activation_status ∈ {not_required, pending, active, revoked}
+              tracks the $1 activation lifecycle.
+          Payment domain isolation:
+            • New collection `channel_activation_payments` with purpose=
+              CHANNEL_OWNER_ACTIVATION, provider_environment='sandbox' in
+              this batch (LIVE gated at service level → 503 if PayPal is live).
+            • Two DB-level unique indexes: provider_order_id + provider_capture_id
+              (partial on presence) prevent duplicate ingestion.
+          WaveLead Credit ledger:
+            • New collection `wavelead_credit_events` (append-only).
+            • Unique index on `idempotency_key` = 'activation_credit:{payment_id}'
+              is the load-bearing invariant guaranteeing EXACTLY one credit
+              issuance per finalized activation, safe against duplicate
+              browser-return, webhook replay, provider retry, and race.
+          Fee reconciliation:
+            • Capture without inline fee → status=captured_pending_fee, NO
+              credit, activation stays 'pending'. Browser return is
+              NON-AUTHORITATIVE for activation active.
+            • Admin route POST /api/admin/activation-payments/:id/reconcile-
+              fee-from-provider pulls the seller_receivable_breakdown via
+              retrieveCapture(), sets provider_fee_minor + provider_net_minor,
+              inserts the credit row idempotently, then flips
+              channel.activation_status='active'.
+          Refund safety:
+            • recordRefund() sets activation_status='revoked' but leaves
+              channel.owner_id + verification_status untouched. Ownership
+              relationship survives refunds — the public "Owner Verified"
+              badge simply stops rendering.
+          Public sanitizer:
+            • lib/utils/sanitize.ts now returns is_verified only when
+              (verification_status ∈ verified|official) AND owner_id AND
+              activation_status === 'active'. All other paths tighten by
+              this same invariant.
+          UI:
+            • ChannelActivationCard on /dashboard/channels/[id] — sandbox-only
+              visibility (server checks env and refuses to render/start on
+              live). CTA reads "Activate for $1" and clarifies "Sandbox
+              activation transaction — no real money is charged." Post-
+              return, the UI reflects captured_pending_fee vs
+              captured_finalized truthfully.
+          Test suite (8 tests):
+            §1  owner start → checkout_created with server-derived amount
+            §2  stranger blocked (403)
+            §3  amount is server-derived (100), verified in payment view
+            §4  payment_domain: purpose stored, no cross-contamination
+            §5  no-fee capture → NO credit, activation NOT active, public
+                 badge withheld
+            §6  admin reconcile → credit issued × 1 + activation active +
+                 public badge renders
+            §7  duplicate capture + duplicate reconcile both idempotent
+            §8  refund → activation_status='revoked' + owner_id/verification
+                 SURVIVE + public badge withheld
+            §10 marketplace + funding domains untouched
+            §11 client-supplied `amount_minor` in body IGNORED
+          Regression: 76/76 across m03, m10, m11-batch1, m11-batch2a,
+          m11-batch2b, m11-batch3, buyer-auth PLUS 135/135 across m07 PayPal
+          activation, m08b1 marketplace, m08b3 paypal checkout, m08b2 payouts.
+          Build: `yarn build` succeeds. Typecheck: PASS.
+
+frontend_m11_batch2b:
+  - task: "M11-Batch2B Owner activation card (sandbox-only), browser-return flow, WaveLead Credit balance surface"
+    implemented: true
+    working: "NA"
+    file: "app/dashboard/channels/[id]/ChannelActivationCard.tsx, app/dashboard/channels/[id]/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Owner sees separate Ownership Approved + Activation status tiles,
+          a truthful $1 CTA with sandbox pill, browser return handling that
+          calls captureAndReconcile (non-authoritative for active), a
+          "Refresh status" button while waiting for fee reconciliation, an
+          Activation Active panel showing fee/net breakdown once finalized,
+          and a WaveLead Credit balance surface with non-withdrawable /
+          non-transferable copy. Not yet browser-verified.
 
 # ---------- M11 BATCH 3 — COOKIE CONSENT + FIRST-PARTY ANALYTICS ----------
 backend_m11_batch3:

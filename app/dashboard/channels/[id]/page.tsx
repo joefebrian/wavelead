@@ -11,6 +11,7 @@ import { countryByCode } from '@/lib/constants/countries';
 import OwnerEditForm from './OwnerEditForm';
 import SensitiveChangeForm from './SensitiveChangeForm';
 import FollowerEvidenceCard from './FollowerEvidenceCard';
+import ChannelActivationCard from './ChannelActivationCard';
 import { audienceSnapshotService } from '@/lib/services/audienceSnapshotService';
 import { ArrowLeft, ShieldCheck } from 'lucide-react';
 import { categoryRepo } from '@/lib/repositories/categoryRepo';
@@ -20,8 +21,9 @@ export const dynamic = 'force-dynamic';
 
 interface Params { id: string; }
 
-export default async function OwnerChannelPage({ params }: { params: Promise<Params> }) {
+export default async function OwnerChannelPage({ params, searchParams }: { params: Promise<Params>; searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const { id } = await params;
+  const sp = searchParams ? await searchParams : {};
   const actor = await resolveActorFromCookies();
   if (!actor) redirect(`/login?next=/dashboard/channels/${id}`);
 
@@ -101,6 +103,11 @@ export default async function OwnerChannelPage({ params }: { params: Promise<Par
         )}
 
         <div className="mt-6 grid gap-6">
+          <ChannelActivationCard
+            channelId={channel.id}
+            returnActivationId={typeof sp.activation === 'string' ? sp.activation : null}
+            returnStatus={typeof sp.status === 'string' ? sp.status : null}
+          />
           <OwnerEditForm
             channelId={channel.id}
             initial={{

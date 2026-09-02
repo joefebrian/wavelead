@@ -258,5 +258,24 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { event_name: 1, occurred_at: -1 }, name: 'name_time' },
       { key: { user_id: 1, occurred_at: -1 }, name: 'user_time', partialFilterExpression: { user_id: { $type: 'string' } } },
     ]),
+    // M11-Batch2B — Channel activation payments ($1 SANDBOX for now).
+    // Provider identifiers are unique across the collection when set (partial).
+    db.collection(COLLECTIONS.CHANNEL_ACTIVATION_PAYMENTS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { channel_id: 1, status: 1, created_at: -1 }, name: 'by_channel_status' },
+      { key: { owner_user_id: 1, created_at: -1 }, name: 'by_owner_time' },
+      { key: { status: 1, created_at: -1 }, name: 'by_status_time' },
+      { key: { provider: 1, provider_order_id: 1 }, unique: true, name: 'uniq_provider_order', partialFilterExpression: { provider_order_id: { $type: 'string' } } },
+      { key: { provider: 1, provider_capture_id: 1 }, unique: true, name: 'uniq_provider_capture', partialFilterExpression: { provider_capture_id: { $type: 'string' } } },
+    ]),
+    // M11-Batch2B — WaveLead Credit ledger (append-only). Idempotency key is
+    // UNIQUE across the collection — this is the load-bearing invariant that
+    // prevents duplicate credit issuance under any retry / race scenario.
+    db.collection(COLLECTIONS.WAVELEAD_CREDIT_EVENTS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { user_id: 1, created_at: -1 }, name: 'by_user_time' },
+      { key: { source_type: 1, source_id: 1 }, name: 'by_source' },
+      { key: { idempotency_key: 1 }, unique: true, name: 'uniq_idempotency' },
+    ]),
   ]);
 }

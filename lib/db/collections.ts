@@ -46,6 +46,11 @@ export const COLLECTIONS = {
   CONSENT_RECORDS: 'consent_records',
   // M11-Batch3 — First-party product analytics events (append-only, consented).
   ANALYTICS_EVENTS: 'analytics_events',
+  // M11-Batch2B — Verified Owner Activation payment domain (isolated from
+  // Marketplace + Promote to keep economics unambiguous).
+  CHANNEL_ACTIVATION_PAYMENTS: 'channel_activation_payments',
+  // M11-Batch2B — Append-only WaveLead Credit ledger.
+  WAVELEAD_CREDIT_EVENTS: 'wavelead_credit_events',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

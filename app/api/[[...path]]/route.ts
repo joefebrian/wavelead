@@ -1336,6 +1336,55 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ lead }), request);
     }
 
+    // ---------- M11-Batch2B VERIFIED OWNER ACTIVATION (SANDBOX) ----------
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'activation' && method === 'GET') {
+      const { channelActivationService } = await import('@/lib/services/channelActivationService');
+      const actor = await resolveActor(request);
+      return applyCors(ok(await channelActivationService.getStateForOwner(actor, path[2])), request);
+    }
+    if (path.length === 5 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'activation' && path[4] === 'start' && method === 'POST') {
+      const { channelActivationService } = await import('@/lib/services/channelActivationService');
+      const actor = await resolveActor(request);
+      const origin = request.headers.get('origin') || undefined;
+      const payment = await channelActivationService.startActivation(actor, path[2], origin);
+      return applyCors(ok({ payment }, { status: 201 }), request);
+    }
+    if (path.length === 5 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'activation' && path[4] === 'capture' && method === 'POST') {
+      // Browser-return / recovery capture. NON-AUTHORITATIVE for activation
+      // active status \u2014 the service only flips to 'active' when fee is known
+      // AND credit issuance succeeds.
+      const { channelActivationService } = await import('@/lib/services/channelActivationService');
+      const actor = await resolveActor(request);
+      if (!actor) return applyCors(fail(401, 'Authentication required'), request);
+      const body = await safeJson(request);
+      const paymentId = (body as { payment_id?: string })?.payment_id;
+      if (!paymentId) return applyCors(fail(400, 'payment_id required'), request);
+      const payment = await channelActivationService.captureAndReconcile(paymentId);
+      return applyCors(ok({ payment }), request);
+    }
+    // Admin-triggered fee backfill for captures where the initial provider
+    // response did not include a seller_receivable_breakdown.
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'activation-payments' && path[3] === 'reconcile-fee-from-provider' && method === 'POST') {
+      const { channelActivationService } = await import('@/lib/services/channelActivationService');
+      const actor = await resolveActor(request);
+      const payment = await channelActivationService.adminReconcileFeeFromProvider(actor, path[2]);
+      return applyCors(ok({ payment }), request);
+    }
+    // Owner-facing WaveLead Credit balance + append-only history.
+    if (route === '/me/credit-balance' && method === 'GET') {
+      const { waveLeadCreditService } = await import('@/lib/services/channelActivationService');
+      const actor = await resolveActor(request);
+      if (!actor) return applyCors(fail(401, 'Authentication required'), request);
+      const balance = await waveLeadCreditService.getBalance(actor.user.id);
+      return applyCors(ok(balance), request);
+    }
+    if (route === '/me/credit-events' && method === 'GET') {
+      const { waveLeadCreditService } = await import('@/lib/services/channelActivationService');
+      const actor = await resolveActor(request);
+      const items = await waveLeadCreditService.listMyEvents(actor);
+      return applyCors(ok({ items }), request);
+    }
+
     // ---------- M11-Batch3 CONSENT + FIRST-PARTY ANALYTICS ----------
     if (route === '/consent' && method === 'GET') {
       const { consentService } = await import('@/lib/services/consentService');

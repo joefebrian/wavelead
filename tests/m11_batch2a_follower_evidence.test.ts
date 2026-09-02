@@ -69,6 +69,10 @@ async function seedApprovedChannel(ownerId: string, name = 'B2A'): Promise<{ id:
     logo_url: null, cover_url: null, website_url: null,
     country_code: 'US', follower_count: 0,
     is_official: false, is_verified: true, verification_status: 'verified',
+    // M11-Batch2B invariant: public "Owner Verified" badge requires ownership
+    // approved AND activation active. This test asserts the badge renders on
+    // the public profile, so we seed the fixture as fully activated.
+    activation_status: 'active', activation_active_at: now, activation_revoked_at: null,
     owner_id: ownerId, category_id: null, tags: [], status: 'approved',
     view_count: 0, click_count: 0, follow_intent_count: 0,
     created_at: now, updated_at: now, published_at: now,
