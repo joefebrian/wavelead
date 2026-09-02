@@ -13,6 +13,8 @@ import { UploadThingError } from 'uploadthing/server';
 import { z } from 'zod';
 import { resolveActor } from '@/lib/auth/rbac';
 import { marketplaceOrderRepo } from '@/lib/repositories/marketplaceRepo';
+import { channelRepo } from '@/lib/repositories/channelRepo';
+import { hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
 
 const f = createUploadthing();
 
@@ -82,6 +84,47 @@ export const marketplaceFileRouter = {
         size_bytes: file.size,
         uploaded_at: new Date().toISOString(),
         order_id: metadata.orderId,
+        uploader_user_id: metadata.ownerId,
+      };
+    }),
+  // M11-Batch2A \u2014 Owner-submitted FOLLOWER EVIDENCE screenshots.
+  // Single image per submission. Same MIME allowlist as delivery evidence.
+  channelFollowerEvidence: f(
+    {
+      'image/jpeg': { maxFileSize: '4MB', maxFileCount: 1 },
+      'image/png': { maxFileSize: '4MB', maxFileCount: 1 },
+      'image/webp': { maxFileSize: '4MB', maxFileCount: 1 },
+    },
+    { awaitServerData: true },
+  )
+    .input(z.object({ channelId: z.string().uuid() }))
+    .middleware(async ({ req, input, files }) => {
+      const actor = await resolveActor(req as unknown as import('next/server').NextRequest);
+      if (!actor) throw new UploadThingError('Unauthorized');
+      const channel = await channelRepo.findById(input.channelId);
+      if (!channel) throw new UploadThingError('Channel not found');
+      const isOwner = channel.owner_id && channel.owner_id === actor.user.id;
+      const isMod = hasAtLeastRole(actor.user, ROLES.MODERATOR);
+      if (!isOwner && !isMod) throw new UploadThingError('Only the verified channel owner may upload follower evidence');
+      if (!Array.isArray(files) || files.length !== 1) throw new UploadThingError('Submit exactly one screenshot');
+      const allowed = new Set(['image/jpeg', 'image/png', 'image/webp']);
+      const MAX_BYTES = 5 * 1024 * 1024;
+      for (const file of files) {
+        if (!allowed.has(file.type)) throw new UploadThingError('Only JPEG, PNG, or WebP images allowed');
+        if (file.size > MAX_BYTES) throw new UploadThingError('Image must be \u2264 5 MB');
+      }
+      return { ownerId: actor.user.id, channelId: input.channelId };
+    })
+    .onUploadComplete(async ({ metadata, file }) => {
+      return {
+        provider: 'uploadthing' as const,
+        storage_key: file.key,
+        url: file.ufsUrl,
+        mime_type: file.type,
+        file_name_safe: safeFileName(file.name),
+        size_bytes: file.size,
+        uploaded_at: new Date().toISOString(),
+        channel_id: metadata.channelId,
         uploader_user_id: metadata.ownerId,
       };
     }),

@@ -1336,6 +1336,43 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ lead }), request);
     }
 
+    // ---------- M11-Batch2A FOLLOWER EVIDENCE ----------
+    // Owner endpoints
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'audience-snapshots' && method === 'POST') {
+      const { audienceSnapshotService } = await import('@/lib/services/audienceSnapshotService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      return applyCors(ok(await audienceSnapshotService.submit(actor, path[2], body), { status: 201 }), request);
+    }
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'audience-snapshots' && method === 'GET') {
+      const { audienceSnapshotService } = await import('@/lib/services/audienceSnapshotService');
+      const actor = await resolveActor(request);
+      return applyCors(ok(await audienceSnapshotService.listMine(actor, path[2])), request);
+    }
+    // Admin endpoints (moderator+)
+    if (route === '/admin/audience-snapshots' && method === 'GET') {
+      const { audienceSnapshotService } = await import('@/lib/services/audienceSnapshotService');
+      const actor = await resolveActor(request);
+      return applyCors(ok(await audienceSnapshotService.adminListPending(actor)), request);
+    }
+    if (path.length === 3 && path[0] === 'admin' && path[1] === 'audience-snapshots' && method === 'GET') {
+      const { audienceSnapshotService } = await import('@/lib/services/audienceSnapshotService');
+      const actor = await resolveActor(request);
+      return applyCors(ok(await audienceSnapshotService.adminGetById(actor, path[2])), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'audience-snapshots' && path[3] === 'verify' && method === 'POST') {
+      const { audienceSnapshotService } = await import('@/lib/services/audienceSnapshotService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      return applyCors(ok(await audienceSnapshotService.adminVerify(actor, path[2], body)), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'audience-snapshots' && path[3] === 'reject' && method === 'POST') {
+      const { audienceSnapshotService } = await import('@/lib/services/audienceSnapshotService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      return applyCors(ok(await audienceSnapshotService.adminReject(actor, path[2], body)), request);
+    }
+
     // ---------- MARKETPLACE (Phase B1) ----------
     // Owner rate-card CRUD (verified owner only)
     if (path.length === 3 && path[0] === 'owner' && path[1] === 'channels' && path[2] === 'rate-card' && method === 'GET') {

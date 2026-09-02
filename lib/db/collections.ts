@@ -40,6 +40,8 @@ export const COLLECTIONS = {
   MARKETPLACE_DELIVERY_SUBMISSIONS: 'marketplace_delivery_submissions',
   MARKETPLACE_DELIVERY_ESCALATIONS: 'marketplace_delivery_escalations',
   OWNER_PAYOUT_METHODS: 'owner_payout_methods',
+  // M11-Batch2A — owner-submitted follower-count evidence (append-only history).
+  CHANNEL_AUDIENCE_SNAPSHOTS: 'channel_audience_snapshots',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

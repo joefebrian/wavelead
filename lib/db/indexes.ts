@@ -234,5 +234,16 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { owner_user_id: 1, is_active: 1 }, unique: true, name: 'uniq_active_per_owner', partialFilterExpression: { is_active: true } },
       { key: { paypal_email_normalized: 1 }, name: 'by_email' },
     ]),
+    // M11-Batch2A — Follower Evidence snapshots (append-only history).
+    // The partial-unique on (channel_id, status='pending') enforces at most
+    // ONE active pending submission per channel. Verified/rejected/superseded
+    // rows never collide and can accumulate indefinitely.
+    db.collection(COLLECTIONS.CHANNEL_AUDIENCE_SNAPSHOTS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { channel_id: 1, status: 1, created_at: -1 }, name: 'channel_status_time' },
+      { key: { reported_by_user_id: 1, created_at: -1 }, name: 'reporter_time' },
+      { key: { status: 1, created_at: -1 }, name: 'status_time' },
+      { key: { channel_id: 1, status: 1 }, unique: true, name: 'uniq_active_pending_per_channel', partialFilterExpression: { status: 'pending' } },
+    ]),
   ]);
 }

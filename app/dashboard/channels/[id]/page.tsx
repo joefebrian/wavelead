@@ -10,6 +10,8 @@ import { ownerService } from '@/lib/services/ownerService';
 import { countryByCode } from '@/lib/constants/countries';
 import OwnerEditForm from './OwnerEditForm';
 import SensitiveChangeForm from './SensitiveChangeForm';
+import FollowerEvidenceCard from './FollowerEvidenceCard';
+import { audienceSnapshotService } from '@/lib/services/audienceSnapshotService';
 import { ArrowLeft, ShieldCheck } from 'lucide-react';
 import { categoryRepo } from '@/lib/repositories/categoryRepo';
 
@@ -47,6 +49,13 @@ export default async function OwnerChannelPage({ params }: { params: Promise<Par
   const country = countryByCode(channel.country_code);
   const categories = await categoryRepo.listActive();
 
+  // Follower-evidence history for this owner+channel.
+  let audienceHistory: Awaited<ReturnType<typeof audienceSnapshotService.listMine>>['items'] = [];
+  try {
+    const r = await audienceSnapshotService.listMine(actor, channel.id);
+    audienceHistory = r.items;
+  } catch { /* if 403 (edge race) or 404, keep empty */ }
+
   return (
     <>
       <Header />
@@ -58,7 +67,7 @@ export default async function OwnerChannelPage({ params }: { params: Promise<Par
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl md:text-3xl font-bold">{channel.name}</h1>
-              {channel.is_verified && <Badge variant="outline" className="gap-1"><ShieldCheck className="h-3.5 w-3.5" /> Verified</Badge>}
+              {channel.is_verified && <Badge variant="outline" className="gap-1"><ShieldCheck className="h-3.5 w-3.5" /> Owner Verified</Badge>}
               {channel.is_official && <Badge>Official</Badge>}
               {channel.is_featured && <Badge variant="secondary">Featured</Badge>}
             </div>
@@ -102,6 +111,23 @@ export default async function OwnerChannelPage({ params }: { params: Promise<Par
               cover_url: channel.cover_url ?? '',
               primary_language: channel.primary_language ?? '',
             }}
+          />
+          <FollowerEvidenceCard
+            channelId={channel.id}
+            initialHistory={audienceHistory.map((s) => ({
+              id: s.id,
+              followers: s.followers,
+              status: s.status,
+              reported_at: (s.reported_at as unknown as Date).toISOString?.() ?? (s.reported_at as unknown as string),
+              evidence_date: s.evidence_date ? ((s.evidence_date as unknown as Date).toISOString?.() ?? (s.evidence_date as unknown as string)) : null,
+              verified_at: s.verified_at ? ((s.verified_at as unknown as Date).toISOString?.() ?? (s.verified_at as unknown as string)) : null,
+              rejection_reason: s.rejection_reason,
+              evidence_attachment: s.evidence_attachment as unknown as {
+                provider: 'uploadthing'; storage_key: string; url: string;
+                mime_type: 'image/jpeg' | 'image/png' | 'image/webp';
+                file_name_safe: string; size_bytes: number; uploaded_at: string;
+              },
+            }))}
           />
           <SensitiveChangeForm
             channelId={channel.id}

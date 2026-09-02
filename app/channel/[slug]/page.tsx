@@ -40,13 +40,17 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
   const channel = await channelService.getPublicBySlug(slug);
   if (!channel) notFound();
 
-  const [category, related, actor, internal] = await Promise.all([
+  const [category, related, actor, internal, latestVerifiedSnap] = await Promise.all([
     channel.category_id ? categoryRepo.listActive().then((cs) => cs.find((c) => c.id === channel.category_id) || null) : Promise.resolve(null),
     channel.category_id
       ? channelService.listPublic({ limit: 6, sort: 'top' }).then((r) => r.items.filter((c) => c.id !== channel.id && c.category_id === channel.category_id).slice(0, 3))
       : Promise.resolve([]),
     resolveActorFromCookies(),
     channelRepo.findById(channel.id),
+    (async () => {
+      const { audienceSnapshotService } = await import('@/lib/services/audienceSnapshotService');
+      return audienceSnapshotService.getLatestVerifiedForChannel(channel.id).catch(() => null);
+    })(),
   ]);
   // Public marketplace rate card (only active fixed-price packages; null if none).
   const publicRateCard = await marketplaceService.getPublicRateCard(channel.id).catch(() => null);
@@ -59,7 +63,15 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
   });
 
   const country = countryByCode(channel.country_code);
-  const followers = channel.follower_count > 0 ? `${Number(channel.follower_count).toLocaleString()} followers` : 'Followers not verified';
+  // M11-Batch2A \u2014 Prefer the latest ADMIN-VERIFIED owner-submitted follower
+  // snapshot over any legacy channel.follower_count. Public copy uses an
+  // absolute date, with a qualifier once the evidence ages beyond 30 days.
+  const { deriveAudienceFreshness } = await import('@/lib/utils/audienceFreshness');
+  const verifiedFreshness = latestVerifiedSnap ? deriveAudienceFreshness(latestVerifiedSnap) : null;
+  const followerCountText = latestVerifiedSnap
+    ? `${Number(latestVerifiedSnap.followers).toLocaleString()} followers`
+    : (channel.follower_count > 0 ? `${Number(channel.follower_count).toLocaleString()} followers` : 'Followers not verified');
+  const followers = followerCountText;
   const isOwner = !!(actor && internal && internal.owner_id === actor.user.id);
   const hasVerifiedOwner = !!internal?.owner_id && channel.is_verified;
 
@@ -113,9 +125,10 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
                     ><BadgeCheck className="h-3.5 w-3.5" /> Official</span>
                   ) : channel.is_verified && (
                     <span
-                      title="WaveLead has verified ownership or control of this channel listing. This is not WhatsApp's own verification mark."
+                      data-testid="owner-verified-badge"
+                      title="The account owner of this listing has been verified by WaveLead. This confirms ownership only \u2014 not follower count. Follower counts are shown only when the owner has submitted evidence that admins have verified."
                       className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full"
-                    ><ShieldCheck className="h-3.5 w-3.5" /> Verified</span>
+                    ><ShieldCheck className="h-3.5 w-3.5" /> Owner Verified</span>
                   )}
                   {channel.is_featured && <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full"><Sparkles className="h-3.5 w-3.5" /> Featured</span>}
                 </div>
@@ -158,9 +171,16 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
         </section>
 
         <section className="container py-8 grid gap-6 md:grid-cols-3">
-          <Stat label="Reach" value={followers} icon={<Users className="h-4 w-4" />} />
-          <Stat label="Country" value={country ? `${country.flag} ${country.name}` : channel.country_code || '—'} icon={null} />
-          <Stat label="Category" value={category?.name || '—'} icon={null} />
+          <Stat
+            label="Reach"
+            value={followers}
+            icon={<Users className="h-4 w-4" />}
+            sub={verifiedFreshness ? verifiedFreshness.label : (latestVerifiedSnap ? null : (channel.follower_count > 0 ? null : 'Owner has not submitted follower evidence yet.'))}
+            subTone={verifiedFreshness ? (verifiedFreshness.level === 'fresh' ? 'ok' : verifiedFreshness.level === 'aging' ? 'muted' : 'warn') : 'muted'}
+            testId="reach-stat"
+          />
+          <Stat label="Country" value={country ? `${country.flag} ${country.name}` : channel.country_code || '\u2014'} icon={null} />
+          <Stat label="Category" value={category?.name || '\u2014'} icon={null} />
         </section>
 
         {publicRateCard && publicRateCard.packages.length > 0 && (
@@ -225,11 +245,13 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
   );
 }
 
-function Stat({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
+function Stat({ label, value, icon, sub, subTone, testId }: { label: string; value: string; icon: React.ReactNode; sub?: string | null; subTone?: 'ok' | 'muted' | 'warn'; testId?: string }) {
+  const toneClass = subTone === 'warn' ? 'text-amber-700' : subTone === 'ok' ? 'text-emerald-700' : 'text-muted-foreground';
   return (
-    <div className="wh-card p-4">
+    <div className="wh-card p-4" data-testid={testId}>
       <div className="text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">{icon}{label}</div>
       <div className="mt-1 font-semibold">{value}</div>
+      {sub && <div className={`mt-1 text-xs ${toneClass}`} data-testid={testId ? `${testId}-sub` : undefined}>{sub}</div>}
     </div>
   );
 }

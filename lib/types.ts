@@ -1224,3 +1224,57 @@ export interface OwnerPayoutMethod {
   updated_at: Date;
 }
 
+// -------- M11-Batch2A: Follower Evidence (owner-submitted, admin-verified) --------
+// A moderation-backed alternative to WhatsApp scraping. Public profiles show
+// only the latest VERIFIED snapshot with freshness derived at read time from
+// (evidence_date ?? reported_at). Records are append-only:
+//   pending → verified   (immutable)
+//   pending → rejected   (immutable; owner must submit a new one)
+//   pending → superseded (owner replaced their own pending submission)
+export type AudienceSnapshotStatus = 'pending' | 'verified' | 'rejected' | 'superseded';
+export type AudienceSnapshotSource = 'owner_evidence';
+
+export interface AudienceEvidenceAttachment {
+  provider: 'uploadthing';
+  storage_key: string;
+  url: string;
+  mime_type: 'image/jpeg' | 'image/png' | 'image/webp';
+  file_name_safe: string;
+  size_bytes: number;
+  uploaded_at: string;                          // ISO from onUploadComplete
+}
+
+export const AUDIENCE_REJECTION_REASONS = [
+  'illegible',
+  'watermark_missing',
+  'suspected_edit',
+  'wrong_channel',
+  'stale_evidence',
+  'inconsistent_count',
+  'insufficient_evidence',
+  'other',
+] as const;
+export type AudienceRejectionReason = (typeof AUDIENCE_REJECTION_REASONS)[number];
+
+export interface ChannelAudienceSnapshot {
+  id: string;
+  channel_id: string;
+  followers: number;                            // integer ≥ 0
+  source: AudienceSnapshotSource;               // always 'owner_evidence' in Batch 2A
+  evidence_attachment: AudienceEvidenceAttachment;
+  evidence_date: Date | null;                   // date represented by the evidence
+  reported_at: Date;                            // when WaveLead received it
+  reported_by_user_id: string;
+  submission_note: string | null;               // owner-provided context
+  status: AudienceSnapshotStatus;
+  reviewed_at: Date | null;                     // set when admin verifies OR rejects
+  verified_at: Date | null;                     // set only on verify
+  verified_by_user_id: string | null;
+  rejection_reason: AudienceRejectionReason | null;  // shown to owner
+  review_note: string | null;                   // admin-internal only
+  superseded_by_snapshot_id: string | null;     // append-only chain when replaced
+  created_at: Date;
+  updated_at: Date;
+}
+
+

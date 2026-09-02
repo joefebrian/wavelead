@@ -402,6 +402,7 @@ frontend_m02:
 
 test_plan:
   current_focus:
+    - "M11-Batch2A — Follower Evidence (owner-submitted, admin-verified snapshots + Owner Verified badge rename)"
     - "M03.7 FINAL HARDENING — Ownership Verification Patch (assigned+unverified state; no-claim admin verification; takeover protection)"
     - "M05.0 FINAL SYNC — /api/health must return git commit SHA (11e3105)"
     - "M05.0 POST /api/channels/enrich smoke tests (SSRF, duplicate, new, cache, sensitive-field firewall)"
@@ -412,6 +413,70 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+# ---------- M11 BATCH 2A — FOLLOWER EVIDENCE ----------
+backend_m11_batch2a:
+  - task: "M11-Batch2A Follower-evidence snapshots (owner submit / admin verify / reject / supersede)"
+    implemented: true
+    working: true
+    file: "lib/services/audienceSnapshotService.ts, lib/repositories/audienceSnapshotRepo.ts, lib/validation/audienceSnapshotSchema.ts, lib/utils/audienceFreshness.ts, lib/db/collections.ts, lib/db/indexes.ts, lib/types.ts, app/api/[[...path]]/route.ts, app/api/uploadthing/core.ts, tests/m11_batch2a_follower_evidence.test.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Implemented full owner-evidence lifecycle. Collection
+          `channel_audience_snapshots` is append-only with a partial-unique
+          index enforcing at most ONE active pending per channel.
+          Statuses: pending → verified (immutable) / rejected (immutable)
+                   pending → superseded (when owner replaces their pending).
+          Endpoints:
+            POST /api/owner/channels/:id/audience-snapshots  (owner-only)
+            GET  /api/owner/channels/:id/audience-snapshots  (owner history)
+            GET  /api/admin/audience-snapshots               (moderator+ queue, pending only)
+            GET  /api/admin/audience-snapshots/:id           (moderator+ detail)
+            POST /api/admin/audience-snapshots/:id/verify    (moderator+; sets verified_at, verified_by, reviewed_at)
+            POST /api/admin/audience-snapshots/:id/reject    (moderator+; rejection_reason + optional admin-only review_note)
+          UploadThing route `channelFollowerEvidence` accepts 1 JPEG/PNG/WebP
+          image ≤ 5 MB, ownership-gated server-side.
+          Public /channel/[slug]:
+            • Renamed "Verified" badge → "Owner Verified" with clarifying tooltip
+              stating ownership only, NOT follower count.
+            • Reach card now shows latest VERIFIED snapshot count + freshness
+              label ("Updated Sep 3, 2026", with "· 34 days ago" / "· Stale"
+              / "· Outdated" qualifiers). Falls back to "Followers not verified"
+              when no verified snapshot exists.
+          Owner dashboard `/dashboard/channels/[id]` now has a FollowerEvidenceCard
+          with UploadThing screenshot upload, follower count, optional
+          evidence_date, optional submission_note, plus submission history.
+          Admin nav includes a "Follower Evidence" tab wired to the new queue.
+          Test file `tests/m11_batch2a_follower_evidence.test.ts` — 6/6 PASS
+          (owner submit, non-owner denial, replace/supersede, admin verify + immutability,
+          admin reject with reason, freshness classifier).
+          Regression: m11_batch1_pricing_p2p + m03 suites still fully pass (26/26).
+          NO WhatsApp scraping. NO PayPal activation. NO cookie tracking.
+
+frontend_m11_batch2a:
+  - task: "M11-Batch2A Owner dashboard follower-evidence card + admin queue + public badge rename"
+    implemented: true
+    working: "NA"
+    file: "app/dashboard/channels/[id]/FollowerEvidenceCard.tsx, app/dashboard/channels/[id]/page.tsx, app/admin/audience-snapshots/page.tsx, app/admin/audience-snapshots/[id]/page.tsx, app/admin/audience-snapshots/[id]/ReviewActions.tsx, components/layout/AdminNav.tsx, app/channel/[slug]/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Owner sees a "Follower Evidence" card on their channel dashboard
+          with upload dropzone, current followers input, optional evidence
+          date, optional note, and full submission history including
+          rejection reasons. Admin sees a new "Follower Evidence" tab in
+          AdminNav → list + detail with Verify / Reject actions. Public
+          profile badge renamed to "Owner Verified" and Reach stat now
+          renders freshness under the count. Not yet browser-verified.
 
 # ---------- MILESTONE 04 (Owner Analytics & Growth Intelligence) ----------
 backend_m04:
