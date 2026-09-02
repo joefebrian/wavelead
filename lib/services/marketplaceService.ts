@@ -273,6 +273,126 @@ export function assertSafeHttpUrl(u: string, label = 'URL'): string {
   return parsed.toString();
 }
 
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Sponsorship Pipeline (presentation-layer only)
+// ---------------------------------------------------------------------------
+// NEVER a new MarketplaceOrder status. NEVER a second sponsorship data model.
+// This is a pure projection over existing orders.
+export const PIPELINE_STAGES = ['NEW', 'ACCEPTED', 'READY_TO_WORK', 'IN_PROGRESS', 'IN_REVIEW', 'COMPLETED'] as const;
+export type PipelineStage = (typeof PIPELINE_STAGES)[number];
+
+export interface PipelineCard {
+  id: string;
+  stage: PipelineStage;
+  status: MarketplaceOrder['status'];
+  brand_company: string;
+  channel_slug: string;
+  channel_name: string;
+  package_name: string;
+  gross_minor: number | null;
+  owner_earnings_minor: number | null;
+  currency: 'USD';
+  created_at: Date;
+  expected_delivery_at: Date | null;
+  last_activity_at: Date | null;
+  needs_attention: boolean;
+  needs_attention_reason: string | null;
+  cta_label: string;
+  cta_href: string;
+}
+
+/**
+ * Map canonical MarketplaceOrder.status → operational pipeline stage.
+ * Returns `null` for terminal-but-inactive states we deliberately exclude
+ * from the pipeline (cancelled / owner_rejected).
+ */
+export function statusToPipelineStage(status: MarketplaceOrder['status']): PipelineStage | null {
+  switch (status) {
+    case 'requested':                return 'NEW';
+    case 'owner_accepted':
+    case 'awaiting_payment':         return 'ACCEPTED';
+    case 'paid':                     return 'READY_TO_WORK';
+    case 'in_progress':
+    case 'revision_requested':       return 'IN_PROGRESS';
+    case 'submitted_for_review':     return 'IN_REVIEW';
+    case 'completed':                return 'COMPLETED';
+    case 'cancelled':
+    case 'owner_rejected':
+    default:                         return null;
+  }
+}
+
+/**
+ * Purely time-derived "Needs Attention" indicator. No cron, no notification
+ * infra — just simple staleness thresholds against existing timestamps.
+ */
+function deriveAttention(
+  o: MarketplaceOrder,
+  stage: PipelineStage,
+  nowMs: number,
+): { needs_attention: boolean; reason: string | null } {
+  const hoursSince = (d: Date | null | undefined): number | null =>
+    d ? (nowMs - new Date(d).getTime()) / (1000 * 60 * 60) : null;
+
+  if (stage === 'NEW') {
+    const h = hoursSince(o.created_at);
+    if (h !== null && h >= 24) return { needs_attention: true, reason: 'New request — respond' };
+  }
+  if (stage === 'ACCEPTED') {
+    const h = hoursSince(o.accepted_at || o.created_at);
+    if (h !== null && h >= 72) return { needs_attention: true, reason: 'Awaiting brand payment' };
+  }
+  if (stage === 'READY_TO_WORK') {
+    const h = hoursSince(o.paid_at);
+    if (h !== null && h >= 24) return { needs_attention: true, reason: 'Start work' };
+  }
+  if (stage === 'IN_PROGRESS') {
+    if (o.status === 'revision_requested') return { needs_attention: true, reason: 'Revision requested' };
+    const days = o.snapshot?.estimated_delivery_days ?? null;
+    if (days && o.paid_at) {
+      const due = new Date(new Date(o.paid_at).getTime() + days * 24 * 60 * 60 * 1000).getTime();
+      if (nowMs >= due) return { needs_attention: true, reason: 'Delivery overdue' };
+      if (due - nowMs <= 24 * 60 * 60 * 1000) return { needs_attention: true, reason: 'Delivery due soon' };
+    }
+  }
+  if (stage === 'IN_REVIEW') {
+    const h = hoursSince(o.submitted_for_review_at || o.submitted_at);
+    if (h !== null && h >= 72) return { needs_attention: true, reason: 'Buyer review pending' };
+  }
+  return { needs_attention: false, reason: null };
+}
+
+/**
+ * Deep-link a pipeline card to an EXISTING canonical action surface. Never
+ * duplicates action logic in the kanban itself.
+ */
+function ctaForStage(stage: PipelineStage, status: MarketplaceOrder['status'], channelSlug: string | null): { label: string; href: string } {
+  const chanUrl = channelSlug ? `/dashboard/channels/${channelSlug}/monetization` : '/dashboard/channels';
+  switch (stage) {
+    case 'NEW':            return { label: 'Review Request', href: chanUrl };
+    case 'ACCEPTED':       return { label: 'View Order',    href: chanUrl };
+    case 'READY_TO_WORK':  return { label: 'Start Work',    href: chanUrl };
+    case 'IN_PROGRESS':    return {
+      label: status === 'revision_requested' ? 'Review Revision' : 'Submit Delivery',
+      href:  chanUrl,
+    };
+    case 'IN_REVIEW':      return { label: 'View Delivery', href: chanUrl };
+    case 'COMPLETED':      return { label: 'View Earnings', href: '/dashboard/earnings' };
+    default:               return { label: 'View',          href: chanUrl };
+  }
+}
+
+function mostRecentTs(candidates: Array<Date | string | null | undefined>): Date | null {
+  let best: number | null = null;
+  for (const c of candidates) {
+    if (!c) continue;
+    const t = new Date(c).getTime();
+    if (Number.isFinite(t) && (best === null || t > best)) best = t;
+  }
+  return best === null ? null : new Date(best);
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -1706,6 +1826,142 @@ export const marketplaceService = {
         in_progress_count: inProgressCount,
       },
       trend,
+    };
+  },
+
+  /**
+   * Phase 3 — Pro-only Sponsorship Pipeline.
+   *
+   * Purely a presentation-layer projection over the owner's EXISTING
+   * marketplace_orders. NEVER introduces a new order status or a second data
+   * model. Server-gated by the `sponsorship_pipeline_intelligence` entitlement;
+   * admin / super_admin bypass through the central resolver.
+   *
+   * Security: `marketplaceOrderRepo.listByOwner(actor.user.id)` scopes rows to
+   * the caller's owner_user_id — an owner can NEVER see another owner's
+   * pipeline through this endpoint.
+   */
+  async ownerSponsorshipPipeline(
+    actor: Actor | null,
+    filters: { channel?: string; stage?: PipelineStage; attention?: boolean } = {},
+  ): Promise<{
+    plan: 'pro' | 'enterprise' | 'admin_bypass';
+    metrics: {
+      active_opportunities: number;
+      awaiting_your_action: number;
+      in_progress: number;
+      awaiting_brand_review: number;
+    };
+    channels: Array<{ slug: string; name: string }>;
+    stages: readonly PipelineStage[];
+    cards: PipelineCard[];
+  }> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const { requireEntitlement, resolveEntitlements } = await import('../entitlements');
+    requireEntitlement(actor, 'sponsorship_pipeline_intelligence');
+    const ent = resolveEntitlements(actor);
+    const planLabel: 'pro' | 'enterprise' | 'admin_bypass' =
+      hasAtLeastRole(actor.user, ROLES.ADMIN) ? 'admin_bypass'
+      : ent.plan === 'enterprise' ? 'enterprise'
+      : 'pro';
+
+    // Owner-scoped fetch — data isolation happens here.
+    const orders = await marketplaceOrderRepo.listByOwner(actor.user.id);
+    const now = Date.now();
+
+    // Build channel filter list from the actor's own orders, then apply optional filters.
+    const channelMap = new Map<string, string>();
+    for (const o of orders) {
+      const slug = o.snapshot?.channel_slug || o.channel_slug;
+      const name = o.snapshot?.channel_name || slug;
+      if (slug) channelMap.set(slug, name);
+    }
+    const channels = Array.from(channelMap.entries()).map(([slug, name]) => ({ slug, name }));
+
+    const cards: PipelineCard[] = [];
+    let awaitingYourAction = 0;
+    let inProgressCount = 0;
+    let awaitingBrandReview = 0;
+
+    for (const o of orders) {
+      const stage = statusToPipelineStage(o.status);
+      if (!stage) continue; // cancelled / owner_rejected → excluded
+
+      const slug = o.snapshot?.channel_slug || o.channel_slug;
+      if (filters.channel && slug !== filters.channel) continue;
+      if (filters.stage && stage !== filters.stage) continue;
+
+      // Needs-attention derived purely from existing timestamps.
+      const attention = deriveAttention(o, stage, now);
+
+      if (filters.attention && !attention.needs_attention) continue;
+
+      const packageName = o.snapshot?.package_name || 'Sponsorship';
+      const grossMinor = o.snapshot?.gross_price_minor ?? o.amount_received_minor ?? o.quoted_price_minor ?? null;
+
+      // Expected delivery: paid_at + estimated_delivery_days (from snapshot).
+      let expectedDeliveryAt: Date | null = null;
+      const days = o.snapshot?.estimated_delivery_days ?? null;
+      if (days && o.paid_at) {
+        expectedDeliveryAt = new Date(new Date(o.paid_at).getTime() + days * 24 * 60 * 60 * 1000);
+      }
+
+      // Last-activity uses the most recent lifecycle timestamp we can find.
+      const lastActivityAt = mostRecentTs([
+        o.updated_at, o.revision_requested_at, o.submitted_for_review_at,
+        o.started_at, o.paid_at, o.accepted_at, o.created_at,
+      ]);
+
+      // Contextual CTA — always LINKS to an existing canonical action page;
+      // never duplicates business logic here.
+      const cta = ctaForStage(stage, o.status, slug);
+
+      cards.push({
+        id: o.id,
+        stage,
+        status: o.status,
+        brand_company: o.brief.company_name,
+        channel_slug: slug,
+        channel_name: o.snapshot?.channel_name || slug,
+        package_name: packageName,
+        gross_minor: grossMinor,
+        owner_earnings_minor: o.owner_earnings_minor,
+        currency: 'USD',
+        created_at: o.created_at,
+        expected_delivery_at: expectedDeliveryAt,
+        last_activity_at: lastActivityAt,
+        needs_attention: attention.needs_attention,
+        needs_attention_reason: attention.reason,
+        cta_label: cta.label,
+        cta_href: cta.href,
+      });
+
+      // Metrics
+      if (stage === 'NEW' || stage === 'READY_TO_WORK' || o.status === 'revision_requested') awaitingYourAction += 1;
+      if (stage === 'IN_PROGRESS') inProgressCount += 1;
+      if (stage === 'IN_REVIEW') awaitingBrandReview += 1;
+    }
+
+    // Sort cards: needs_attention first, then oldest last_activity first (staleness).
+    cards.sort((a, b) => {
+      if (a.needs_attention !== b.needs_attention) return a.needs_attention ? -1 : 1;
+      const ta = a.last_activity_at ? new Date(a.last_activity_at).getTime() : 0;
+      const tb = b.last_activity_at ? new Date(b.last_activity_at).getTime() : 0;
+      return ta - tb;
+    });
+
+    const activeOpportunities = cards.length;
+    return {
+      plan: planLabel,
+      metrics: {
+        active_opportunities: activeOpportunities,
+        awaiting_your_action: awaitingYourAction,
+        in_progress: inProgressCount,
+        awaiting_brand_review: awaitingBrandReview,
+      },
+      channels,
+      stages: PIPELINE_STAGES,
+      cards,
     };
   },
 

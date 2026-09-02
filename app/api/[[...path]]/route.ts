@@ -1516,6 +1516,25 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const data = await marketplaceService.ownerRevenueIntelligence(actor);
       return applyCors(ok(data), request);
     }
+    // Phase 3 — Pro-only Sponsorship Pipeline.
+    // Presentation-layer projection over the owner's existing
+    // marketplace_orders. Server-gated; owner-scoped by
+    // marketplaceOrderRepo.listByOwner(actor.user.id).
+    if (path.length === 2 && path[0] === 'owner' && path[1] === 'sponsorship-pipeline' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const sp = new URL(request.url).searchParams;
+      const stageRaw = sp.get('stage');
+      const filters = {
+        channel: sp.get('channel') || undefined,
+        stage: (stageRaw && ['NEW', 'ACCEPTED', 'READY_TO_WORK', 'IN_PROGRESS', 'IN_REVIEW', 'COMPLETED'].includes(stageRaw))
+          ? (stageRaw as 'NEW' | 'ACCEPTED' | 'READY_TO_WORK' | 'IN_PROGRESS' | 'IN_REVIEW' | 'COMPLETED')
+          : undefined,
+        attention: sp.get('attention') === '1' || sp.get('attention') === 'true',
+      };
+      const data = await marketplaceService.ownerSponsorshipPipeline(actor, filters);
+      return applyCors(ok(data), request);
+    }
     // Owner payout method — read
     if (path.length === 2 && path[0] === 'owner' && path[1] === 'payout-method' && method === 'GET') {
       const { marketplaceService } = await import('@/lib/services/marketplaceService');
