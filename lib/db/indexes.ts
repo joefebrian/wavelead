@@ -227,5 +227,12 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { status: 1, created_at: -1 }, name: 'by_status_time' },
       { key: { marketplace_order_id: 1, created_at: -1 }, name: 'by_order_time' },
     ]),
+    // Phase B3.2 Gate C — Owner payout methods (PayPal recipient)
+    // At most ONE active method per owner — partial unique on is_active=true.
+    db.collection(COLLECTIONS.OWNER_PAYOUT_METHODS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { owner_user_id: 1, is_active: 1 }, unique: true, name: 'uniq_active_per_owner', partialFilterExpression: { is_active: true } },
+      { key: { paypal_email_normalized: 1 }, name: 'by_email' },
+    ]),
   ]);
 }

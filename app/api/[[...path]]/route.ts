@@ -1483,6 +1483,52 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const escalation = await marketplaceService.adminRejectEscalation(actor, path[3], body);
       return applyCors(ok({ escalation }), request);
     }
+    // ── Phase B3.2 Gate C — Owner Earnings + Payout Account ────────────────
+    // Owner earnings rollup
+    if (path.length === 2 && path[0] === 'owner' && path[1] === 'earnings' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const data = await marketplaceService.ownerListEarnings(actor);
+      return applyCors(ok(data), request);
+    }
+    // Owner payout method — read
+    if (path.length === 2 && path[0] === 'owner' && path[1] === 'payout-method' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const methodData = await marketplaceService.ownerGetPayoutMethod(actor);
+      return applyCors(ok({ method: methodData }), request);
+    }
+    // Owner payout method — upsert (creates new unverified row + returns dev verification code)
+    if (path.length === 2 && path[0] === 'owner' && path[1] === 'payout-method' && method === 'PUT') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      const result = await marketplaceService.ownerUpsertPayoutMethod(actor, body);
+      return applyCors(ok(result), request);
+    }
+    // Owner payout method — verify
+    if (path.length === 3 && path[0] === 'owner' && path[1] === 'payout-method' && path[2] === 'verify' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      const methodData = await marketplaceService.ownerVerifyPayoutMethod(actor, body);
+      return applyCors(ok({ method: methodData }), request);
+    }
+    // Owner: request payout on a completed order (no money sent)
+    if (path.length === 4 && path[0] === 'marketplace' && path[1] === 'orders' && path[3] === 'request-payout' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const order = await marketplaceService.ownerRequestPayout(actor, path[2]);
+      return applyCors(ok({ order }), request);
+    }
+    // Admin: list payout methods (masked)
+    if (path.length === 3 && path[0] === 'admin' && path[1] === 'marketplace' && path[2] === 'payout-methods' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const methods = await marketplaceService.adminListPayoutMethods(actor);
+      return applyCors(ok({ methods }), request);
+    }
     // Buyer: read a single order they own
     if (path.length === 3 && path[0] === 'marketplace' && path[1] === 'buyer' && method === 'GET' && path[2] !== 'orders') {
       // /marketplace/buyer/:orderId — only if this is not the list endpoint above

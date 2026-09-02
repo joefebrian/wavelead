@@ -1003,6 +1003,12 @@ export interface MarketplaceOrder {
   revision_requested_by?: string | null;       // buyer user id who last requested revision
   active_escalation_id?: string | null;        // FK → marketplace_delivery_escalations.id (open/under_review/more_evidence_required)
 
+  // ── B3.2 Gate C — owner earnings settlement + payout readiness ─────────
+  settlement_hold_hours?: number | null;        // captured at completion
+  payout_available_at?: Date | null;            // completed_at + settlement_hold_hours
+  payout_requested_at?: Date | null;            // set by ownerRequestPayout
+  payout_method_id?: string | null;             // FK → owner_payout_methods.id at time of request
+
   // ── B3 — PayPal Checkout safety ─────────────────────────────────────────
   // Which pathway produced the successful payment on this order. `null` until
   // paid; then `'manual'` (admin) or `'paypal'` (verified capture).
@@ -1051,7 +1057,9 @@ export type MarketplaceFinancialEventType =
   | 'DELIVERY_ESCALATED'
   | 'DELIVERY_MORE_EVIDENCE_REQUESTED'
   | 'DELIVERY_ESCALATION_REJECTED'
-  | 'DELIVERY_ADMIN_APPROVED';
+  | 'DELIVERY_ADMIN_APPROVED'
+  // ── B3.2 Gate C — owner payout request (readiness only; no money) ──────
+  | 'OWNER_PAYOUT_REQUESTED';
 
 export interface MarketplaceFinancialEvent {
   id: string;
@@ -1166,3 +1174,29 @@ export interface MarketplaceDeliveryEscalation {
   resolution_notes: string | null;
   is_test_fixture?: boolean;
 }
+
+// ============================================================
+// Phase B3.2 Gate C — Owner payout method (PayPal recipient)
+// ============================================================
+// The owner declares a PayPal payout email. WaveLead verifies the address
+// (email round-trip in production; short-lived verification code in the
+// current MVP) and stores it as the sole active method for the owner.
+// Actual money movement remains manual (Gate D will layer automated
+// PayPal Payouts on top of this same record).
+export type OwnerPayoutMethodType = 'paypal';
+
+export interface OwnerPayoutMethod {
+  id: string;
+  owner_user_id: string;
+  method: OwnerPayoutMethodType;
+  paypal_email_normalized: string;              // lowercase-trimmed for lookup + uniqueness
+  paypal_email_display: string;                 // as entered
+  is_active: boolean;                           // partial-unique on (owner_user_id, is_active=true)
+  verified_at: Date | null;                     // null → unverified
+  verification_code_hash: string | null;        // stored as HMAC-sha256(code, secret)
+  verification_sent_at: Date | null;
+  verification_attempts: number;                // rate-limit surface
+  created_at: Date;
+  updated_at: Date;
+}
+

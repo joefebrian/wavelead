@@ -11,6 +11,7 @@
 //   * UNKNOWN gateway fee ≠ ZERO gateway fee — see gateway-fee safety block.
 //
 import { v4 as uuidv4 } from 'uuid';
+import { createHmac, randomInt } from 'crypto';
 import { z } from 'zod';
 import { HttpError, hasAtLeastRole, ROLES } from '../auth/rbac';
 import { channelRepo } from '../repositories/channelRepo';
@@ -22,6 +23,7 @@ import {
   marketplaceOrderRepo,
   marketplaceOwnerPayoutRepo,
   marketplacePaymentAttemptRepo,
+  ownerPayoutMethodRepo,
 } from '../repositories/marketplaceRepo';
 import { computeSplit, OWNER_SHARE_BPS, PLATFORM_SHARE_BPS, assertSafeMoney } from '../utils/marketplaceMoney';
 import { getConfiguredOrigin } from '../utils/canonicalOrigin';
@@ -40,6 +42,7 @@ import type {
   MarketplacePaymentAttemptStatus,
   MarketplacePaymentMethod,
   OwnerPayableStatus,
+  OwnerPayoutMethod,
   RateCardPackage,
 } from '@/lib/types';
 import { MARKETPLACE_PACKAGE_TYPES, MARKETPLACE_PAYMENT_METHODS } from '@/lib/types';
@@ -139,6 +142,73 @@ export function getReviewSlaHours(): number {
   const n = raw ? Number(raw) : NaN;
   if (!Number.isFinite(n) || n <= 0 || n > 24 * 30) return 72;
   return Math.floor(n);
+}
+
+/**
+ * B3.2 Gate C — Settlement hold (hours) applied between order completion and
+ * payout availability. Configurable via env; defaults to 72h.
+ */
+export function getSettlementHoldHours(): number {
+  const raw = process.env.MARKETPLACE_SETTLEMENT_HOLD_HOURS;
+  const n = raw ? Number(raw) : NaN;
+  if (!Number.isFinite(n) || n < 0 || n > 24 * 30) return 72;
+  return Math.floor(n);
+}
+
+/**
+ * B3.2 Gate C — deterministically hash a verification code for storage.
+ * Uses HMAC-SHA256 with a server-side secret; the raw code is never
+ * persisted.
+ */
+function hashVerificationCode(code: string): string {
+  const secret = process.env.PAYOUT_METHOD_VERIFY_SECRET || process.env.SESSION_SECRET || 'wavelead-mvp-secret';
+  return createHmac('sha256', secret).update(code.trim()).digest('hex');
+}
+
+function generateVerificationCode(): string {
+  // 6-digit numeric code; leading-zero-safe.
+  return String(randomInt(0, 1_000_000)).padStart(6, '0');
+}
+
+function normalizeEmail(e: string): string {
+  return e.trim().toLowerCase();
+}
+
+function maskEmail(e: string): string {
+  const [local, domain] = e.split('@');
+  if (!local || !domain) return e;
+  if (local.length <= 2) return `${local[0] || '*'}***@${domain}`;
+  return `${local[0]}***${local[local.length - 1]}@${domain}`;
+}
+
+const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
+/**
+ * Public projection of a payout method — never expose the full email or
+ * verification hash beyond the method owner themselves.
+ */
+export interface OwnerPayoutMethodMasked {
+  id: string;
+  method: 'paypal';
+  paypal_email_masked: string;
+  is_active: boolean;
+  is_verified: boolean;
+  verified_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export function maskPayoutMethod(m: OwnerPayoutMethod): OwnerPayoutMethodMasked {
+  return {
+    id: m.id,
+    method: m.method,
+    paypal_email_masked: maskEmail(m.paypal_email_display),
+    is_active: m.is_active,
+    is_verified: !!m.verified_at,
+    verified_at: m.verified_at,
+    created_at: m.created_at,
+    updated_at: m.updated_at,
+  };
 }
 
 /**
@@ -1144,6 +1214,292 @@ export const marketplaceService = {
     return marketplaceDeliveryEscalationRepo.listAdmin(filter);
   },
 
+  // ==========================================================================
+  // B3.2 Gate C — Owner earnings + payout account
+  // ==========================================================================
+
+  /**
+   * Upsert (create-or-replace) an owner's PayPal payout email. The address
+   * is stored unverified and a short-lived numeric verification code is
+   * returned so the owner can prove control of the inbox. Repeating the
+   * same address is idempotent: it does NOT invalidate an already-verified
+   * method. Setting a DIFFERENT address atomically deactivates any
+   * previously-active method and creates a new unverified row.
+   *
+   * NOTE: In production this endpoint MUST also trigger an actual email
+   * delivery of the verification code. For the current MVP, the response
+   * body includes the code so the owner can enter it back into the UI —
+   * documented clearly to make the email-delivery TODO explicit.
+   */
+  async ownerUpsertPayoutMethod(actor: Actor | null, input: unknown): Promise<{
+    method: OwnerPayoutMethodMasked;
+    verification_required: boolean;
+    verification_code_dev?: string;   // only present when a new code was generated
+    email_delivery_pending?: true;    // marker for the eventual production email hook
+  }> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const schema = z.object({ paypal_email: z.string().trim().min(3).max(320) });
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) throw new HttpError(400, 'paypal_email is required');
+    const raw = parsed.data.paypal_email;
+    if (!EMAIL_RE.test(raw)) throw new HttpError(400, 'paypal_email is not a valid email address');
+    const normalized = normalizeEmail(raw);
+
+    const now = new Date();
+    const existing = await ownerPayoutMethodRepo.findActiveByOwner(actor.user.id);
+
+    // Idempotent same-email path.
+    if (existing && existing.paypal_email_normalized === normalized) {
+      if (existing.verified_at) {
+        return { method: maskPayoutMethod(existing), verification_required: false };
+      }
+      const code = await this._reissueVerificationCode(existing.id);
+      return {
+        method: maskPayoutMethod(existing),
+        verification_required: true,
+        verification_code_dev: code,
+        email_delivery_pending: true,
+      };
+    }
+
+    // New/different email: deactivate old, insert new (unverified).
+    if (existing) {
+      await ownerPayoutMethodRepo.deactivateActive(actor.user.id);
+    }
+    const code = generateVerificationCode();
+    const method: OwnerPayoutMethod = {
+      id: uuidv4(),
+      owner_user_id: actor.user.id,
+      method: 'paypal',
+      paypal_email_normalized: normalized,
+      paypal_email_display: raw,
+      is_active: true,
+      verified_at: null,
+      verification_code_hash: hashVerificationCode(code),
+      verification_sent_at: now,
+      verification_attempts: 0,
+      created_at: now,
+      updated_at: now,
+    };
+    await ownerPayoutMethodRepo.insert(method);
+    return {
+      method: maskPayoutMethod(method),
+      verification_required: true,
+      verification_code_dev: code,
+      email_delivery_pending: true,
+    };
+  },
+
+  /**
+   * Internal — regenerate a verification code for an existing unverified
+   * method (returned only when the caller is the owner of that method).
+   */
+  async _reissueVerificationCode(methodId: string): Promise<string> {
+    const code = generateVerificationCode();
+    await ownerPayoutMethodRepo.update(methodId, {
+      verification_code_hash: hashVerificationCode(code),
+      verification_sent_at: new Date(),
+    });
+    return code;
+  },
+
+  /**
+   * Owner verifies control of the declared PayPal email by supplying the
+   * numeric code they received. Rejects wrong codes and rate-limits by
+   * bumping `verification_attempts`.
+   */
+  async ownerVerifyPayoutMethod(actor: Actor | null, input: unknown): Promise<OwnerPayoutMethodMasked> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const schema = z.object({ verification_code: z.string().trim().min(4).max(12) });
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) throw new HttpError(400, 'verification_code is required');
+    const code = parsed.data.verification_code;
+
+    const m = await ownerPayoutMethodRepo.findActiveByOwner(actor.user.id);
+    if (!m) throw new HttpError(404, 'No active payout method to verify');
+    if (m.verified_at) return maskPayoutMethod(m);
+    if (m.verification_attempts >= 8) {
+      throw new HttpError(429, 'Too many attempts — request a new verification code');
+    }
+    const provided = hashVerificationCode(code);
+    if (provided !== m.verification_code_hash) {
+      await ownerPayoutMethodRepo.update(m.id, { verification_attempts: m.verification_attempts + 1 });
+      throw new HttpError(400, 'Verification code is incorrect');
+    }
+    const updated = await ownerPayoutMethodRepo.update(m.id, {
+      verified_at: new Date(),
+      verification_code_hash: null,
+    });
+    return maskPayoutMethod(updated);
+  },
+
+  /**
+   * Owner reads their currently-active payout method (masked).
+   */
+  async ownerGetPayoutMethod(actor: Actor | null): Promise<OwnerPayoutMethodMasked | null> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const m = await ownerPayoutMethodRepo.findActiveByOwner(actor.user.id);
+    return m ? maskPayoutMethod(m) : null;
+  },
+
+  /**
+   * Owner earnings rollup — buckets the owner's completed orders into
+   * three settlement-aware groups and includes per-order history rows.
+   *
+   *   pending_earnings  = eligible_for_payout AND payout_available_at > now
+   *   available_payout  = eligible_for_payout AND payout_available_at <= now
+   *   paid_out          = owner_payable_status='paid_out'
+   *
+   * Blocked / manual_reconciliation_required orders are surfaced separately
+   * so the owner sees WHY certain earnings are held.
+   */
+  async ownerListEarnings(actor: Actor | null): Promise<{
+    settlement_hold_hours: number;
+    payout_method: OwnerPayoutMethodMasked | null;
+    totals: {
+      pending_earnings_minor: number;
+      available_payout_minor: number;
+      paid_out_minor: number;
+      blocked_minor: number;
+      currency: 'USD';
+    };
+    orders: Array<{
+      id: string;
+      channel_slug: string;
+      buyer_company: string;
+      completed_at: Date | null;
+      payout_available_at: Date | null;
+      payout_requested_at: Date | null;
+      owner_earnings_minor: number | null;
+      owner_payable_status: OwnerPayableStatus;
+      bucket: 'pending' | 'available' | 'paid_out' | 'blocked';
+    }>;
+  }> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const orders = await marketplaceOrderRepo.listByOwner(actor.user.id);
+    const nowMs = Date.now();
+    let pending = 0, available = 0, paidOut = 0, blocked = 0;
+    const rows = orders
+      .filter((o) => ['completed', 'paid', 'in_progress', 'submitted_for_review', 'revision_requested'].includes(o.status))
+      .map((o) => {
+        const amt = o.owner_earnings_minor ?? 0;
+        let bucket: 'pending' | 'available' | 'paid_out' | 'blocked';
+        if (o.owner_payable_status === 'paid_out') { paidOut += amt; bucket = 'paid_out'; }
+        else if (o.owner_payable_status === 'eligible_for_payout') {
+          const availableAt = o.payout_available_at ? new Date(o.payout_available_at).getTime() : 0;
+          if (availableAt && availableAt > nowMs) { pending += amt; bucket = 'pending'; }
+          else { available += amt; bucket = 'available'; }
+        }
+        else if (o.owner_payable_status === 'manual_reconciliation_required' || o.owner_payable_status === 'blocked_fee_reconciliation') {
+          blocked += amt; bucket = 'blocked';
+        }
+        else {
+          pending += amt; bucket = 'pending';
+        }
+        return {
+          id: o.id,
+          channel_slug: o.snapshot?.channel_slug || o.channel_slug,
+          buyer_company: o.brief.company_name,
+          completed_at: o.completed_at,
+          payout_available_at: o.payout_available_at || null,
+          payout_requested_at: o.payout_requested_at || null,
+          owner_earnings_minor: o.owner_earnings_minor,
+          owner_payable_status: o.owner_payable_status,
+          bucket,
+        };
+      });
+    const method = await ownerPayoutMethodRepo.findActiveByOwner(actor.user.id);
+    return {
+      settlement_hold_hours: getSettlementHoldHours(),
+      payout_method: method ? maskPayoutMethod(method) : null,
+      totals: {
+        pending_earnings_minor: pending,
+        available_payout_minor: available,
+        paid_out_minor: paidOut,
+        blocked_minor: blocked,
+        currency: 'USD',
+      },
+      orders: rows,
+    };
+  },
+
+  /**
+   * Owner requests an external payout for a specific completed order.
+   * Sets a `payout_requested_at` marker and appends an
+   * `OWNER_PAYOUT_REQUESTED` audit event. Does NOT send money. Manual
+   * external payout via `adminRecordPayout` remains the fulfillment
+   * pathway until Gate D lands automated PayPal Payouts.
+   *
+   * Preconditions:
+   *   • owner_payable_status = 'eligible_for_payout'
+   *   • payout_available_at ≤ now (settlement hold elapsed)
+   *   • not already paid_out
+   *   • not payment_reconciliation_required
+   *   • owner has a verified active payout method
+   */
+  async ownerRequestPayout(actor: Actor | null, orderId: string): Promise<MarketplaceOrder> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const order = await marketplaceOrderRepo.findById(orderId);
+    if (!order) throw new HttpError(404, 'Order not found');
+    if (order.owner_user_id !== actor.user.id) throw new HttpError(403, 'Only the channel owner may request a payout');
+    if (order.payment_reconciliation_required) {
+      throw new HttpError(409, 'Cannot request payout: payment reconciliation required for this order');
+    }
+    if (order.owner_payable_status === 'paid_out') {
+      throw new HttpError(409, 'This order is already paid out');
+    }
+    if (order.owner_payable_status !== 'eligible_for_payout') {
+      throw new HttpError(400, `Cannot request payout: owner payable status is '${order.owner_payable_status}'`);
+    }
+    const availableAtMs = order.payout_available_at ? new Date(order.payout_available_at).getTime() : Infinity;
+    if (availableAtMs > Date.now()) {
+      throw new HttpError(400, `Cannot request payout yet: settlement hold has not elapsed (${getSettlementHoldHours()}h)`);
+    }
+    const method = await ownerPayoutMethodRepo.findActiveByOwner(actor.user.id);
+    if (!method || !method.verified_at) {
+      throw new HttpError(400, 'Cannot request payout: a verified PayPal payout account is required');
+    }
+
+    // Idempotent: repeated calls just refresh the timestamp; audit event
+    // is appended exactly once (guarded by a per-order lookup).
+    const events = await marketplaceFinancialEventRepo.listByOrder(order.id);
+    const alreadyRequested = events.some((e) => e.event_type === 'OWNER_PAYOUT_REQUESTED');
+    const now = new Date();
+    const updated = await marketplaceOrderRepo.update(order.id, {
+      payout_requested_at: now,
+      payout_method_id: method.id,
+    });
+    if (!alreadyRequested) {
+      try {
+        await marketplaceFinancialEventRepo.append({
+          order_id: order.id,
+          event_type: 'OWNER_PAYOUT_REQUESTED',
+          currency: 'USD',
+          gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
+          gateway_fee_minor: order.gateway_fee_minor,
+          net_amount_minor: order.net_transaction_value_minor,
+          owner_earnings_minor: order.owner_earnings_minor,
+          wavelead_commission_minor: order.wavelead_commission_minor,
+          payment_reference_normalized: order.payment_reference_normalized,
+          actor_user_id: actor.user.id,
+          metadata: { payout_method_id: method.id, method: 'paypal' },
+        });
+      } catch { /* audit-only */ }
+    }
+    return updated;
+  },
+
+  /**
+   * Admin — list owner payout methods (masked). Never exposes verification
+   * hashes or unmasked emails.
+   */
+  async adminListPayoutMethods(actor: Actor | null): Promise<OwnerPayoutMethodMasked[]> {
+    requireAdmin(actor);
+    const list = await ownerPayoutMethodRepo.listAdmin();
+    return list.map(maskPayoutMethod);
+  },
+
+
 
   /**
    * B2 — admin/super_admin completion override. Requires a note.
@@ -1181,6 +1537,11 @@ export const marketplaceService = {
   ): Promise<MarketplaceOrder> {
     const now = new Date();
     const nextPayable = deriveOwnerPayableAfterCompletion(order);
+    // B3.2 Gate C — capture the settlement hold at completion.
+    const holdHours = getSettlementHoldHours();
+    const payoutAvailableAt: Date | null = nextPayable === 'eligible_for_payout'
+      ? new Date(now.getTime() + holdHours * 3600 * 1000)
+      : null;
     const updated = await marketplaceOrderRepo.update(order.id, {
       status: 'completed',
       completed_at: now,
@@ -1188,6 +1549,8 @@ export const marketplaceService = {
       completion_source: who.completion_source,
       completion_note: who.completion_note,
       owner_payable_status: nextPayable,
+      settlement_hold_hours: holdHours,
+      payout_available_at: payoutAvailableAt,
     });
     // Append financial events (append-only). Do not mutate.
     await marketplaceFinancialEventRepo.append({

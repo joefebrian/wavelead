@@ -13,6 +13,7 @@ import type {
   MarketplaceOwnerPayout,
   MarketplacePaymentAttempt,
   MarketplacePaymentAttemptStatus,
+  OwnerPayoutMethod,
 } from '@/lib/types';
 
 export const channelRateCardRepo = {
@@ -249,3 +250,45 @@ export const marketplaceDeliveryEscalationRepo = {
     return stripId(res as unknown as MarketplaceDeliveryEscalation | null);
   },
 };
+
+// ============================================================
+// Phase B3.2 Gate C — Owner payout methods (PayPal recipient)
+// ============================================================
+export const ownerPayoutMethodRepo = {
+  async insert(m: OwnerPayoutMethod): Promise<OwnerPayoutMethod> {
+    const c = await getCollection<OwnerPayoutMethod>(COLLECTIONS.OWNER_PAYOUT_METHODS);
+    await c.insertOne(m);
+    return stripId(m) as OwnerPayoutMethod;
+  },
+  async findById(id: string): Promise<OwnerPayoutMethod | null> {
+    const c = await getCollection<OwnerPayoutMethod>(COLLECTIONS.OWNER_PAYOUT_METHODS);
+    return stripId(await c.findOne({ id })) as OwnerPayoutMethod | null;
+  },
+  async findActiveByOwner(owner_user_id: string): Promise<OwnerPayoutMethod | null> {
+    const c = await getCollection<OwnerPayoutMethod>(COLLECTIONS.OWNER_PAYOUT_METHODS);
+    return stripId(await c.findOne({ owner_user_id, is_active: true })) as OwnerPayoutMethod | null;
+  },
+  async update(id: string, patch: Partial<OwnerPayoutMethod>): Promise<OwnerPayoutMethod> {
+    const c = await getCollection<OwnerPayoutMethod>(COLLECTIONS.OWNER_PAYOUT_METHODS);
+    await c.updateOne({ id }, { $set: { ...patch, updated_at: new Date() } });
+    return stripId(await c.findOne({ id })) as OwnerPayoutMethod;
+  },
+  /**
+   * Atomically deactivate the currently-active method for this owner —
+   * used before inserting a new active row (email change).
+   */
+  async deactivateActive(owner_user_id: string): Promise<OwnerPayoutMethod | null> {
+    const c = await getCollection<OwnerPayoutMethod>(COLLECTIONS.OWNER_PAYOUT_METHODS);
+    const res = await c.findOneAndUpdate(
+      { owner_user_id, is_active: true },
+      { $set: { is_active: false, updated_at: new Date() } },
+      { returnDocument: 'after' },
+    );
+    return stripId(res as unknown as OwnerPayoutMethod | null);
+  },
+  async listAdmin(): Promise<OwnerPayoutMethod[]> {
+    const c = await getCollection<OwnerPayoutMethod>(COLLECTIONS.OWNER_PAYOUT_METHODS);
+    return stripIds(await c.find({}).sort({ created_at: -1 }).limit(500).toArray()) as OwnerPayoutMethod[];
+  },
+};
+
