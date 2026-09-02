@@ -1547,6 +1547,169 @@ export const marketplaceService = {
   },
 
   /**
+   * Phase 3 — Pro-only Revenue Intelligence.
+   *
+   * Aggregates over the owner's existing marketplace_orders — never invents a
+   * new data source. Server-gated by `revenue_intelligence` entitlement; the
+   * central resolver bypasses admin/super_admin automatically.
+   *
+   * Metrics returned are all USD minor units unless labeled `_count` /
+   * `_rate` / `_avg_minor`. Nulls in fee-dependent fields (gateway_fee_minor
+   * before Gate A reconciliation) are excluded from sums — we never treat
+   * "unknown" as "zero" for financial rollups.
+   */
+  async ownerRevenueIntelligence(actor: Actor | null): Promise<{
+    plan: 'pro' | 'enterprise' | 'admin_bypass';
+    currency: 'USD';
+    totals: {
+      gross_revenue_minor: number;
+      gateway_fees_minor: number;
+      net_transaction_value_minor: number;
+      owner_earnings_minor: number;
+      platform_commission_minor: number;
+      average_sponsorship_value_minor: number;
+      orders_with_payment_count: number;
+      fee_reconciled_orders_count: number;
+    };
+    conversion: {
+      requests_count: number;
+      accepted_count: number;
+      paid_count: number;
+      completed_count: number;
+      acceptance_rate: number;   // accepted / requests
+      payment_rate: number;      // paid / accepted
+      completion_rate: number;   // completed / paid
+    };
+    pipeline: {
+      completed_count: number;
+      in_progress_count: number;   // any accepted/paid but not yet completed/cancelled
+    };
+    trend: Array<{ month: string; gross_revenue_minor: number; owner_earnings_minor: number; orders_count: number }>;
+  }> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    // Central entitlement gate — free plan → 403 PLAN_REQUIRED.
+    // Admin / super_admin bypass automatically via resolveEntitlements.
+    const { requireEntitlement, resolveEntitlements } = await import('../entitlements');
+    requireEntitlement(actor, 'revenue_intelligence');
+    const ent = resolveEntitlements(actor);
+    const planLabel: 'pro' | 'enterprise' | 'admin_bypass' =
+      hasAtLeastRole(actor.user, ROLES.ADMIN) ? 'admin_bypass'
+      : ent.plan === 'enterprise' ? 'enterprise'
+      : 'pro';
+
+    const orders = await marketplaceOrderRepo.listByOwner(actor.user.id);
+
+    // ── Totals over orders that have received payment. `amount_received_minor`
+    //    is set at payment confirmation; `gateway_fee_minor` may still be null
+    //    while awaiting Gate A reconciliation, so we count reconciled orders
+    //    separately.
+    let gross = 0;
+    let fees = 0;
+    let netTxn = 0;
+    let ownerAmt = 0;
+    let commission = 0;
+    let paidCount = 0;
+    let feeReconciledCount = 0;
+    for (const o of orders) {
+      if (typeof o.amount_received_minor === 'number' && o.payment_received_at) {
+        gross += o.amount_received_minor;
+        paidCount += 1;
+      }
+      if (typeof o.gateway_fee_minor === 'number') {
+        fees += o.gateway_fee_minor;
+        feeReconciledCount += 1;
+      }
+      if (typeof o.net_transaction_value_minor === 'number') netTxn += o.net_transaction_value_minor;
+      if (typeof o.owner_earnings_minor === 'number') ownerAmt += o.owner_earnings_minor;
+      if (typeof o.wavelead_commission_minor === 'number') commission += o.wavelead_commission_minor;
+    }
+    const avgSponsorship = paidCount > 0 ? Math.round(gross / paidCount) : 0;
+
+    // ── Conversion funnel. Order lifecycle:
+    //    requested → owner_accepted → awaiting_payment → paid → in_progress →
+    //    submitted_for_review → completed. Any accept-or-later state counts
+    //    as "accepted" for funnel arithmetic. Payment reached = payment_received_at
+    //    is set OR status is at/past 'paid'.
+    const acceptedStates = new Set(['owner_accepted', 'awaiting_payment', 'paid', 'in_progress', 'submitted_for_review', 'revision_requested', 'completed']);
+    const paidStates = new Set(['paid', 'in_progress', 'submitted_for_review', 'revision_requested', 'completed']);
+    const inProgressStates = new Set(['paid', 'in_progress', 'submitted_for_review', 'revision_requested']);
+    const requestsCount = orders.length;
+    let acceptedCount = 0;
+    let paidLifecycleCount = 0;
+    let completedCount = 0;
+    let inProgressCount = 0;
+    for (const o of orders) {
+      if (acceptedStates.has(o.status)) acceptedCount += 1;
+      if (paidStates.has(o.status)) paidLifecycleCount += 1;
+      if (o.status === 'completed') completedCount += 1;
+      if (inProgressStates.has(o.status)) inProgressCount += 1;
+    }
+    const acceptanceRate = requestsCount ? acceptedCount / requestsCount : 0;
+    const paymentRate = acceptedCount ? paidLifecycleCount / acceptedCount : 0;
+    const completionRate = paidLifecycleCount ? completedCount / paidLifecycleCount : 0;
+
+    // ── Trend — last 12 months bucketed by payment_received_at (falls back
+    //    to created_at when payment hasn't landed) so "orders with 0 revenue"
+    //    still appear in activity.
+    const monthKey = (d: Date | string | null | undefined): string | null => {
+      if (!d) return null;
+      const dt = new Date(d);
+      if (Number.isNaN(dt.getTime())) return null;
+      return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`;
+    };
+    const now = new Date();
+    const buckets: Map<string, { gross: number; owner: number; count: number }> = new Map();
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+      buckets.set(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`, { gross: 0, owner: 0, count: 0 });
+    }
+    for (const o of orders) {
+      const key = monthKey(o.payment_received_at) || monthKey(o.created_at);
+      if (!key) continue;
+      const b = buckets.get(key);
+      if (!b) continue; // outside 12-month window
+      if (typeof o.amount_received_minor === 'number' && o.payment_received_at) b.gross += o.amount_received_minor;
+      if (typeof o.owner_earnings_minor === 'number') b.owner += o.owner_earnings_minor;
+      b.count += 1;
+    }
+    const trend = Array.from(buckets.entries()).map(([month, v]) => ({
+      month,
+      gross_revenue_minor: v.gross,
+      owner_earnings_minor: v.owner,
+      orders_count: v.count,
+    }));
+
+    return {
+      plan: planLabel,
+      currency: 'USD',
+      totals: {
+        gross_revenue_minor: gross,
+        gateway_fees_minor: fees,
+        net_transaction_value_minor: netTxn,
+        owner_earnings_minor: ownerAmt,
+        platform_commission_minor: commission,
+        average_sponsorship_value_minor: avgSponsorship,
+        orders_with_payment_count: paidCount,
+        fee_reconciled_orders_count: feeReconciledCount,
+      },
+      conversion: {
+        requests_count: requestsCount,
+        accepted_count: acceptedCount,
+        paid_count: paidLifecycleCount,
+        completed_count: completedCount,
+        acceptance_rate: acceptanceRate,
+        payment_rate: paymentRate,
+        completion_rate: completionRate,
+      },
+      pipeline: {
+        completed_count: completedCount,
+        in_progress_count: inProgressCount,
+      },
+      trend,
+    };
+  },
+
+  /**
    * Owner requests an external payout for a specific completed order.
    * Sets a `payout_requested_at` marker and appends an
    * `OWNER_PAYOUT_REQUESTED` audit event. Does NOT send money. Manual

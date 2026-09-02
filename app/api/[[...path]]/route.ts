@@ -1506,6 +1506,16 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const data = await marketplaceService.ownerListEarnings(actor);
       return applyCors(ok(data), request);
     }
+    // Phase 3 — Pro-only Revenue Intelligence.
+    // Server-gated by revenue_intelligence entitlement. Free → 403 with code
+    // PLAN_REQUIRED. Pro / Enterprise / admin pass. Aggregates over the
+    // owner's existing marketplace_orders only (no new engine).
+    if (path.length === 2 && path[0] === 'owner' && path[1] === 'revenue-intelligence' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const data = await marketplaceService.ownerRevenueIntelligence(actor);
+      return applyCors(ok(data), request);
+    }
     // Owner payout method — read
     if (path.length === 2 && path[0] === 'owner' && path[1] === 'payout-method' && method === 'GET') {
       const { marketplaceService } = await import('@/lib/services/marketplaceService');
