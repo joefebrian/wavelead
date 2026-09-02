@@ -3,6 +3,8 @@ import type { Metadata } from 'next';
 import { Providers } from './providers';
 import { Toaster } from 'sonner';
 import type { ReactNode } from 'react';
+import ConsentBanner from '@/components/consent/ConsentBanner';
+import AnalyticsAutoPageView from '@/components/consent/AnalyticsAutoPageView';
 
 export const metadata: Metadata = {
   title: {
@@ -35,6 +37,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body className="min-h-screen bg-background text-foreground overflow-x-hidden">
         <Providers>
           {children}
+          <ConsentBanner />
+          <AnalyticsAutoPageView />
           <Toaster richColors position="top-right" />
         </Providers>
       </body>

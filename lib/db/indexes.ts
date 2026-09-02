@@ -245,5 +245,18 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { status: 1, created_at: -1 }, name: 'status_time' },
       { key: { channel_id: 1, status: 1 }, unique: true, name: 'uniq_active_pending_per_channel', partialFilterExpression: { status: 'pending' } },
     ]),
+    // M11-Batch3 — Cookie consent audit trail (append-only decisions).
+    db.collection(COLLECTIONS.CONSENT_RECORDS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { anonymous_visitor_id: 1, created_at: -1 }, name: 'visitor_time' },
+      { key: { user_id: 1, created_at: -1 }, name: 'user_time' },
+    ]),
+    // M11-Batch3 — First-party analytics events (append-only, consented).
+    db.collection(COLLECTIONS.ANALYTICS_EVENTS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { anonymous_visitor_id: 1, occurred_at: -1 }, name: 'visitor_time' },
+      { key: { event_name: 1, occurred_at: -1 }, name: 'name_time' },
+      { key: { user_id: 1, occurred_at: -1 }, name: 'user_time', partialFilterExpression: { user_id: { $type: 'string' } } },
+    ]),
   ]);
 }

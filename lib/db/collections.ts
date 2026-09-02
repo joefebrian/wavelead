@@ -42,6 +42,10 @@ export const COLLECTIONS = {
   OWNER_PAYOUT_METHODS: 'owner_payout_methods',
   // M11-Batch2A — owner-submitted follower-count evidence (append-only history).
   CHANNEL_AUDIENCE_SNAPSHOTS: 'channel_audience_snapshots',
+  // M11-Batch3 — Cookie consent decisions (append-only audit trail).
+  CONSENT_RECORDS: 'consent_records',
+  // M11-Batch3 — First-party product analytics events (append-only, consented).
+  ANALYTICS_EVENTS: 'analytics_events',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

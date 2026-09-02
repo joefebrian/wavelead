@@ -402,6 +402,7 @@ frontend_m02:
 
 test_plan:
   current_focus:
+    - "M11-Batch3 — Cookie Consent + First-Party Analytics (consent manager, server-enforced ingest, first-party visitor_id, policy pages)"
     - "M11-Batch2A — Follower Evidence (owner-submitted, admin-verified snapshots + Owner Verified badge rename)"
     - "M03.7 FINAL HARDENING — Ownership Verification Patch (assigned+unverified state; no-claim admin verification; takeover protection)"
     - "M05.0 FINAL SYNC — /api/health must return git commit SHA (11e3105)"
@@ -413,6 +414,72 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+# ---------- M11 BATCH 3 — COOKIE CONSENT + FIRST-PARTY ANALYTICS ----------
+backend_m11_batch3:
+  - task: "M11-Batch3 Consent manager + first-party analytics (server-enforced consent, allowlisted events)"
+    implemented: true
+    working: true
+    file: "lib/services/consentService.ts, lib/services/analyticsEventsService.ts, lib/constants/analyticsEvents.ts, lib/types.ts, lib/db/collections.ts, lib/db/indexes.ts, app/api/[[...path]]/route.ts, tests/m11_batch3_consent_analytics.test.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Cookie strategy:
+            • wl_visitor_id (HttpOnly, SameSite=Lax, 1yr) — anonymous first-party
+              visitor identifier. Issued lazily on the first consent decision
+              OR on the first analytics event. Never derived by fingerprinting.
+            • wl_consent (HttpOnly, SameSite=Lax, 1yr) — base64url({a, v, ts, u}).
+              Absent cookie = no decision yet → banner shows and no optional
+              analytics event is persisted.
+          Endpoints:
+            GET  /api/consent → { visitor_id?, consent?, policy_version }
+            POST /api/consent { analytics: boolean } → sets cookies, inserts
+              consent_records audit row.
+            POST /api/analytics/events → SERVER-side consent gate. If analytics
+              is not granted for the current policy_version, returns 204 (no
+              body) and stores nothing.
+          Event allowlist (13 events, no more):
+            page_view, channel_profile_view, channel_search, category_view,
+            country_view, follow_intent_click, sponsor_channel_click,
+            sponsorship_package_view, pricing_view, pro_waitlist_click,
+            enterprise_contact_click, signup_started, signup_completed.
+          Per-event metadata is strict-allowlisted (channel_id/slug/etc.).
+          Sensitive keys (password, email, session_token, ...) never reach the
+          DB — they are dropped by sanitizeMeta(). user_id is derived
+          server-side from the SESSION only; a client-supplied user_id in the
+          body is ignored (proven by test §7). No raw IPs, no raw headers, no
+          full referrer URLs, no free-text search queries persisted.
+          Test file `tests/m11_batch3_consent_analytics.test.ts` — 12/12 PASS.
+          Regression: m10_homepage_launch (10/10), m10_buyer_auth, m11_batch1,
+          m11_batch2a all still fully pass (35/35 combined).
+
+frontend_m11_batch3:
+  - task: "M11-Batch3 Consent banner + preferences modal + footer trigger + policy pages"
+    implemented: true
+    working: "NA"
+    file: "components/consent/ConsentBanner.tsx, components/consent/CookiePreferencesTrigger.tsx, components/consent/AnalyticsAutoPageView.tsx, lib/analytics/client.ts, app/layout.tsx, components/layout/Footer.tsx, app/cookies/page.tsx, app/privacy/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Compact bottom-anchored banner with three buttons — Accept All /
+          Reject Non-Essential (equally functional) / Manage Preferences —
+          shown only when no consent cookie exists. Modal offers a single
+          Analytics toggle NOT pre-checked, and a Save Preferences action.
+          Footer surfaces a "Cookie Preferences" trigger that re-opens the
+          same modal via a `wl:open-cookie-preferences` window event so users
+          can enable, disable, or withdraw consent at any time.
+          Auto page_view emitter mounted in the root layout (best-effort;
+          server still gates persistence). /cookies + /privacy re-written to
+          describe what actually ships. No third-party trackers, no session
+          replay, no fingerprinting. Not yet browser-verified.
 
 # ---------- M11 BATCH 2A — FOLLOWER EVIDENCE ----------
 backend_m11_batch2a:

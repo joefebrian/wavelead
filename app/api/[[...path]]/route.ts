@@ -1336,6 +1336,49 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ lead }), request);
     }
 
+    // ---------- M11-Batch3 CONSENT + FIRST-PARTY ANALYTICS ----------
+    if (route === '/consent' && method === 'GET') {
+      const { consentService } = await import('@/lib/services/consentService');
+      const s = consentService.read(request);
+      // Do NOT auto-issue a visitor_id on a passive GET \u2014 issuance happens
+      // when the user first records a consent decision OR the first analytics
+      // event lands. This keeps the cookie footprint minimal until needed.
+      return applyCors(ok({
+        visitor_id: s.visitorId,
+        consent: s.consent,
+        policy_version: s.policy_version,
+      }), request);
+    }
+    if (route === '/consent' && method === 'POST') {
+      const rl = rateLimit(clientKey(request, 'consent'), 30, 60_000);
+      if (!rl.allowed) return applyCors(fail(429, 'Too many consent updates', { retryAfter: rl.retryAfterSeconds }), request);
+      const { consentService } = await import('@/lib/services/consentService');
+      const body = await safeJson(request);
+      const analytics = (body as { analytics?: unknown }).analytics === true;
+      const actor = await resolveActor(request);
+      const response = applyCors(ok({ status: 'recorded' }), request);
+      const r = await consentService.record(request, response, { analytics, userId: actor?.user.id ?? null });
+      // Merge the ok payload with the visitor/consent for the client.
+      const payload = { ok: true, data: { status: 'recorded', visitor_id: r.visitorId, consent: r.consent } };
+      // NextResponse.json returns a body-consumed response; we already set cookies on it.
+      // Rebuild the JSON payload while preserving cookies.
+      const finalRes = new NextResponse(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } });
+      // Copy consent + visitor cookies from the response we mutated.
+      for (const c of response.cookies.getAll()) finalRes.cookies.set(c);
+      return applyCors(finalRes, request);
+    }
+    if (route === '/analytics/events' && method === 'POST') {
+      const rl = rateLimit(clientKey(request, 'analytics'), 120, 60_000);
+      if (!rl.allowed) {
+        // Fail-open: rate-limited analytics never blocks the app.
+        return applyCors(new NextResponse(null, { status: 204 }), request);
+      }
+      const { analyticsEventsService } = await import('@/lib/services/analyticsEventsService');
+      const body = await safeJson(request);
+      const { response } = await analyticsEventsService.ingest(request, body);
+      return applyCors(response, request);
+    }
+
     // ---------- M11-Batch2A FOLLOWER EVIDENCE ----------
     // Owner endpoints
     if (path.length === 4 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'audience-snapshots' && method === 'POST') {

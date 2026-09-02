@@ -1277,4 +1277,66 @@ export interface ChannelAudienceSnapshot {
   updated_at: Date;
 }
 
+// -------- M11-Batch3: Cookie Consent + First-Party Analytics --------
+// Consent categories used site-wide. Necessary is always true.
+export const CONSENT_POLICY_VERSION = 1 as const;
+
+export interface ConsentState {
+  necessary: true;                              // always on
+  analytics: boolean;
+  policy_version: number;                       // CONSENT_POLICY_VERSION at time of decision
+  consented_at: string;                         // ISO — first decision timestamp
+  updated_at: string;                           // ISO — latest change
+}
+
+// Audit trail row — append-only. One row per meaningful consent decision.
+export interface ConsentRecord {
+  id: string;
+  anonymous_visitor_id: string;
+  user_id: string | null;
+  necessary: true;
+  analytics: boolean;
+  policy_version: number;
+  consented_at: Date;
+  updated_at: Date;
+  created_at: Date;
+}
+
+// Analytics event allowlist. Adding new events requires an explicit code change.
+export const ANALYTICS_EVENT_NAMES = [
+  'page_view',
+  'channel_profile_view',
+  'channel_search',
+  'category_view',
+  'country_view',
+  'follow_intent_click',
+  'sponsor_channel_click',
+  'sponsorship_package_view',
+  'pricing_view',
+  'pro_waitlist_click',
+  'enterprise_contact_click',
+  'signup_started',
+  'signup_completed',
+] as const;
+export type AnalyticsEventName = (typeof ANALYTICS_EVENT_NAMES)[number];
+
+// Safe metadata stored per event — strict allowlisted keys only.
+export type SafeEventMetadata = Record<string, string | number | boolean | null>;
+
+export interface AnalyticsEvent {
+  id: string;
+  anonymous_visitor_id: string;
+  user_id: string | null;
+  session_id: string | null;
+  event_name: AnalyticsEventName;
+  pathname: string;                             // sanitized to leading slash + safe chars
+  referrer_domain: string | null;               // domain only, never full URL
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_campaign: string | null;
+  metadata_safe: SafeEventMetadata;
+  occurred_at: Date;
+  created_at: Date;
+}
+
 

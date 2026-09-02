@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Radio } from 'lucide-react';
+import CookiePreferencesTrigger from '@/components/consent/CookiePreferencesTrigger';
 
 export default function Footer() {
   return (
@@ -28,7 +29,10 @@ export default function Footer() {
       <div className="border-t border-border/60">
         <div className="container py-4 flex flex-col md:flex-row items-center justify-between gap-2 text-xs text-muted-foreground">
           <span data-testid="footer-attribution">© {new Date().getFullYear()} WaveLead — a product by P2P Labs. All rights reserved.</span>
-          <span>WhatsApp is a trademark of Meta Platforms, Inc. WaveLead is an independent service.</span>
+          <div className="flex items-center gap-4">
+            <CookiePreferencesTrigger />
+            <span>WhatsApp is a trademark of Meta Platforms, Inc. WaveLead is an independent service.</span>
+          </div>
         </div>
       </div>
     </footer>
