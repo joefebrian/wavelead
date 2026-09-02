@@ -32,6 +32,7 @@ import type {
   Channel,
   ChannelRateCard,
   IntegrationEnvironment,
+  MarketplaceDeliveryAttachment,
   MarketplaceDeliveryEscalation,
   MarketplaceDeliverySubmission,
   MarketplaceOrder,
@@ -770,12 +771,22 @@ export const marketplaceService = {
    */
   async submitDelivery(actor: Actor | null, orderId: string, input: unknown): Promise<MarketplaceOrder> {
     if (!actor) throw new HttpError(401, 'You must be signed in');
+    const attachmentSchema = z.object({
+      provider: z.literal('uploadthing').optional().default('uploadthing'),
+      storage_key: z.string().trim().min(1).max(200),
+      url: z.string().trim().min(1).max(2048),
+      mime_type: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+      file_name_safe: z.string().trim().min(1).max(200),
+      size_bytes: z.number().int().nonnegative().max(5 * 1024 * 1024),
+      uploaded_at: z.union([z.string(), z.date()]).optional(),
+    });
     const schema = z.object({
       delivery_notes: z.string().trim().max(4000).optional().nullable(),
       notes_to_brand: z.string().trim().max(4000).optional().nullable(),
       delivery_urls: z.array(z.string().trim().min(1).max(2048)).min(0).max(10).default([]),
       proof_urls: z.array(z.string().trim().min(1).max(2048)).min(0).max(10).optional().default([]),
       proof_description: z.string().trim().max(2000).optional().nullable(),
+      proof_attachments: z.array(attachmentSchema).min(0).max(5).optional().default([]),
     });
     const parsed = schema.safeParse(input);
     if (!parsed.success) throw new HttpError(400, `Invalid input: ${parsed.error.issues[0]?.message}`);
@@ -790,11 +801,32 @@ export const marketplaceService = {
     const cleanProofUrls: string[] = [];
     for (const u of (d.proof_urls || [])) cleanProofUrls.push(assertSafeHttpUrl(u, 'Proof URL'));
 
-    // Evidence requirement — Gate B: at least one delivery URL, proof URL,
-    // OR non-empty notes-to-brand must be supplied. A completely empty
-    // submission is never accepted.
-    if (cleanDeliveryUrls.length === 0 && cleanProofUrls.length === 0 && !notesToBrand) {
-      throw new HttpError(400, 'At least one delivery URL, proof URL, or notes-to-brand is required');
+    // Validate attachments — provider host allowlist + MIME + count + size.
+    const UT_HOST_RE = /^([a-z0-9-]+\.)?ufs\.sh$|^utfs\.io$/i;
+    const cleanAttachments: MarketplaceDeliveryAttachment[] = [];
+    for (const a of (d.proof_attachments || [])) {
+      let u: URL;
+      try { u = new URL(a.url); } catch { throw new HttpError(400, 'Attachment URL is malformed'); }
+      if (u.protocol !== 'https:') throw new HttpError(400, 'Attachment URL must be https');
+      if (!UT_HOST_RE.test(u.hostname)) throw new HttpError(400, `Attachment URL host not allowed: ${u.hostname}`);
+      cleanAttachments.push({
+        provider: 'uploadthing',
+        storage_key: a.storage_key,
+        url: u.toString(),
+        mime_type: a.mime_type,
+        file_name_safe: a.file_name_safe,
+        size_bytes: a.size_bytes,
+        uploaded_at: a.uploaded_at ? new Date(a.uploaded_at as string) : new Date(),
+      });
+    }
+    if (cleanAttachments.length > 5) throw new HttpError(400, 'At most 5 attachments per submission');
+
+    // Evidence requirement — Gate B UploadThing tightening: notes ALONE are
+    // insufficient. Owner must supply at least one attachment OR at least
+    // one delivery/proof URL. Notes remain required for context.
+    const hasEvidence = cleanAttachments.length > 0 || cleanDeliveryUrls.length > 0 || cleanProofUrls.length > 0;
+    if (!hasEvidence) {
+      throw new HttpError(400, 'At least one screenshot, delivery URL, or proof URL is required');
     }
 
     const order = await marketplaceOrderRepo.findById(orderId);
@@ -823,7 +855,8 @@ export const marketplaceService = {
       delivery_urls: cleanDeliveryUrls,
       proof_urls: cleanProofUrls,
       proof_description: d.proof_description || null,
-      notes_to_brand: notesToBrand,
+      notes_to_brand: notesToBrand || null,
+      proof_attachments: cleanAttachments,
       revision_number: revisionNumber,
       created_at: now,
     };
@@ -840,6 +873,7 @@ export const marketplaceService = {
       submitted_by: actor.user.id,
       // B3.2 Gate B — provider-neutral denorm.
       proof_urls: cleanProofUrls,
+      proof_attachments: cleanAttachments,
       notes_to_brand: notesToBrand,
       submitted_for_review_at: now,
       revision_number: revisionNumber,

@@ -219,7 +219,7 @@ describe('B2 §3 — Buyer review', () => {
     const { owner, order } = await createPaidOrder('r8');
     await marketplaceService.startWork(actorFor(owner.userId), order.id);
     await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, {
-      delivery_notes: 'done', delivery_urls: [],
+      delivery_notes: 'done', delivery_urls: ['https://example.com/post/done'],
     });
     const stranger = await signup(`b2-${RUN_TAG}-r8-x@t.test`);
     // isolation: stranger's list should not contain this order
@@ -232,7 +232,7 @@ describe('B2 §3 — Buyer review', () => {
   it('#9 buyer can accept delivery (submitted_for_review → completed)', async () => {
     const { owner, buyer, order } = await createPaidOrder('r9');
     await marketplaceService.startWork(actorFor(owner.userId), order.id);
-    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, { delivery_notes: 'ok', delivery_urls: [] });
+    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, { delivery_notes: 'ok', delivery_urls: ['https://example.com/post/ok'] });
     const done = await marketplaceService.buyerAcceptDelivery(actorFor(buyer.userId), order.id);
     expect(done.status).toBe('completed');
     expect(done.completed_by).toBe(buyer.userId);
@@ -243,7 +243,7 @@ describe('B2 §3 — Buyer review', () => {
   it('#10 completion records buyer source correctly (never masqueraded)', async () => {
     const { owner, buyer, order } = await createPaidOrder('r10');
     await marketplaceService.startWork(actorFor(owner.userId), order.id);
-    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, { delivery_notes: 'ok', delivery_urls: [] });
+    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, { delivery_notes: 'ok', delivery_urls: ['https://example.com/post/ok'] });
     const done = await marketplaceService.buyerAcceptDelivery(actorFor(buyer.userId), order.id);
     expect(done.completion_source).toBe('buyer');
     expect(done.completion_note).toBe(null);
@@ -257,7 +257,7 @@ describe('B2 §4 — Admin completion override', () => {
   it('#11 admin can complete with required override note', async () => {
     const { owner, admin, order } = await createPaidOrder('a11');
     await marketplaceService.startWork(actorFor(owner.userId), order.id);
-    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, { delivery_notes: 'ok', delivery_urls: [] });
+    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, { delivery_notes: 'ok', delivery_urls: ['https://example.com/post/ok'] });
     const done = await marketplaceService.adminCompleteOrder(actorFor(admin.userId, 'admin'), order.id, { completion_note: 'Buyer unresponsive 30d' });
     expect(done.status).toBe('completed');
     expect(done.completion_source).toBe('admin');
@@ -268,7 +268,7 @@ describe('B2 §4 — Admin completion override', () => {
   it('#12 admin completion requires a note (400 without)', async () => {
     const { owner, admin, order } = await createPaidOrder('a12');
     await marketplaceService.startWork(actorFor(owner.userId), order.id);
-    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, { delivery_notes: 'ok', delivery_urls: [] });
+    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, { delivery_notes: 'ok', delivery_urls: ['https://example.com/post/ok'] });
     await expect(marketplaceService.adminCompleteOrder(actorFor(admin.userId, 'admin'), order.id, {})).rejects.toMatchObject({ status: 400 });
     await expect(marketplaceService.adminCompleteOrder(actorFor(admin.userId, 'admin'), order.id, { completion_note: '' })).rejects.toMatchObject({ status: 400 });
   });
@@ -276,7 +276,7 @@ describe('B2 §4 — Admin completion override', () => {
   it('#13 normal user cannot admin-complete', async () => {
     const { owner, buyer, order } = await createPaidOrder('a13');
     await marketplaceService.startWork(actorFor(owner.userId), order.id);
-    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, { delivery_notes: 'ok', delivery_urls: [] });
+    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, { delivery_notes: 'ok', delivery_urls: ['https://example.com/post/ok'] });
     await expect(marketplaceService.adminCompleteOrder(actorFor(buyer.userId), order.id, { completion_note: 'no' })).rejects.toMatchObject({ status: 403 });
     await expect(marketplaceService.adminCompleteOrder(actorFor(owner.userId), order.id, { completion_note: 'no' })).rejects.toMatchObject({ status: 403 });
   });
@@ -300,7 +300,7 @@ describe('B2 §5 — Payout eligibility', () => {
   it('#15 completed + finalized order becomes eligible_for_payout', async () => {
     const { owner, buyer, order } = await createPaidOrder('e15');
     await marketplaceService.startWork(actorFor(owner.userId), order.id);
-    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, { delivery_notes: 'ok', delivery_urls: [] });
+    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, { delivery_notes: 'ok', delivery_urls: ['https://example.com/post/ok'] });
     const done = await marketplaceService.buyerAcceptDelivery(actorFor(buyer.userId), order.id);
     expect(done.owner_payable_status).toBe('eligible_for_payout');
   });
@@ -332,7 +332,7 @@ describe('B2 §6 — Manual payout record', () => {
   async function readyForPayout(tag: string) {
     const state = await createPaidOrder(tag);
     await marketplaceService.startWork(actorFor(state.owner.userId), state.order.id);
-    await marketplaceService.submitDelivery(actorFor(state.owner.userId), state.order.id, { delivery_notes: 'ok', delivery_urls: [] });
+    await marketplaceService.submitDelivery(actorFor(state.owner.userId), state.order.id, { delivery_notes: 'ok', delivery_urls: ['https://example.com/post/ok'] });
     const done = await marketplaceService.buyerAcceptDelivery(actorFor(state.buyer.userId), state.order.id);
     return { ...state, order: done };
   }
@@ -386,7 +386,7 @@ describe('B2 §7 — Payout idempotency + cross-payout identity', () => {
   async function readyForPayout(tag: string) {
     const state = await createPaidOrder(tag);
     await marketplaceService.startWork(actorFor(state.owner.userId), state.order.id);
-    await marketplaceService.submitDelivery(actorFor(state.owner.userId), state.order.id, { delivery_notes: 'ok', delivery_urls: [] });
+    await marketplaceService.submitDelivery(actorFor(state.owner.userId), state.order.id, { delivery_notes: 'ok', delivery_urls: ['https://example.com/post/ok'] });
     const done = await marketplaceService.buyerAcceptDelivery(actorFor(state.buyer.userId), state.order.id);
     return { ...state, order: done };
   }
@@ -475,7 +475,7 @@ describe('B2 §8 — Refund guard', () => {
   async function readyForPayout(tag: string) {
     const state = await createPaidOrder(tag);
     await marketplaceService.startWork(actorFor(state.owner.userId), state.order.id);
-    await marketplaceService.submitDelivery(actorFor(state.owner.userId), state.order.id, { delivery_notes: 'ok', delivery_urls: [] });
+    await marketplaceService.submitDelivery(actorFor(state.owner.userId), state.order.id, { delivery_notes: 'ok', delivery_urls: ['https://example.com/post/ok'] });
     const done = await marketplaceService.buyerAcceptDelivery(actorFor(state.buyer.userId), state.order.id);
     return { ...state, order: done };
   }
@@ -505,7 +505,7 @@ describe('B2 §8 — Refund guard', () => {
     await expect(marketplaceService.adminCompleteOrder(actorFor(owner.userId), order.id, { completion_note: 'no' })).rejects.toMatchObject({ status: 403 });
     // Complete the order via admin override (need to reach submitted_for_review first)
     await marketplaceService.startWork(actorFor(owner.userId), order.id);
-    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, { delivery_notes: 'ok', delivery_urls: [] });
+    await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, { delivery_notes: 'ok', delivery_urls: ['https://example.com/post/ok'] });
     const done = await marketplaceService.adminCompleteOrder(actorFor(admin.userId, 'admin'), order.id, { completion_note: 'ok complete' });
     expect(done.status).toBe('completed');
     // Owner cannot start work again after completion.
@@ -531,7 +531,7 @@ describe('B2.1 §11 — Manual payout confirmation phrase', () => {
   async function readyForPayout(tag: string) {
     const state = await createPaidOrder(tag);
     await marketplaceService.startWork(actorFor(state.owner.userId), state.order.id);
-    await marketplaceService.submitDelivery(actorFor(state.owner.userId), state.order.id, { delivery_notes: 'ok', delivery_urls: [] });
+    await marketplaceService.submitDelivery(actorFor(state.owner.userId), state.order.id, { delivery_notes: 'ok', delivery_urls: ['https://example.com/post/ok'] });
     const done = await marketplaceService.buyerAcceptDelivery(actorFor(state.buyer.userId), state.order.id);
     return { ...state, order: done };
   }

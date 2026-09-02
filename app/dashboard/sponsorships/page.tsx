@@ -72,6 +72,19 @@ export default async function BrandSponsorshipsPage() {
                     {o.notes_to_brand ? (
                       <div className="text-sm"><span className="text-muted-foreground">Notes: </span>{o.notes_to_brand}</div>
                     ) : (o.delivery_notes && <div className="text-sm"><span className="text-muted-foreground">Notes: </span>{o.delivery_notes}</div>)}
+                    {(o.proof_attachments?.length ?? 0) > 0 && (
+                      <div>
+                        <div className="text-xs text-muted-foreground mb-1">Evidence screenshots</div>
+                        <div className="flex flex-wrap gap-2">
+                          {(o.proof_attachments || []).map((a, i) => (
+                            <a key={a.storage_key || i} href={a.url} target="_blank" rel="noopener noreferrer nofollow" title={a.file_name_safe} className="block">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={a.url} alt="" className="h-24 w-24 object-cover rounded border border-border hover:opacity-90" />
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {(o.delivery_urls?.length ?? 0) > 0 && (
                       <div className="text-sm">
                         <span className="text-muted-foreground">Delivery: </span>

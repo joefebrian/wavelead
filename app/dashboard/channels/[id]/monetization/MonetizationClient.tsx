@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import type { ChannelRateCard, MarketplaceOrder, RateCardPackage, MarketplacePackageType } from '@/lib/types';
+import DeliveryScreenshotUpload, { type DeliveryAttachmentDraft } from './DeliveryScreenshotUpload';
 
 const PKG_TYPES: { value: MarketplacePackageType; label: string }[] = [
   { value: 'sponsored_post', label: 'Sponsored Post' },
@@ -23,7 +24,7 @@ export default function MonetizationClient({
   const [orders, setOrders] = useState<MarketplaceOrder[]>(initialOrders);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<null | { ok: boolean; text: string }>(null);
-  const [deliveryDraft, setDeliveryDraft] = useState<Record<string, { notes: string; urls: string }>>({});
+  const [deliveryDraft, setDeliveryDraft] = useState<Record<string, { notes: string; urls: string; attachments: DeliveryAttachmentDraft[] }>>({});
 
   function addPkg() {
     setPackages((p) => [...p, { type: 'sponsored_post', name: '', description: '', price_minor: 25000, currency: 'USD', deliverables: [], estimated_delivery_days: null, is_active: true }]);
@@ -70,14 +71,18 @@ export default function MonetizationClient({
   }
 
   async function submitDelivery(orderId: string) {
-    const notes = deliveryDraft[orderId]?.notes?.trim();
-    const urlsRaw = (deliveryDraft[orderId]?.urls || '').split('\n').map((s) => s.trim()).filter(Boolean);
-    if (!notes && urlsRaw.length === 0) { setMsg({ ok: false, text: 'Please add notes for the brand or at least one delivery URL.' }); return; }
+    const draft = deliveryDraft[orderId] || { notes: '', urls: '', attachments: [] };
+    const notes = draft.notes?.trim();
+    const urlsRaw = (draft.urls || '').split('\n').map((s) => s.trim()).filter(Boolean);
+    const attachments = draft.attachments || [];
+    if (attachments.length === 0 && urlsRaw.length === 0) {
+      setMsg({ ok: false, text: 'Please upload at least one screenshot or add a delivery URL.' }); return;
+    }
     setBusy(true); setMsg(null);
     try {
       const r = await fetch(`/api/marketplace/orders/${orderId}/submit-delivery`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ notes_to_brand: notes, delivery_urls: urlsRaw }),
+        body: JSON.stringify({ notes_to_brand: notes, delivery_urls: urlsRaw, proof_attachments: attachments }),
       });
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Submission failed');
@@ -224,13 +229,29 @@ export default function MonetizationClient({
                   <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
                     {o.status === 'revision_requested' ? 'Submit Revised Delivery' : 'Submit Delivery'}
                   </div>
-                  <textarea rows={3} placeholder="Notes to brand — what you did, when it ran, results if any." className={inputCls}
-                    value={deliveryDraft[o.id]?.notes || ''}
-                    onChange={(e) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: e.target.value, urls: d[o.id]?.urls || '' } }))} />
-                  <input placeholder="Proof URLs (one per line, http/https only)" className={inputCls}
-                    value={deliveryDraft[o.id]?.urls || ''}
-                    onChange={(e) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: d[o.id]?.notes || '', urls: e.target.value } }))} />
-                  <Button size="sm" onClick={() => submitDelivery(o.id)} disabled={busy}>
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-1">Evidence Screenshots <span className="text-rose-600">*</span></div>
+                    <div className="text-xs text-muted-foreground mb-2">Upload screenshots that prove the sponsored content was published (JPEG/PNG/WebP).</div>
+                    <DeliveryScreenshotUpload
+                      orderId={o.id}
+                      attachments={deliveryDraft[o.id]?.attachments || []}
+                      onChange={(atts) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: d[o.id]?.notes || '', urls: d[o.id]?.urls || '', attachments: atts } }))}
+                      disabled={busy}
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-1">Post / Campaign URL <span className="text-muted-foreground/70">(optional)</span></div>
+                    <input placeholder="https://…  (one per line)" className={inputCls}
+                      value={deliveryDraft[o.id]?.urls || ''}
+                      onChange={(e) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: d[o.id]?.notes || '', urls: e.target.value, attachments: d[o.id]?.attachments || [] } }))} />
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-1">Notes to brand <span className="text-muted-foreground/70">(optional)</span></div>
+                    <textarea rows={3} placeholder="Anything the brand should know — when it ran, results if any." className={inputCls}
+                      value={deliveryDraft[o.id]?.notes || ''}
+                      onChange={(e) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: e.target.value, urls: d[o.id]?.urls || '', attachments: d[o.id]?.attachments || [] } }))} />
+                  </div>
+                  <Button size="sm" onClick={() => submitDelivery(o.id)} disabled={busy || ((deliveryDraft[o.id]?.attachments?.length || 0) === 0 && !(deliveryDraft[o.id]?.urls || '').trim())}>
                     {o.status === 'revision_requested' ? 'Submit Revision' : 'Submit delivery for review'}
                   </Button>
                 </div>

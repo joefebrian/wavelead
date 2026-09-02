@@ -43,6 +43,7 @@
         "@radix-ui/react-tooltip": "1.2.7",
         "@tanstack/react-query": "5.56.2",
         "@tanstack/react-table": "8.21.3",
+        "@uploadthing/react": "^7",
         "axios": "1.18.0",
         "bcryptjs": "2.4.3",
         "class-variance-authority": "0.7.1",
@@ -69,6 +70,7 @@
         "swr": "2.3.8",
         "tailwind-merge": "3.3.1",
         "tailwindcss-animate": "1.0.7",
+        "uploadthing": "^7",
         "uuid": "11.1.1",
         "vaul": "1.1.2",
         "zod": "3.25.67"

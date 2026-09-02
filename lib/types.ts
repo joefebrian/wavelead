@@ -1003,6 +1003,9 @@ export interface MarketplaceOrder {
   revision_requested_by?: string | null;       // buyer user id who last requested revision
   active_escalation_id?: string | null;        // FK → marketplace_delivery_escalations.id (open/under_review/more_evidence_required)
 
+  // ── B3.2 Gate B — UploadThing evidence (latest submission denorm) ─────
+  proof_attachments?: MarketplaceDeliveryAttachment[];
+
   // ── B3.2 Gate C — owner earnings settlement + payout readiness ─────────
   settlement_hold_hours?: number | null;        // captured at completion
   payout_available_at?: Date | null;            // completed_at + settlement_hold_hours
@@ -1127,6 +1130,16 @@ export interface MarketplacePaymentAttempt {
 // ============================================================
 // Phase B3.2 Gate B — Delivery submissions (versioned, append-only)
 // ============================================================
+export interface MarketplaceDeliveryAttachment {
+  provider: 'uploadthing';
+  storage_key: string;                    // file_key returned by UploadThing
+  url: string;                            // *.ufs.sh (v7) or utfs.io (legacy)
+  mime_type: 'image/jpeg' | 'image/png' | 'image/webp';
+  file_name_safe: string;                 // sanitized filename
+  size_bytes: number;
+  uploaded_at: Date;
+}
+
 export interface MarketplaceDeliverySubmission {
   id: string;
   marketplace_order_id: string;
@@ -1136,6 +1149,7 @@ export interface MarketplaceDeliverySubmission {
   proof_urls: string[];                   // http/https only, safe URL validated
   proof_description: string | null;
   notes_to_brand: string | null;
+  proof_attachments: MarketplaceDeliveryAttachment[];   // Gate B UploadThing evidence
   revision_number: number;                // 0 for first submission, increments per revision
   is_test_fixture?: boolean;
   created_at: Date;
