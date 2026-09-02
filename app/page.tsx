@@ -1,6 +1,7 @@
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
-import HeroSearch from '@/components/discovery/HeroSearch';
+import PositioningHero from '@/components/home/PositioningHero';
+import { PersonaEntry, ProductLoop, OwnerValue, BrandValue, TrustSection, PricingTeaser, FinalCta } from '@/components/home/LaunchSections';
 import CategoryPills from '@/components/discovery/CategoryPills';
 import SectionHeader from '@/components/discovery/SectionHeader';
 import ChannelCard from '@/components/discovery/ChannelCard';
@@ -17,12 +18,12 @@ import type { Metadata } from 'next';
 void _NS;
 
 export const metadata: Metadata = {
-  title: 'Discover WhatsApp Channels | WaveLead',
-  description: 'Explore WhatsApp Channels for news, creators, sports, finance, entertainment, communities, deals and more on WaveLead.',
+  title: 'WaveLead — The Growth & Monetization Platform for WhatsApp Channels',
+  description: 'Discover WhatsApp Channels, grow audiences, manage sponsorships and measure what drives results — all in one place. Public Beta.',
   alternates: { canonical: '/' },
   openGraph: {
-    title: 'Discover WhatsApp Channels | WaveLead',
-    description: 'Explore WhatsApp Channels for news, creators, sports, finance, entertainment, communities, deals and more on WaveLead.',
+    title: 'WaveLead — The Growth & Monetization Platform for WhatsApp Channels',
+    description: 'Discover WhatsApp Channels, grow audiences, manage sponsorships and measure what drives results — all in one place.',
     type: 'website',
   },
 };
@@ -47,13 +48,15 @@ export default async function HomePage() {
     <>
       <Header />
       <main>
-        <HeroSearch totalApproved={bundle.stats.totalApproved} />
+        <PositioningHero totalApproved={bundle.stats.totalApproved} />
+        <PersonaEntry />
+        <ProductLoop />
         <CategoryPills categories={pillCats} />
 
-        {/* Popular on WaveLead */}
-        <section className="container py-10">
+        {/* Discover WhatsApp Channels — reuses existing public discovery data */}
+        <section className="container py-10" data-testid="home-discovery-proof">
           <SectionHeader
-            title="Popular on WaveLead"
+            title="Discover WhatsApp Channels"
             subtitle="Channels getting attention right now."
             href="/trending"
           />
@@ -63,7 +66,13 @@ export default async function HomePage() {
               {bundle.popular.map((c) => <ChannelCard key={c.id} channel={c} />)}
             </div>
           )}
+          <div className="mt-6">
+            <Link href="/channels" className="text-sm text-primary hover:underline">Explore All Channels →</Link>
+          </div>
         </section>
+
+        <OwnerValue />
+        <BrandValue />
 
         {/* Featured — only rendered when moderators have curated at least one slot */}
         {bundle.featured.length > 0 && (
@@ -96,13 +105,15 @@ export default async function HomePage() {
           )}
         </section>
 
-        {/* Top in Indonesia (contextual country selector) */}
+        {/* Top by country */}
         <TopChannelsCountryPicker
           initial={bundle.topIndonesia}
           initialCountry={{ code: 'ID', slug: 'indonesia', name: 'Indonesia', flag: '🇮🇩' }}
           countries={countries.map((c) => ({ code: c.code, slug: c.slug, name: c.name, flag: c.flag }))}
           limit={5}
         />
+
+        <TrustSection />
 
         {/* Browse by category */}
         <section className="container py-10">
@@ -173,7 +184,9 @@ export default async function HomePage() {
           </div>
         </section>
 
+        <PricingTeaser />
         <OwnerGrowthCta />
+        <FinalCta />
       </main>
       <Footer />
     </>

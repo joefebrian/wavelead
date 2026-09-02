@@ -39,6 +39,7 @@ export default function Header() {
     { href: '/trending', label: 'Trending' },
     { href: '/top', label: 'Top Channels' },
     { href: '/categories', label: 'Categories' },
+    { href: '/submit', label: 'For Channel Owners' },
     { href: '/for-brands', label: 'For Brands' },
     { href: '/pricing', label: 'Pricing' },
   ];
