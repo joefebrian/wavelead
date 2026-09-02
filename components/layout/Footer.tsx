@@ -12,18 +12,22 @@ export default function Footer() {
             </span>
             <span className="font-bold">WaveLead</span>
           </div>
+          <p className="mt-2 text-xs text-muted-foreground">A product by P2P Labs</p>
           <p className="mt-3 text-sm text-muted-foreground max-w-xs">
-            The independent growth infrastructure for WhatsApp Channels. Not affiliated with WhatsApp or Meta.
+            Helping WhatsApp Channels grow, monetize and connect with brands.
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground max-w-xs">
+            Independently developed by P2P Labs. Not affiliated with, endorsed by, or an official product of WhatsApp or Meta.
           </p>
         </div>
         <FCol title="Discover" links={[['/channels','All Channels'],['/trending','Trending'],['/top','Top Channels'],['/categories','Categories'],['/country/indonesia','Countries']]} />
         <FCol title="For Owners" links={[['/submit','Submit Channel'],['/dashboard','Owner Dashboard'],['/pricing','Pricing']]} />
         <FCol title="For Brands" links={[['/for-brands','Overview'],['/channels','Discover Channels'],['/top','Top Channels']]} />
-        <FCol title="Company" links={[['/about','About'],['/terms','Terms'],['/privacy','Privacy']]} />
+        <FCol title="Company" links={[['/about','About'],['/privacy','Privacy'],['/terms','Terms'],['/cookies','Cookie Policy'],['#cookie-preferences','Cookie Preferences'],['mailto:hello@p2plabs.asia','Contact']]} />
       </div>
       <div className="border-t border-border/60">
         <div className="container py-4 flex flex-col md:flex-row items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span>© {new Date().getFullYear()} WaveLead. All rights reserved.</span>
+          <span data-testid="footer-attribution">© {new Date().getFullYear()} WaveLead — a product by P2P Labs. All rights reserved.</span>
           <span>WhatsApp is a trademark of Meta Platforms, Inc. WaveLead is an independent service.</span>
         </div>
       </div>

@@ -124,9 +124,11 @@ describe('Homepage launch §7 — Pricing teaser', () => {
     expect(html).toContain('Join Pro Waitlist');
     expect(html).toContain('Contact Sales');
     expect(html).toContain('View Pricing');
-    // Never invent monthly prices.
-    expect(html).not.toMatch(/\$\d+\s*\/\s*month/i);
-    expect(html).not.toMatch(/\$\d+\s*\/\s*mo/i);
+    // Pro price now published as $19 / mo Founding Beta.
+    expect(html).toMatch(/\$19\s*\/\s*mo/i);
+    expect(html).toContain('Founding Beta');
+    // Never fabricated prices for Free or Enterprise.
+    expect(html).not.toMatch(/Free:\s*\$\d+\s*\/\s*mo/i);
   });
 });
 

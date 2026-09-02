@@ -265,9 +265,9 @@ export function TrustSection() {
 // ---------------------------------------------------------------------------
 export function PricingTeaser() {
   const tiers = [
-    { name: 'Free',       status: 'Active',       positioning: 'Start and monetize your channel', cta: 'Get Started',      href: '/signup' },
-    { name: 'Pro',        status: 'Coming Soon',  positioning: 'Growth & Revenue Intelligence',   cta: 'Join Pro Waitlist', href: '/pricing', highlight: true },
-    { name: 'Enterprise', status: 'Talk to us',   positioning: 'Channel Business OS',              cta: 'Contact Sales',     href: '/pricing' },
+    { name: 'Free',       status: 'Active',         positioning: 'Start and monetize your WhatsApp Channel',        cta: 'Get Started',       href: '/signup', price: '$0 Forever' },
+    { name: 'Pro',        status: 'Founding Beta',  positioning: 'Growth & Revenue Intelligence for serious channel operators', cta: 'Join Pro Waitlist', href: '/pricing', highlight: true, price: '$19 / mo' },
+    { name: 'Enterprise', status: 'Contact Sales',  positioning: 'Channel Business OS for agencies and portfolio operators', cta: 'Contact Sales', href: '/pricing', price: 'Custom' },
   ];
   return (
     <section className="border-y border-border/60 bg-muted/30" data-testid="home-pricing-teaser">
@@ -300,6 +300,7 @@ export function PricingTeaser() {
                 </span>
               </div>
               <p className="mt-2 text-sm text-muted-foreground">{t.positioning}</p>
+              <div className="mt-1 text-sm font-semibold">{t.price}</div>
               <Link href={t.href} className="mt-auto pt-5">
                 <Button className="w-full" variant={t.highlight ? 'default' : 'outline'}>{t.cta}</Button>
               </Link>
