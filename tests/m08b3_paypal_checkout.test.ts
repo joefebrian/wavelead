@@ -531,7 +531,7 @@ describe('B3 §12 — refund/reversal safety', () => {
     const started = await marketplaceService.startWork(actorFor(owner.userId), order.id);
     expect(started.status).toBe('in_progress');
     await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, {
-      delivery_notes: 'done', delivery_urls: [], proof_description: null,
+      delivery_notes: 'done', delivery_urls: ['https://example.com/proof'], proof_description: null,
     });
     const completed = await marketplaceService.buyerAcceptDelivery(actorFor(buyer.userId), order.id);
     expect(completed.owner_payable_status).toBe('eligible_for_payout');
@@ -658,14 +658,14 @@ describe('B3.1 §15 — refund/reversal blocks fulfillment', () => {
     expect(after?.payment_reconciliation_required).toBe(true);
     // Submit Delivery must reject.
     await expect(marketplaceService.submitDelivery(actorFor(owner.userId), order.id, {
-      delivery_notes: 'x', delivery_urls: [], proof_description: null,
+      delivery_notes: 'x', delivery_urls: ['https://example.com/proof'], proof_description: null,
     })).rejects.toMatchObject({ status: 409 });
   });
   it('#35 refund arriving after submitted_for_review: buyer accept does NOT produce eligible_for_payout', async () => {
     const { owner, buyer, order, attempt } = await paidOrder('rb35');
     await marketplaceService.startWork(actorFor(owner.userId), order.id);
     await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, {
-      delivery_notes: 'done', delivery_urls: [], proof_description: null,
+      delivery_notes: 'done', delivery_urls: ['https://example.com/proof'], proof_description: null,
     });
     // Refund lands while in submitted_for_review.
     await marketplaceService.recordMarketplaceRefundOrReversal(
@@ -682,7 +682,7 @@ describe('B3.1 §15 — refund/reversal blocks fulfillment', () => {
     // Full happy path to completion.
     await marketplaceService.startWork(actorFor(owner.userId), order.id);
     await marketplaceService.submitDelivery(actorFor(owner.userId), order.id, {
-      delivery_notes: 'done', delivery_urls: [], proof_description: null,
+      delivery_notes: 'done', delivery_urls: ['https://example.com/proof'], proof_description: null,
     });
     const completed = await marketplaceService.buyerAcceptDelivery(actorFor(buyer.userId), order.id);
     expect(completed.owner_payable_status).toBe('eligible_for_payout');
