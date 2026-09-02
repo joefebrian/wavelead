@@ -231,14 +231,20 @@ describe('B3.2 Gate C §3 — Request Payout', () => {
     await expect(marketplaceService.ownerRequestPayout(actorFor(owner.userId), order.id)).rejects.toMatchObject({ status: 400 });
   });
 
-  it('#11 cannot request payout without a verified payout method', async () => {
+  it('#11 [Public Beta] Request External Payout is allowed without a verified payout method (automated unavailable)', async () => {
     const { owner, order } = await createCompletedOrder('rp11');
     await ageSettlement(order.id);
-    // No payout method at all.
-    await expect(marketplaceService.ownerRequestPayout(actorFor(owner.userId), order.id)).rejects.toMatchObject({ status: 400 });
-    // Add unverified method — still blocked.
-    await marketplaceService.ownerUpsertPayoutMethod(actorFor(owner.userId), { paypal_email: 'rp11@example.com' });
-    await expect(marketplaceService.ownerRequestPayout(actorFor(owner.userId), order.id)).rejects.toMatchObject({ status: 400 });
+    // No payout method at all — but automated is unavailable, so
+    // Request External Payout must succeed.
+    const noMethod = await marketplaceService.ownerRequestPayout(actorFor(owner.userId), order.id);
+    expect(noMethod.payout_requested_at).toBeTruthy();
+    expect(noMethod.owner_payable_status).toBe('eligible_for_payout');
+    // Second attempt from an owner with an unverified method also works.
+    const { owner: owner2, order: order2 } = await createCompletedOrder('rp11b');
+    await ageSettlement(order2.id);
+    await marketplaceService.ownerUpsertPayoutMethod(actorFor(owner2.userId), { paypal_email: 'rp11b@example.com' });
+    const withUnverified = await marketplaceService.ownerRequestPayout(actorFor(owner2.userId), order2.id);
+    expect(withUnverified.payout_requested_at).toBeTruthy();
   });
 
   it('#12 verified + settled → request succeeds, sets payout_requested_at, appends OWNER_PAYOUT_REQUESTED event, sends NO money', async () => {
@@ -316,3 +322,84 @@ describe('B3.2 Gate C §4 — Admin listing + RBAC', () => {
     expect(stringified).not.toContain('verification_code_hash');
   });
 });
+
+// ============================================================================
+// §5 Public-beta payout fallback (automated PayPal Payouts unavailable)
+// ============================================================================
+describe('B3.2 Gate C §5 — Public-beta external payout fallback', () => {
+  it('#18 earnings response advertises automated_payout_available=false in public beta', async () => {
+    const { owner, order } = await createCompletedOrder('pb18');
+    await ageSettlement(order.id);
+    const roll = await marketplaceService.ownerListEarnings(actorFor(owner.userId));
+    expect(roll.automated_payout_available).toBe(false);
+    const row = roll.orders.find((o) => o.id === order.id);
+    expect(row?.bucket).toBe('available');
+  });
+
+  it('#19 available earnings + email verification unavailable → Request External Payout succeeds; audit metadata records manual_external channel', async () => {
+    const { owner, order } = await createCompletedOrder('pb19');
+    await ageSettlement(order.id);
+    // Simulate: no email delivery + owner has an unverified method stored for reference.
+    await marketplaceService.ownerUpsertPayoutMethod(actorFor(owner.userId), { paypal_email: 'reference@example.com' });
+    const updated = await marketplaceService.ownerRequestPayout(actorFor(owner.userId), order.id);
+    expect(updated.payout_requested_at).toBeTruthy();
+    expect(updated.owner_payable_status).toBe('eligible_for_payout');
+    // Zero payout rows.
+    const payouts = await withDb((db) => db.collection(COLLECTIONS.MARKETPLACE_OWNER_PAYOUTS).find({ order_id: order.id }).toArray());
+    expect(payouts.length).toBe(0);
+    // Exactly one OWNER_PAYOUT_REQUESTED event with the manual_external channel.
+    const events = await marketplaceFinancialEventRepo.listByOrder(order.id);
+    const requested = events.filter((e) => e.event_type === 'OWNER_PAYOUT_REQUESTED');
+    expect(requested.length).toBe(1);
+    expect((requested[0].metadata as Record<string, unknown>).payout_channel).toBe('manual_external');
+    expect((requested[0].metadata as Record<string, unknown>).payout_destination_masked).toBe('r***e@example.com');
+  });
+
+  it('#20 Request External Payout is idempotent (2 calls → 1 audit event, still no payout row)', async () => {
+    const { owner, order } = await createCompletedOrder('pb20');
+    await ageSettlement(order.id);
+    await marketplaceService.ownerRequestPayout(actorFor(owner.userId), order.id);
+    await marketplaceService.ownerRequestPayout(actorFor(owner.userId), order.id);
+    const events = await marketplaceFinancialEventRepo.listByOrder(order.id);
+    expect(events.filter((e) => e.event_type === 'OWNER_PAYOUT_REQUESTED').length).toBe(1);
+    const cur = await marketplaceOrderRepo.findById(order.id);
+    expect(cur!.owner_payable_status).toBe('eligible_for_payout');   // NOT paid_out
+    const payouts = await withDb((db) => db.collection(COLLECTIONS.MARKETPLACE_OWNER_PAYOUTS).find({ order_id: order.id }).toArray());
+    expect(payouts.length).toBe(0);
+  });
+
+  it('#21 automated payout path STILL requires a verified payout method', async () => {
+    const { owner, order } = await createCompletedOrder('pb21');
+    await ageSettlement(order.id);
+    // Flip the env toggle — Gate D-like scenario.
+    const prev = process.env.MARKETPLACE_AUTOMATED_PAYOUT;
+    (process.env as Record<string, string | undefined>).MARKETPLACE_AUTOMATED_PAYOUT = '1';
+    try {
+      // No method at all → 400.
+      await expect(marketplaceService.ownerRequestPayout(actorFor(owner.userId), order.id)).rejects.toMatchObject({ status: 400 });
+      // Unverified method → still 400.
+      await marketplaceService.ownerUpsertPayoutMethod(actorFor(owner.userId), { paypal_email: 'pb21@example.com' });
+      await expect(marketplaceService.ownerRequestPayout(actorFor(owner.userId), order.id)).rejects.toMatchObject({ status: 400 });
+    } finally {
+      if (prev === undefined) delete process.env.MARKETPLACE_AUTOMATED_PAYOUT;
+      else (process.env as Record<string, string>).MARKETPLACE_AUTOMATED_PAYOUT = prev;
+    }
+  });
+
+  it('#22 full payout email NEVER appears in admin masked list even after external payout request', async () => {
+    const { owner, admin, order } = await createCompletedOrder('pb22');
+    await ageSettlement(order.id);
+    await marketplaceService.ownerUpsertPayoutMethod(actorFor(owner.userId), { paypal_email: 'private.destination@example.com' });
+    await marketplaceService.ownerRequestPayout(actorFor(owner.userId), order.id);
+    const list = await marketplaceService.adminListPayoutMethods(actorFor(admin.userId, 'admin'));
+    const stringified = JSON.stringify(list);
+    expect(stringified).not.toContain('private.destination@example.com');
+    // Order metadata may include masked destination but never the full email.
+    const events = await marketplaceFinancialEventRepo.listByOrder(order.id);
+    const requested = events.find((e) => e.event_type === 'OWNER_PAYOUT_REQUESTED');
+    expect(JSON.stringify(requested)).not.toContain('private.destination@example.com');
+    // Verify no OWNER_PAYOUT_RECORDED event was written (no money sent).
+    expect(events.some((e) => e.event_type === 'OWNER_PAYOUT_RECORDED')).toBe(false);
+  });
+});
+

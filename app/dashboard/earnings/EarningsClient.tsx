@@ -30,6 +30,7 @@ interface PayoutMethod {
 interface EarningsData {
   settlement_hold_hours: number;
   payout_method: PayoutMethod | null;
+  automated_payout_available: boolean;
   totals: {
     pending_earnings_minor: number;
     available_payout_minor: number;
@@ -113,7 +114,12 @@ export default function EarningsClient({ initial }: { initial: EarningsData }) {
   }
 
   const method = data.payout_method;
-  const canRequest = !!method && method.is_verified;
+  const automated = data.automated_payout_available;
+  // Public-beta: while automated payout is unavailable, Request External
+  // Payout is allowed even without a verified method — WaveLead completes
+  // the transfer externally and contacts the owner if extra info is needed.
+  const canRequest = automated ? !!method && method.is_verified : true;
+  const requestLabel = automated ? 'Request Payout' : 'Request External Payout';
   const nowMs = Date.now();
 
   return (
@@ -136,10 +142,21 @@ export default function EarningsClient({ initial }: { initial: EarningsData }) {
         </div>
       </div>
 
+      {!automated && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs">
+          <div className="font-semibold text-amber-900">Public Beta — External Payouts</div>
+          <div className="mt-0.5 text-amber-900/80">
+            WaveLead is coordinating owner payouts manually during Public Beta. When your earnings are available, use
+            <span className="font-semibold"> Request External Payout</span> — WaveLead ops will process the transfer and contact you
+            using your WaveLead account details if additional payout information is needed.
+          </div>
+        </div>
+      )}
+
       {/* Payout method */}
       <section className="wh-card p-4" data-testid="payout-method">
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="text-base font-semibold">PayPal Payout Account</div>
+          <div className="text-base font-semibold">PayPal Payout Account {automated ? '' : <span className="text-xs font-normal text-muted-foreground">(reference only during Public Beta)</span>}</div>
           {method && (method.is_verified
             ? <Badge className="bg-emerald-100 text-emerald-800"><CheckCircle2 className="h-3 w-3 mr-1" />Verified</Badge>
             : <Badge className="bg-amber-100 text-amber-800"><AlertTriangle className="h-3 w-3 mr-1" />Unverified</Badge>)}
@@ -148,6 +165,12 @@ export default function EarningsClient({ initial }: { initial: EarningsData }) {
           <div className="mt-2 text-sm">
             <span className="text-muted-foreground">Payout destination: </span>
             <span className="font-mono">{method.paypal_email_masked}</span>
+          </div>
+        )}
+        {!automated && (
+          <div className="mt-2 text-xs text-muted-foreground">
+            Automated payouts are not available yet. You can still record your PayPal email above for WaveLead ops&apos; reference.
+            Verification is optional and does not affect your ability to request an external payout.
           </div>
         )}
         <form onSubmit={upsertMethod} className="mt-3 space-y-2 max-w-md">
@@ -207,8 +230,11 @@ export default function EarningsClient({ initial }: { initial: EarningsData }) {
                       <Button size="sm" onClick={() => requestPayout(o.id)}
                         disabled={busy || !canRequest}
                         title={canRequest ? '' : 'Verify a PayPal payout account first'}>
-                        Request Payout
+                        {requestLabel}
                       </Button>
+                      {!automated && (
+                        <div className="mt-1 text-xs text-muted-foreground max-w-xs">WaveLead will coordinate your payout manually.</div>
+                      )}
                     </div>
                   )}
                   {o.bucket === 'available' && o.payout_requested_at && (

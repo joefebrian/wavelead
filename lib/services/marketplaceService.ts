@@ -196,6 +196,21 @@ function isProduction(): boolean {
   return process.env.NODE_ENV === 'production';
 }
 
+/**
+ * B3.2 Gate C — Launch fallback gate. Automated PayPal Payouts is
+ * introduced in Gate D. Until then this returns false so the Request
+ * Payout flow does NOT require a verified payout method — WaveLead
+ * completes each transfer externally via the existing manual admin
+ * `adminRecordPayout` audit trail.
+ *
+ * Set env `MARKETPLACE_AUTOMATED_PAYOUT=1` (Gate D onward) to flip this
+ * to true, which re-enables the verified-method requirement on
+ * `ownerRequestPayout`.
+ */
+export function isAutomatedPayoutAvailable(): boolean {
+  return process.env.MARKETPLACE_AUTOMATED_PAYOUT === '1';
+}
+
 function generateVerificationCode(): string {
   // 6-digit numeric code; leading-zero-safe.
   return String(randomInt(0, 1_000_000)).padStart(6, '0');
@@ -1428,6 +1443,7 @@ export const marketplaceService = {
   async ownerListEarnings(actor: Actor | null): Promise<{
     settlement_hold_hours: number;
     payout_method: OwnerPayoutMethodMasked | null;
+    automated_payout_available: boolean;
     totals: {
       pending_earnings_minor: number;
       available_payout_minor: number;
@@ -1484,6 +1500,7 @@ export const marketplaceService = {
     return {
       settlement_hold_hours: getSettlementHoldHours(),
       payout_method: method ? maskPayoutMethod(method) : null,
+      automated_payout_available: isAutomatedPayoutAvailable(),
       totals: {
         pending_earnings_minor: pending,
         available_payout_minor: available,
@@ -1528,8 +1545,20 @@ export const marketplaceService = {
       throw new HttpError(400, `Cannot request payout yet: settlement hold has not elapsed (${getSettlementHoldHours()}h)`);
     }
     const method = await ownerPayoutMethodRepo.findActiveByOwner(actor.user.id);
-    if (!method || !method.verified_at) {
-      throw new HttpError(400, 'Cannot request payout: a verified PayPal payout account is required');
+    // B3.2 Gate C — Public-beta launch fallback:
+    //   • When automated PayPal Payouts is unavailable (current state,
+    //     until Gate D lands), the manual admin external-payout audit
+    //     trail is the fulfillment path. A verified payout method is NOT
+    //     required — WaveLead ops will contact the owner via their
+    //     WaveLead account details if additional payout information is
+    //     needed. Any existing (unverified) method is still referenced
+    //     in the audit event metadata for operator visibility.
+    //   • When automated payouts becomes available, this gate flips back
+    //     and demands a verified method before allowing the request.
+    if (isAutomatedPayoutAvailable()) {
+      if (!method || !method.verified_at) {
+        throw new HttpError(400, 'Cannot request payout: a verified PayPal payout account is required');
+      }
     }
 
     // Idempotent: repeated calls just refresh the timestamp; audit event
@@ -1539,7 +1568,7 @@ export const marketplaceService = {
     const now = new Date();
     const updated = await marketplaceOrderRepo.update(order.id, {
       payout_requested_at: now,
-      payout_method_id: method.id,
+      payout_method_id: method?.id ?? null,
     });
     if (!alreadyRequested) {
       try {
@@ -1554,7 +1583,12 @@ export const marketplaceService = {
           wavelead_commission_minor: order.wavelead_commission_minor,
           payment_reference_normalized: order.payment_reference_normalized,
           actor_user_id: actor.user.id,
-          metadata: { payout_method_id: method.id, method: 'paypal' },
+          metadata: {
+            payout_method_id: method?.id ?? null,
+            method: 'paypal',
+            payout_channel: isAutomatedPayoutAvailable() ? 'automated_paypal_payouts' : 'manual_external',
+            payout_destination_masked: method ? maskEmail(method.paypal_email_display) : null,
+          },
         });
       } catch { /* audit-only */ }
     }
