@@ -8,6 +8,8 @@ import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { ownerService } from '@/lib/services/ownerService';
 import { claimService } from '@/lib/services/claimService';
 import { sponsorshipLeadService } from '@/lib/services/sponsorshipLeadService';
+import { personaService } from '@/lib/services/personaService';
+import PersonaOnboarding from './PersonaOnboarding';
 import { KeyRound, ShieldCheck, Send, Megaphone, Wallet, Handshake, Compass, Shield, Users, Cog, Activity, Kanban } from 'lucide-react';
 
 export const metadata: Metadata = { title: 'Dashboard', robots: { index: false, follow: false } };
@@ -20,11 +22,12 @@ export default async function DashboardPage() {
   const isBusiness = actor.user.role === 'business';
   const isSuperAdmin = actor.user.role === 'super_admin';
 
-  const [channels, claims, myLeads] = await Promise.all([
+  const [channels, claims, myLeads, personaState] = await Promise.all([
     ownerService.listMine(actor),
     claimService.listMine(actor),
     // Cheap requester_user_id filter — safe for any authenticated persona.
     sponsorshipLeadService.listMine(actor).catch(() => []),
+    personaService.getState(actor),
   ]);
   const activeClaims = claims.filter((c) => c.status === 'pending' || c.status === 'needs_information').length;
 
@@ -76,6 +79,8 @@ export default async function DashboardPage() {
             </div>
           </section>
         )}
+
+        <PersonaOnboarding initial={personaState} />
 
         <div className="mt-8 grid gap-4 md:grid-cols-3">
           <Link href="/dashboard/channels" className="wh-card p-5 hover:border-primary/40 transition">

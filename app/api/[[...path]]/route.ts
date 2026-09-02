@@ -153,6 +153,24 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
     // + resolved entitlements for the current actor. Non-authoritative — the
     // client uses this only to hint UI; every mutating endpoint re-checks
     // entitlements server-side via requireEntitlement / requireQuota.
+    // Phase 3 — Persona onboarding (UX preference, NEVER affects RBAC).
+    if (route === '/me/persona' && method === 'GET') {
+      const { personaService } = await import('@/lib/services/personaService');
+      const actor = await resolveActor(request);
+      return applyCors(ok(await personaService.getState(actor)), request);
+    }
+    if (route === '/me/persona' && method === 'PUT') {
+      const { personaService } = await import('@/lib/services/personaService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      return applyCors(ok(await personaService.setPersona(actor, body)), request);
+    }
+    if (route === '/me/persona/dismiss' && method === 'POST') {
+      const { personaService } = await import('@/lib/services/personaService');
+      const actor = await resolveActor(request);
+      return applyCors(ok(await personaService.dismissPrompt(actor)), request);
+    }
+
     if (route === '/entitlements/me' && method === 'GET') {
       const actor = await resolveActor(request);
       const { resolveEntitlements, getUserPlan, serializeEntitlements } = await import('@/lib/entitlements');

@@ -30,6 +30,13 @@ export interface User {
   // Phase 3 — SaaS entitlements. Missing/unknown resolves to 'free' at read
   // time via getUserPlan() — no data migration required.
   plan?: 'free' | 'pro' | 'enterprise' | null;
+  // Persona onboarding — pure UX preference, NEVER affects RBAC.
+  //   owner  — grow & monetize a channel
+  //   brand  — find & sponsor channels
+  //   both   — both surfaces
+  //   null / undefined — not yet chosen (existing users default to this)
+  persona?: 'owner' | 'brand' | 'both' | null;
+  persona_prompt_dismissed_at?: Date | null;
 }
 
 export type PublicUser = Omit<User, 'password_hash'>;
