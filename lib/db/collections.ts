@@ -37,6 +37,8 @@ export const COLLECTIONS = {
   MARKETPLACE_FINANCIAL_EVENTS: 'marketplace_financial_events',
   MARKETPLACE_OWNER_PAYOUTS: 'marketplace_owner_payouts',
   MARKETPLACE_PAYMENT_ATTEMPTS: 'marketplace_payment_attempts',
+  MARKETPLACE_DELIVERY_SUBMISSIONS: 'marketplace_delivery_submissions',
+  MARKETPLACE_DELIVERY_ESCALATIONS: 'marketplace_delivery_escalations',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

@@ -869,6 +869,7 @@ export type MarketplaceOrderStatus =
   | 'paid'
   | 'in_progress'                    // B2 — owner started work
   | 'submitted_for_review'           // B2 — owner submitted delivery
+  | 'revision_requested'             // B3.2 Gate B — buyer requested a revision
   | 'completed'                      // B2 — buyer accepted or admin override
   | 'cancelled';
 
@@ -986,10 +987,21 @@ export interface MarketplaceOrder {
   proof_description: string | null;
   completed_at: Date | null;
   completed_by: string | null;       // buyer id OR admin id
-  completion_source: 'buyer' | 'admin' | null;
+  completion_source: 'buyer' | 'admin' | 'admin_delivery_resolution' | null;
   completion_note: string | null;    // admin-required for override; may be null for buyer accept
   paid_out_at: Date | null;
   payout_id: string | null;          // FK → marketplace_owner_payouts.id
+
+  // ── B3.2 Gate B — delivery + payment protection ──────────────────────────
+  proof_urls?: string[];                       // provider-neutral list of proof URLs (evidence)
+  notes_to_brand?: string | null;              // owner notes for the brand at latest submission
+  submitted_for_review_at?: Date | null;       // most-recent submission timestamp (resets on resubmit)
+  revision_number?: number;                    // 0 for first submission, +1 per revision
+  latest_submission_id?: string | null;        // FK → marketplace_delivery_submissions.id
+  revision_notes_latest?: string | null;       // last revision_notes from the buyer
+  revision_requested_at?: Date | null;         // when buyer last requested revision
+  revision_requested_by?: string | null;       // buyer user id who last requested revision
+  active_escalation_id?: string | null;        // FK → marketplace_delivery_escalations.id (open/under_review/more_evidence_required)
 
   // ── B3 — PayPal Checkout safety ─────────────────────────────────────────
   // Which pathway produced the successful payment on this order. `null` until
@@ -1029,7 +1041,17 @@ export type MarketplaceFinancialEventType =
   | 'OWNER_PAYOUT_RECORDED'          // B2
   | 'MARKETPLACE_PAYMENT_REFUNDED'   // B3 — PayPal capture refunded
   | 'MARKETPLACE_PAYMENT_REVERSED'   // B3 — PayPal capture reversed
-  | 'MARKETPLACE_DOUBLE_PAYMENT_FLAGGED'; // B3 — second real payment detected
+  | 'MARKETPLACE_DOUBLE_PAYMENT_FLAGGED' // B3 — second real payment detected
+  // ── B3.2 Gate B — delivery lifecycle events (non-financial-mutating) ────
+  | 'WORK_STARTED'
+  | 'DELIVERY_SUBMITTED'
+  | 'DELIVERY_REVISION_REQUESTED'
+  | 'DELIVERY_RESUBMITTED'
+  | 'DELIVERY_ACCEPTED'
+  | 'DELIVERY_ESCALATED'
+  | 'DELIVERY_MORE_EVIDENCE_REQUESTED'
+  | 'DELIVERY_ESCALATION_REJECTED'
+  | 'DELIVERY_ADMIN_APPROVED';
 
 export interface MarketplaceFinancialEvent {
   id: string;
@@ -1092,3 +1114,55 @@ export interface MarketplacePaymentAttempt {
   is_test_fixture?: boolean;
 }
 
+
+
+// ============================================================
+// Phase B3.2 Gate B — Delivery submissions (versioned, append-only)
+// ============================================================
+export interface MarketplaceDeliverySubmission {
+  id: string;
+  marketplace_order_id: string;
+  submitted_by: string;                   // owner user id
+  submitted_at: Date;
+  delivery_urls: string[];                // http/https only, safe URL validated
+  proof_urls: string[];                   // http/https only, safe URL validated
+  proof_description: string | null;
+  notes_to_brand: string | null;
+  revision_number: number;                // 0 for first submission, increments per revision
+  is_test_fixture?: boolean;
+  created_at: Date;
+}
+
+// ============================================================
+// Phase B3.2 Gate B — Delivery escalations (Payment Protection review)
+// ============================================================
+export type MarketplaceDeliveryEscalationStatus =
+  | 'open'
+  | 'under_review'
+  | 'more_evidence_required'
+  | 'resolved_owner'
+  | 'resolved_buyer'
+  | 'closed';
+
+export type MarketplaceDeliveryEscalationReason =
+  | 'buyer_no_response'
+  | 'buyer_accepted_during_review'  // when buyer accepts while an active escalation exists
+  | 'buyer_revision_during_review'; // when buyer requests revision while an active escalation exists
+
+export interface MarketplaceDeliveryEscalation {
+  id: string;
+  marketplace_order_id: string;
+  submission_id: string;                                     // submission being escalated
+  owner_user_id: string;
+  buyer_user_id: string | null;
+  reason: MarketplaceDeliveryEscalationReason;
+  owner_notes: string | null;
+  status: MarketplaceDeliveryEscalationStatus;
+  is_active: boolean;                                        // true iff status ∈ {open, under_review, more_evidence_required}
+  created_at: Date;
+  updated_at: Date;
+  resolved_at: Date | null;
+  resolved_by_user_id: string | null;
+  resolution_notes: string | null;
+  is_test_fixture?: boolean;
+}

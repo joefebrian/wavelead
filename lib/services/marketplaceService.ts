@@ -16,6 +16,8 @@ import { HttpError, hasAtLeastRole, ROLES } from '../auth/rbac';
 import { channelRepo } from '../repositories/channelRepo';
 import {
   channelRateCardRepo,
+  marketplaceDeliveryEscalationRepo,
+  marketplaceDeliverySubmissionRepo,
   marketplaceFinancialEventRepo,
   marketplaceOrderRepo,
   marketplaceOwnerPayoutRepo,
@@ -28,6 +30,8 @@ import type {
   Channel,
   ChannelRateCard,
   IntegrationEnvironment,
+  MarketplaceDeliveryEscalation,
+  MarketplaceDeliverySubmission,
   MarketplaceOrder,
   MarketplaceOrderStatus,
   MarketplaceOwnerPayout,
@@ -124,6 +128,32 @@ function requireAdmin(actor: Actor | null) {
 
 function normalizePaymentReference(ref: string): string {
   return ref.trim().toLowerCase().replace(/\s+/g, '');
+}
+
+/**
+ * B3.2 Gate B — Payment Protection delivery review SLA (hours).
+ * Configurable via env; falls back to 72h.
+ */
+export function getReviewSlaHours(): number {
+  const raw = process.env.MARKETPLACE_DELIVERY_REVIEW_HOURS;
+  const n = raw ? Number(raw) : NaN;
+  if (!Number.isFinite(n) || n <= 0 || n > 24 * 30) return 72;
+  return Math.floor(n);
+}
+
+/**
+ * Safe URL validator — http/https only. Reject javascript:, data:, file:,
+ * ftp:, and malformed input. Returns the canonicalized URL string.
+ */
+export function assertSafeHttpUrl(u: string, label = 'URL'): string {
+  let parsed: URL;
+  try { parsed = new URL(u); }
+  catch { throw new HttpError(400, `${label} is not a valid URL: ${u.slice(0, 80)}`); }
+  const proto = parsed.protocol.toLowerCase();
+  if (proto !== 'http:' && proto !== 'https:') {
+    throw new HttpError(400, `${label} protocol is not allowed: ${proto} (only http/https)`);
+  }
+  return parsed.toString();
 }
 
 // ---------------------------------------------------------------------------
@@ -586,40 +616,69 @@ export const marketplaceService = {
     if (order.status !== 'paid') throw new HttpError(400, `Cannot start work: order status is '${order.status}', not 'paid'`);
     if (order.economics_status !== 'finalized') throw new HttpError(400, 'Cannot start work: order economics are not finalized (gateway fee may be unknown)');
     if (order.owner_payable_status !== 'payable_pending_delivery') throw new HttpError(400, `Cannot start work: owner payable status is '${order.owner_payable_status}'`);
-    return marketplaceOrderRepo.update(orderId, {
+    const updated = await marketplaceOrderRepo.update(orderId, {
       status: 'in_progress',
       started_at: new Date(),
       started_by: actor.user.id,
     });
+    // B3.2 Gate B — audit event (non-financial-mutating).
+    try {
+      await marketplaceFinancialEventRepo.append({
+        order_id: order.id,
+        event_type: 'WORK_STARTED',
+        currency: 'USD',
+        gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
+        gateway_fee_minor: order.gateway_fee_minor,
+        net_amount_minor: order.net_transaction_value_minor,
+        owner_earnings_minor: order.owner_earnings_minor,
+        wavelead_commission_minor: order.wavelead_commission_minor,
+        payment_reference_normalized: order.payment_reference_normalized,
+        actor_user_id: actor.user.id,
+        metadata: {},
+      });
+    } catch { /* audit failure must not block business logic */ }
+    return updated;
   },
 
   /**
-   * B2 — owner submits fulfillment. in_progress → submitted_for_review.
+   * B2 + B3.2 Gate B — owner submits fulfillment.
+   *   in_progress → submitted_for_review   (initial submission, revision_number=0)
+   *   revision_requested → submitted_for_review   (resubmission after buyer revision, revision_number+1)
+   *
    * URL safety: only http:// and https:// are accepted. javascript:/data:/file:
    * and any other schemes are rejected. Server DOES NOT fetch these URLs.
+   *
+   * Evidence requirement: at least one delivery URL OR proof URL must be
+   * supplied. Every submission is persisted as an append-only versioned row
+   * in `marketplace_delivery_submissions` — prior evidence is never lost.
    */
   async submitDelivery(actor: Actor | null, orderId: string, input: unknown): Promise<MarketplaceOrder> {
     if (!actor) throw new HttpError(401, 'You must be signed in');
     const schema = z.object({
-      delivery_notes: z.string().trim().min(1).max(4000),
+      delivery_notes: z.string().trim().max(4000).optional().nullable(),
+      notes_to_brand: z.string().trim().max(4000).optional().nullable(),
       delivery_urls: z.array(z.string().trim().min(1).max(2048)).min(0).max(10).default([]),
+      proof_urls: z.array(z.string().trim().min(1).max(2048)).min(0).max(10).optional().default([]),
       proof_description: z.string().trim().max(2000).optional().nullable(),
     });
     const parsed = schema.safeParse(input);
     if (!parsed.success) throw new HttpError(400, `Invalid input: ${parsed.error.issues[0]?.message}`);
     const d = parsed.data;
 
+    // Notes: accept either legacy `delivery_notes` OR the Gate B `notes_to_brand`.
+    const notesToBrand = (d.notes_to_brand ?? d.delivery_notes ?? '').trim();
+
     // Validate URLs — http/https only, well-formed.
-    const cleanUrls: string[] = [];
-    for (const u of d.delivery_urls) {
-      let parsedUrl: URL;
-      try { parsedUrl = new URL(u); }
-      catch { throw new HttpError(400, `Delivery URL is not a valid URL: ${u.slice(0, 80)}`); }
-      const proto = parsedUrl.protocol.toLowerCase();
-      if (proto !== 'http:' && proto !== 'https:') {
-        throw new HttpError(400, `Delivery URL protocol is not allowed: ${proto} (only http/https)`);
-      }
-      cleanUrls.push(parsedUrl.toString());
+    const cleanDeliveryUrls: string[] = [];
+    for (const u of d.delivery_urls) cleanDeliveryUrls.push(assertSafeHttpUrl(u, 'Delivery URL'));
+    const cleanProofUrls: string[] = [];
+    for (const u of (d.proof_urls || [])) cleanProofUrls.push(assertSafeHttpUrl(u, 'Proof URL'));
+
+    // Evidence requirement — Gate B: at least one delivery URL, proof URL,
+    // OR non-empty notes-to-brand must be supplied. A completely empty
+    // submission is never accepted.
+    if (cleanDeliveryUrls.length === 0 && cleanProofUrls.length === 0 && !notesToBrand) {
+      throw new HttpError(400, 'At least one delivery URL, proof URL, or notes-to-brand is required');
     }
 
     const order = await marketplaceOrderRepo.findById(orderId);
@@ -629,22 +688,76 @@ export const marketplaceService = {
     if (order.payment_reconciliation_required) {
       throw new HttpError(409, 'Cannot submit delivery: payment reconciliation required for this order');
     }
-    if (order.status !== 'in_progress') throw new HttpError(400, `Cannot submit delivery: order status is '${order.status}', not 'in_progress'`);
+    const validFrom: MarketplaceOrderStatus[] = ['in_progress', 'revision_requested'];
+    if (!validFrom.includes(order.status)) {
+      throw new HttpError(400, `Cannot submit delivery: order status is '${order.status}', not 'in_progress' or 'revision_requested'`);
+    }
 
-    return marketplaceOrderRepo.update(orderId, {
+    // Compute revision_number by inspecting prior submissions (append-only).
+    const priorCount = await marketplaceDeliverySubmissionRepo.countByOrder(order.id);
+    const revisionNumber = priorCount;   // 0 for first, +1 per resubmit
+    const isResubmit = order.status === 'revision_requested';
+    const now = new Date();
+
+    const submission: MarketplaceDeliverySubmission = {
+      id: uuidv4(),
+      marketplace_order_id: order.id,
+      submitted_by: actor.user.id,
+      submitted_at: now,
+      delivery_urls: cleanDeliveryUrls,
+      proof_urls: cleanProofUrls,
+      proof_description: d.proof_description || null,
+      notes_to_brand: notesToBrand,
+      revision_number: revisionNumber,
+      created_at: now,
+    };
+    await marketplaceDeliverySubmissionRepo.insert(submission);
+
+    const updated = await marketplaceOrderRepo.update(orderId, {
       status: 'submitted_for_review',
       owner_payable_status: 'submitted_for_review',
-      delivery_notes: d.delivery_notes,
-      delivery_urls: cleanUrls,
+      // Legacy denorm — keeps existing UI/tests reading the "latest" values.
+      delivery_notes: notesToBrand,
+      delivery_urls: cleanDeliveryUrls,
       proof_description: d.proof_description || null,
-      submitted_at: new Date(),
+      submitted_at: now,
       submitted_by: actor.user.id,
+      // B3.2 Gate B — provider-neutral denorm.
+      proof_urls: cleanProofUrls,
+      notes_to_brand: notesToBrand,
+      submitted_for_review_at: now,
+      revision_number: revisionNumber,
+      latest_submission_id: submission.id,
+      // Clear any prior revision request markers now that we've resubmitted.
+      revision_notes_latest: null,
     });
+
+    // Financial-events audit (non-financial-mutating for Gate B).
+    try {
+      await marketplaceFinancialEventRepo.append({
+        order_id: order.id,
+        event_type: isResubmit ? 'DELIVERY_RESUBMITTED' : 'DELIVERY_SUBMITTED',
+        currency: 'USD',
+        gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
+        gateway_fee_minor: order.gateway_fee_minor,
+        net_amount_minor: order.net_transaction_value_minor,
+        owner_earnings_minor: order.owner_earnings_minor,
+        wavelead_commission_minor: order.wavelead_commission_minor,
+        payment_reference_normalized: order.payment_reference_normalized,
+        actor_user_id: actor.user.id,
+        metadata: { submission_id: submission.id, revision_number: revisionNumber },
+      });
+    } catch { /* audit-only */ }
+
+    return updated;
   },
 
   /**
    * B2 — buyer accepts delivery. submitted_for_review → completed.
    * Only order.buyer_user_id may accept.
+   *
+   * B3.2 Gate B — if an active delivery escalation exists, it is atomically
+   * closed as `resolved_owner` with reason `buyer_accepted_during_review`.
    */
   async buyerAcceptDelivery(actor: Actor | null, orderId: string): Promise<MarketplaceOrder> {
     if (!actor) throw new HttpError(401, 'You must be signed in');
@@ -660,6 +773,377 @@ export const marketplaceService = {
       completion_note: null,
     });
   },
+
+  // ==========================================================================
+  // B3.2 Gate B — Buyer revision, delivery escalation, admin resolution
+  // ==========================================================================
+
+  /**
+   * Buyer requests a revision on the currently submitted delivery.
+   * submitted_for_review → revision_requested.
+   * Requires non-empty revision_notes. Only the buyer of the order may call.
+   *
+   * If an active escalation exists, it is atomically closed as
+   * `resolved_buyer` with reason `buyer_revision_during_review`.
+   */
+  async buyerRequestRevision(actor: Actor | null, orderId: string, input: unknown): Promise<MarketplaceOrder> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const schema = z.object({ revision_notes: z.string().trim().min(3).max(4000) });
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) throw new HttpError(400, 'revision_notes is required (3–4000 chars)');
+    const revisionNotes = parsed.data.revision_notes;
+
+    const order = await marketplaceOrderRepo.findById(orderId);
+    if (!order) throw new HttpError(404, 'Order not found');
+    if (!order.buyer_user_id || order.buyer_user_id !== actor.user.id) {
+      throw new HttpError(403, 'Only the buyer of this sponsorship may request a revision');
+    }
+    if (order.status !== 'submitted_for_review') {
+      throw new HttpError(400, `Cannot request revision: order status is '${order.status}', not 'submitted_for_review'`);
+    }
+    // B3.1 — reconciliation block still applies.
+    if (order.payment_reconciliation_required) {
+      throw new HttpError(409, 'Cannot request revision: payment reconciliation required for this order');
+    }
+
+    const now = new Date();
+    const updated = await marketplaceOrderRepo.update(order.id, {
+      status: 'revision_requested',
+      // Owner payable reverts — work is again pending delivery.
+      owner_payable_status: 'payable_pending_delivery',
+      revision_notes_latest: revisionNotes,
+      revision_requested_at: now,
+      revision_requested_by: actor.user.id,
+      // Delivery is no longer under review; clear the SLA timer input.
+      submitted_for_review_at: null,
+    });
+
+    // Close any active escalation atomically as resolved_buyer.
+    if (order.active_escalation_id) {
+      const closed = await marketplaceDeliveryEscalationRepo.closeActive(order.id, {
+        status: 'resolved_buyer',
+        resolved_at: now,
+        resolved_by_user_id: actor.user.id,
+        resolution_notes: 'Buyer requested revision during review — escalation closed automatically',
+        reason: 'buyer_revision_during_review' as MarketplaceDeliveryEscalation['reason'],
+      });
+      if (closed) {
+        await marketplaceOrderRepo.update(order.id, { active_escalation_id: null });
+      }
+    }
+
+    // Audit event.
+    try {
+      await marketplaceFinancialEventRepo.append({
+        order_id: order.id,
+        event_type: 'DELIVERY_REVISION_REQUESTED',
+        currency: 'USD',
+        gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
+        gateway_fee_minor: order.gateway_fee_minor,
+        net_amount_minor: order.net_transaction_value_minor,
+        owner_earnings_minor: order.owner_earnings_minor,
+        wavelead_commission_minor: order.wavelead_commission_minor,
+        payment_reference_normalized: order.payment_reference_normalized,
+        actor_user_id: actor.user.id,
+        metadata: {
+          submission_id: order.latest_submission_id || null,
+          revision_notes: revisionNotes.slice(0, 1000),
+        },
+      });
+    } catch { /* audit-only */ }
+
+    return updated;
+  },
+
+  /**
+   * Compute whether the delivery review SLA has elapsed since the most
+   * recent submitted_for_review_at. Never returns true if the order isn't
+   * in `submitted_for_review` status.
+   */
+  isReviewSlaElapsed(order: MarketplaceOrder, nowMs?: number): boolean {
+    if (order.status !== 'submitted_for_review') return false;
+    const ts = order.submitted_for_review_at || order.submitted_at;
+    if (!ts) return false;
+    const startedMs = ts instanceof Date ? ts.getTime() : new Date(ts as unknown as string).getTime();
+    const now = nowMs ?? Date.now();
+    const slaMs = getReviewSlaHours() * 3600 * 1000;
+    return (now - startedMs) >= slaMs;
+  },
+
+  /**
+   * Owner escalates a stalled review to WaveLead. Available only when:
+   *   status = submitted_for_review AND SLA has elapsed AND buyer has NOT
+   *   accepted or requested revision.
+   * Idempotent: repeated calls return the existing active escalation.
+   */
+  async ownerReportNoResponse(actor: Actor | null, orderId: string, input: unknown): Promise<MarketplaceDeliveryEscalation> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const schema = z.object({ owner_notes: z.string().trim().max(4000).optional().nullable() });
+    const parsed = schema.safeParse(input || {});
+    if (!parsed.success) throw new HttpError(400, `Invalid input: ${parsed.error.issues[0]?.message}`);
+    const notes = parsed.data.owner_notes || null;
+
+    const order = await marketplaceOrderRepo.findById(orderId);
+    if (!order) throw new HttpError(404, 'Order not found');
+    if (order.owner_user_id !== actor.user.id) {
+      throw new HttpError(403, 'Only the channel owner may escalate this order');
+    }
+    if (order.status !== 'submitted_for_review') {
+      throw new HttpError(400, `Cannot escalate: order status is '${order.status}', not 'submitted_for_review'`);
+    }
+    if (!this.isReviewSlaElapsed(order)) {
+      throw new HttpError(400, `Cannot escalate yet: review SLA (${getReviewSlaHours()}h) has not elapsed`);
+    }
+
+    // Idempotency: if an active escalation exists, return it.
+    const existing = await marketplaceDeliveryEscalationRepo.findActiveByOrder(order.id);
+    if (existing) return existing;
+
+    const submissionId = order.latest_submission_id;
+    if (!submissionId) {
+      throw new HttpError(500, 'No submission found to escalate — this is a data integrity issue');
+    }
+
+    const now = new Date();
+    const escalation: MarketplaceDeliveryEscalation = {
+      id: uuidv4(),
+      marketplace_order_id: order.id,
+      submission_id: submissionId,
+      owner_user_id: order.owner_user_id,
+      buyer_user_id: order.buyer_user_id,
+      reason: 'buyer_no_response',
+      owner_notes: notes,
+      status: 'open',
+      is_active: true,
+      created_at: now,
+      updated_at: now,
+      resolved_at: null,
+      resolved_by_user_id: null,
+      resolution_notes: null,
+    };
+    try {
+      await marketplaceDeliveryEscalationRepo.insert(escalation);
+    } catch (e) {
+      // Race with another insert — refetch and return the winning row.
+      if (/E11000|duplicate key/i.test((e as Error).message)) {
+        const cur = await marketplaceDeliveryEscalationRepo.findActiveByOrder(order.id);
+        if (cur) return cur;
+      }
+      throw e;
+    }
+    await marketplaceOrderRepo.update(order.id, { active_escalation_id: escalation.id });
+
+    // Audit event.
+    try {
+      await marketplaceFinancialEventRepo.append({
+        order_id: order.id,
+        event_type: 'DELIVERY_ESCALATED',
+        currency: 'USD',
+        gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
+        gateway_fee_minor: order.gateway_fee_minor,
+        net_amount_minor: order.net_transaction_value_minor,
+        owner_earnings_minor: order.owner_earnings_minor,
+        wavelead_commission_minor: order.wavelead_commission_minor,
+        payment_reference_normalized: order.payment_reference_normalized,
+        actor_user_id: actor.user.id,
+        metadata: {
+          escalation_id: escalation.id,
+          submission_id: submissionId,
+          reason: 'buyer_no_response',
+          sla_hours: getReviewSlaHours(),
+        },
+      });
+    } catch { /* audit-only */ }
+
+    return escalation;
+  },
+
+  /**
+   * Admin approves the delivery via an escalation review — completes the
+   * order and grants owner-payout eligibility. Does NOT send any money.
+   *
+   * Persist completion_source='admin_delivery_resolution' (never masquerade
+   * as buyer_accepted).
+   */
+  async adminApproveDeliveryEscalation(actor: Actor | null, escalationId: string, input: unknown): Promise<{ order: MarketplaceOrder; escalation: MarketplaceDeliveryEscalation }> {
+    requireAdmin(actor);
+    const schema = z.object({ resolution_notes: z.string().trim().min(3).max(4000) });
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) throw new HttpError(400, 'resolution_notes is required (3–4000 chars)');
+    const resolutionNotes = parsed.data.resolution_notes;
+
+    const esc = await marketplaceDeliveryEscalationRepo.findById(escalationId);
+    if (!esc) throw new HttpError(404, 'Escalation not found');
+    if (!esc.is_active) throw new HttpError(409, `Escalation is no longer active (status='${esc.status}')`);
+
+    const order = await marketplaceOrderRepo.findById(esc.marketplace_order_id);
+    if (!order) throw new HttpError(404, 'Order not found');
+    if (order.status !== 'submitted_for_review') {
+      throw new HttpError(409, `Cannot admin-approve: order status is '${order.status}', not 'submitted_for_review'`);
+    }
+    if (order.latest_submission_id !== esc.submission_id) {
+      throw new HttpError(409, 'Escalation references an older submission — a newer delivery has been submitted since');
+    }
+    if (order.economics_status !== 'finalized') {
+      throw new HttpError(409, 'Cannot admin-approve: order economics are not finalized');
+    }
+    if (order.payment_reconciliation_required) {
+      throw new HttpError(409, 'Cannot admin-approve: payment reconciliation required for this order');
+    }
+
+    // Finalize via shared completion path — grants payout eligibility if all
+    // invariants hold, appends DELIVERY_COMPLETED + DELIVERY_ADMIN_APPROVED +
+    // OWNER_PAYABLE_ELIGIBLE. Also closes the active escalation.
+    const updatedOrder = await this._finalizeCompletion(order, {
+      completed_by: actor!.user.id,
+      completion_source: 'admin_delivery_resolution',
+      completion_note: resolutionNotes,
+    });
+
+    // Ensure escalation is closed as resolved_owner even if _finalizeCompletion
+    // didn't (defense-in-depth).
+    const escAfter = await marketplaceDeliveryEscalationRepo.findById(esc.id);
+    let finalEsc = escAfter!;
+    if (finalEsc.is_active) {
+      finalEsc = await marketplaceDeliveryEscalationRepo.update(esc.id, {
+        status: 'resolved_owner',
+        is_active: false,
+        resolved_at: new Date(),
+        resolved_by_user_id: actor!.user.id,
+        resolution_notes: resolutionNotes,
+      });
+      await marketplaceOrderRepo.update(order.id, { active_escalation_id: null });
+    }
+
+    return { order: updatedOrder, escalation: finalEsc };
+  },
+
+  /**
+   * Admin requests more evidence — escalation stays active but shifts to
+   * `more_evidence_required`. Owner can then add evidence and resubmit
+   * (existing submissions preserved).
+   */
+  async adminRequestMoreEvidence(actor: Actor | null, escalationId: string, input: unknown): Promise<MarketplaceDeliveryEscalation> {
+    requireAdmin(actor);
+    const schema = z.object({ resolution_notes: z.string().trim().min(3).max(4000) });
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) throw new HttpError(400, 'resolution_notes is required (3–4000 chars)');
+    const resolutionNotes = parsed.data.resolution_notes;
+
+    const esc = await marketplaceDeliveryEscalationRepo.findById(escalationId);
+    if (!esc) throw new HttpError(404, 'Escalation not found');
+    if (!esc.is_active) throw new HttpError(409, `Escalation is no longer active (status='${esc.status}')`);
+    if (esc.status !== 'open' && esc.status !== 'under_review') {
+      throw new HttpError(409, `Cannot request more evidence: escalation status is '${esc.status}'`);
+    }
+    const updated = await marketplaceDeliveryEscalationRepo.update(esc.id, {
+      status: 'more_evidence_required',
+      is_active: true,
+      resolution_notes: resolutionNotes,
+    });
+
+    // Audit event.
+    try {
+      const order = await marketplaceOrderRepo.findById(esc.marketplace_order_id);
+      if (order) {
+        await marketplaceFinancialEventRepo.append({
+          order_id: order.id,
+          event_type: 'DELIVERY_MORE_EVIDENCE_REQUESTED',
+          currency: 'USD',
+          gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
+          gateway_fee_minor: order.gateway_fee_minor,
+          net_amount_minor: order.net_transaction_value_minor,
+          owner_earnings_minor: order.owner_earnings_minor,
+          wavelead_commission_minor: order.wavelead_commission_minor,
+          payment_reference_normalized: order.payment_reference_normalized,
+          actor_user_id: actor!.user.id,
+          metadata: { escalation_id: esc.id, resolution_notes: resolutionNotes.slice(0, 1000) },
+        });
+      }
+    } catch { /* audit-only */ }
+
+    return updated;
+  },
+
+  /**
+   * Admin rejects the escalation — evidence insufficient. Escalation closes
+   * as resolved_buyer; order stays in `submitted_for_review` so buyer may
+   * still accept or request revision. Order does NOT become payout eligible.
+   */
+  async adminRejectEscalation(actor: Actor | null, escalationId: string, input: unknown): Promise<MarketplaceDeliveryEscalation> {
+    requireAdmin(actor);
+    const schema = z.object({ resolution_notes: z.string().trim().min(3).max(4000) });
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) throw new HttpError(400, 'resolution_notes is required (3–4000 chars)');
+    const resolutionNotes = parsed.data.resolution_notes;
+
+    const esc = await marketplaceDeliveryEscalationRepo.findById(escalationId);
+    if (!esc) throw new HttpError(404, 'Escalation not found');
+    if (!esc.is_active) throw new HttpError(409, `Escalation is no longer active (status='${esc.status}')`);
+
+    const now = new Date();
+    const updated = await marketplaceDeliveryEscalationRepo.update(esc.id, {
+      status: 'resolved_buyer',
+      is_active: false,
+      resolved_at: now,
+      resolved_by_user_id: actor!.user.id,
+      resolution_notes: resolutionNotes,
+    });
+    await marketplaceOrderRepo.update(esc.marketplace_order_id, { active_escalation_id: null });
+
+    // Audit event.
+    try {
+      const order = await marketplaceOrderRepo.findById(esc.marketplace_order_id);
+      if (order) {
+        await marketplaceFinancialEventRepo.append({
+          order_id: order.id,
+          event_type: 'DELIVERY_ESCALATION_REJECTED',
+          currency: 'USD',
+          gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
+          gateway_fee_minor: order.gateway_fee_minor,
+          net_amount_minor: order.net_transaction_value_minor,
+          owner_earnings_minor: order.owner_earnings_minor,
+          wavelead_commission_minor: order.wavelead_commission_minor,
+          payment_reference_normalized: order.payment_reference_normalized,
+          actor_user_id: actor!.user.id,
+          metadata: { escalation_id: esc.id, resolution_notes: resolutionNotes.slice(0, 1000) },
+        });
+      }
+    } catch { /* audit-only */ }
+
+    return updated;
+  },
+
+  /**
+   * Fetch the delivery history + current escalation state for the given
+   * order. Authorized viewers: buyer, owner, or admin.
+   */
+  async getDeliveryHistory(actor: Actor | null, orderId: string): Promise<{
+    order: MarketplaceOrder;
+    submissions: MarketplaceDeliverySubmission[];
+    escalation: MarketplaceDeliveryEscalation | null;
+    review_sla_hours: number;
+  }> {
+    if (!actor) throw new HttpError(401, 'You must be signed in');
+    const order = await marketplaceOrderRepo.findById(orderId);
+    if (!order) throw new HttpError(404, 'Order not found');
+    const isAdmin = hasAtLeastRole(actor.user, ROLES.ADMIN);
+    if (!isAdmin && actor.user.id !== order.owner_user_id && actor.user.id !== order.buyer_user_id) {
+      throw new HttpError(403, 'You do not have access to this order\'s delivery history');
+    }
+    const submissions = await marketplaceDeliverySubmissionRepo.listByOrder(order.id);
+    const escalation = await marketplaceDeliveryEscalationRepo.findActiveByOrder(order.id);
+    return { order, submissions, escalation, review_sla_hours: getReviewSlaHours() };
+  },
+
+  /**
+   * Admin — list all active or recent escalations for the Delivery Reviews tab.
+   */
+  async adminListEscalations(actor: Actor | null, filter: { is_active?: boolean } = {}): Promise<MarketplaceDeliveryEscalation[]> {
+    requireAdmin(actor);
+    return marketplaceDeliveryEscalationRepo.listAdmin(filter);
+  },
+
 
   /**
    * B2 — admin/super_admin completion override. Requires a note.
@@ -686,10 +1170,14 @@ export const marketplaceService = {
    * Internal — shared completion path: writes completed_* fields, computes
    * payout eligibility, appends DELIVERY_COMPLETED + OWNER_PAYABLE_ELIGIBLE
    * financial events. Called by buyer accept and admin override.
+   *
+   * B3.2 Gate B — also appends the Gate B semantic audit events
+   * (DELIVERY_ACCEPTED / DELIVERY_ADMIN_APPROVED) and closes any active
+   * escalation.
    */
   async _finalizeCompletion(
     order: MarketplaceOrder,
-    who: { completed_by: string; completion_source: 'buyer' | 'admin'; completion_note: string | null },
+    who: { completed_by: string; completion_source: 'buyer' | 'admin' | 'admin_delivery_resolution'; completion_note: string | null },
   ): Promise<MarketplaceOrder> {
     const now = new Date();
     const nextPayable = deriveOwnerPayableAfterCompletion(order);
@@ -715,6 +1203,60 @@ export const marketplaceService = {
       actor_user_id: who.completed_by,
       metadata: { completion_source: who.completion_source },
     });
+    // B3.2 Gate B — semantic audit events for buyer accept / admin resolution.
+    if (who.completion_source === 'buyer') {
+      try {
+        await marketplaceFinancialEventRepo.append({
+          order_id: order.id,
+          event_type: 'DELIVERY_ACCEPTED',
+          currency: 'USD',
+          gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
+          gateway_fee_minor: order.gateway_fee_minor,
+          net_amount_minor: order.net_transaction_value_minor,
+          owner_earnings_minor: order.owner_earnings_minor,
+          wavelead_commission_minor: order.wavelead_commission_minor,
+          payment_reference_normalized: order.payment_reference_normalized,
+          actor_user_id: who.completed_by,
+          metadata: { submission_id: order.latest_submission_id || null },
+        });
+      } catch { /* audit-only */ }
+    }
+    if (who.completion_source === 'admin_delivery_resolution') {
+      try {
+        await marketplaceFinancialEventRepo.append({
+          order_id: order.id,
+          event_type: 'DELIVERY_ADMIN_APPROVED',
+          currency: 'USD',
+          gross_amount_minor: order.snapshot?.gross_price_minor ?? null,
+          gateway_fee_minor: order.gateway_fee_minor,
+          net_amount_minor: order.net_transaction_value_minor,
+          owner_earnings_minor: order.owner_earnings_minor,
+          wavelead_commission_minor: order.wavelead_commission_minor,
+          payment_reference_normalized: order.payment_reference_normalized,
+          actor_user_id: who.completed_by,
+          metadata: { submission_id: order.latest_submission_id || null, completion_note: who.completion_note },
+        });
+      } catch { /* audit-only */ }
+    }
+    // Close any currently-active escalation atomically.
+    if (order.active_escalation_id) {
+      try {
+        const reason: 'buyer_accepted_during_review' | 'buyer_no_response' =
+          who.completion_source === 'buyer' ? 'buyer_accepted_during_review' : 'buyer_no_response';
+        const closed = await marketplaceDeliveryEscalationRepo.closeActive(order.id, {
+          status: 'resolved_owner',
+          resolved_at: now,
+          resolved_by_user_id: who.completed_by,
+          resolution_notes: who.completion_source === 'buyer'
+            ? 'Buyer accepted delivery — escalation closed automatically'
+            : (who.completion_note || 'Admin approved delivery'),
+          reason: reason as MarketplaceDeliveryEscalation['reason'],
+        });
+        if (closed) {
+          await marketplaceOrderRepo.update(order.id, { active_escalation_id: null });
+        }
+      } catch { /* escalation close is best-effort — audit-only */ }
+    }
     if (nextPayable === 'eligible_for_payout') {
       await marketplaceFinancialEventRepo.append({
         order_id: order.id,

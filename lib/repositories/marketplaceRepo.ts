@@ -4,6 +4,9 @@ import { COLLECTIONS } from '../db/collections';
 import { getCollection, stripId, stripIds } from '../db/mongo';
 import type {
   ChannelRateCard,
+  MarketplaceDeliveryEscalation,
+  MarketplaceDeliveryEscalationStatus,
+  MarketplaceDeliverySubmission,
   MarketplaceFinancialEvent,
   MarketplaceOrder,
   MarketplaceOrderStatus,
@@ -174,5 +177,75 @@ export const marketplacePaymentAttemptRepo = {
       { returnDocument: 'after' },
     );
     return stripId(res as unknown as MarketplacePaymentAttempt | null);
+  },
+};
+
+
+// ============================================================
+// Phase B3.2 Gate B — delivery submissions (versioned) & escalations
+// ============================================================
+export const marketplaceDeliverySubmissionRepo = {
+  async insert(s: MarketplaceDeliverySubmission): Promise<MarketplaceDeliverySubmission> {
+    const c = await getCollection<MarketplaceDeliverySubmission>(COLLECTIONS.MARKETPLACE_DELIVERY_SUBMISSIONS);
+    await c.insertOne(s);
+    return stripId(s) as MarketplaceDeliverySubmission;
+  },
+  async findById(id: string): Promise<MarketplaceDeliverySubmission | null> {
+    const c = await getCollection<MarketplaceDeliverySubmission>(COLLECTIONS.MARKETPLACE_DELIVERY_SUBMISSIONS);
+    return stripId(await c.findOne({ id })) as MarketplaceDeliverySubmission | null;
+  },
+  async listByOrder(marketplace_order_id: string): Promise<MarketplaceDeliverySubmission[]> {
+    const c = await getCollection<MarketplaceDeliverySubmission>(COLLECTIONS.MARKETPLACE_DELIVERY_SUBMISSIONS);
+    return stripIds(await c.find({ marketplace_order_id }).sort({ submitted_at: 1 }).toArray()) as MarketplaceDeliverySubmission[];
+  },
+  async findLatestByOrder(marketplace_order_id: string): Promise<MarketplaceDeliverySubmission | null> {
+    const c = await getCollection<MarketplaceDeliverySubmission>(COLLECTIONS.MARKETPLACE_DELIVERY_SUBMISSIONS);
+    return stripId(await c.findOne({ marketplace_order_id }, { sort: { revision_number: -1 } })) as MarketplaceDeliverySubmission | null;
+  },
+  async countByOrder(marketplace_order_id: string): Promise<number> {
+    const c = await getCollection<MarketplaceDeliverySubmission>(COLLECTIONS.MARKETPLACE_DELIVERY_SUBMISSIONS);
+    return c.countDocuments({ marketplace_order_id });
+  },
+};
+
+export const marketplaceDeliveryEscalationRepo = {
+  async insert(e: MarketplaceDeliveryEscalation): Promise<MarketplaceDeliveryEscalation> {
+    const c = await getCollection<MarketplaceDeliveryEscalation>(COLLECTIONS.MARKETPLACE_DELIVERY_ESCALATIONS);
+    await c.insertOne(e);
+    return stripId(e) as MarketplaceDeliveryEscalation;
+  },
+  async findById(id: string): Promise<MarketplaceDeliveryEscalation | null> {
+    const c = await getCollection<MarketplaceDeliveryEscalation>(COLLECTIONS.MARKETPLACE_DELIVERY_ESCALATIONS);
+    return stripId(await c.findOne({ id })) as MarketplaceDeliveryEscalation | null;
+  },
+  async findActiveByOrder(marketplace_order_id: string): Promise<MarketplaceDeliveryEscalation | null> {
+    const c = await getCollection<MarketplaceDeliveryEscalation>(COLLECTIONS.MARKETPLACE_DELIVERY_ESCALATIONS);
+    return stripId(await c.findOne({ marketplace_order_id, is_active: true })) as MarketplaceDeliveryEscalation | null;
+  },
+  async update(id: string, patch: Partial<MarketplaceDeliveryEscalation>): Promise<MarketplaceDeliveryEscalation> {
+    const c = await getCollection<MarketplaceDeliveryEscalation>(COLLECTIONS.MARKETPLACE_DELIVERY_ESCALATIONS);
+    await c.updateOne({ id }, { $set: { ...patch, updated_at: new Date() } });
+    return stripId(await c.findOne({ id })) as MarketplaceDeliveryEscalation;
+  },
+  async listAdmin(filter: { status?: MarketplaceDeliveryEscalationStatus; is_active?: boolean } = {}): Promise<MarketplaceDeliveryEscalation[]> {
+    const c = await getCollection<MarketplaceDeliveryEscalation>(COLLECTIONS.MARKETPLACE_DELIVERY_ESCALATIONS);
+    const q: Record<string, unknown> = {};
+    if (filter.status) q.status = filter.status;
+    if (typeof filter.is_active === 'boolean') q.is_active = filter.is_active;
+    return stripIds(await c.find(q).sort({ created_at: -1 }).limit(500).toArray()) as MarketplaceDeliveryEscalation[];
+  },
+  /**
+   * Atomically flip is_active=true → is_active=false with a new status. Used
+   * to close/resolve exactly the currently-active escalation (idempotency
+   * safety when buyer + admin race).
+   */
+  async closeActive(marketplace_order_id: string, patch: Partial<MarketplaceDeliveryEscalation>): Promise<MarketplaceDeliveryEscalation | null> {
+    const c = await getCollection<MarketplaceDeliveryEscalation>(COLLECTIONS.MARKETPLACE_DELIVERY_ESCALATIONS);
+    const res = await c.findOneAndUpdate(
+      { marketplace_order_id, is_active: true },
+      { $set: { ...patch, is_active: false, updated_at: new Date() } },
+      { returnDocument: 'after' },
+    );
+    return stripId(res as unknown as MarketplaceDeliveryEscalation | null);
   },
 };

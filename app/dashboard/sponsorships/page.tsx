@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { marketplaceOrderRepo } from '@/lib/repositories/marketplaceRepo';
 import BrandAcceptDeliveryButton from './BrandAcceptDeliveryButton';
+import BrandRequestRevisionButton from './BrandRequestRevisionButton';
 import BuyerPayPalButton from './BuyerPayPalButton';
 import BuyerPaymentReturnPanel from './BuyerPaymentReturnPanel';
 
@@ -43,9 +44,12 @@ export default async function BrandSponsorshipsPage() {
                 <div className="mt-2 text-sm">Price: <span className="font-medium">${(priceMinor / 100).toFixed(2)}</span></div>
                 <div className="mt-1 text-sm text-muted-foreground line-clamp-3">{o.brief.brief}</div>
 
-                {/* B3 — Pay with PayPal for awaiting_payment fixed-price orders. */}
                 {o.status === 'awaiting_payment' && o.snapshot && (
                   <div className="mt-3 border-t border-border/60 pt-3">
+                    <div className="mb-3 rounded-md border border-primary/20 bg-primary/5 p-3 text-xs">
+                      <div className="font-semibold text-primary">Payment Protection</div>
+                      <div className="mt-0.5 text-muted-foreground">Payment is released for owner payout eligibility only after you approve the completed delivery, or after a WaveLead review if a submitted delivery is left unanswered beyond the review period.</div>
+                    </div>
                     <BuyerPayPalButton orderId={o.id} amountMinor={o.snapshot.gross_price_minor} currency={o.snapshot.currency} />
                   </div>
                 )}
@@ -54,20 +58,45 @@ export default async function BrandSponsorshipsPage() {
                   <div className="mt-2 text-sm text-emerald-700">Payment confirmed. Awaiting channel owner to begin work.</div>
                 )}
 
+                {o.status === 'in_progress' && (
+                  <div className="mt-2 text-sm text-indigo-700">Work in progress — the channel owner has started your sponsorship.</div>
+                )}
+
+                {o.status === 'revision_requested' && (
+                  <div className="mt-2 text-sm text-amber-800">Revision requested — the channel owner will resubmit the delivery.</div>
+                )}
+
                 {o.status === 'submitted_for_review' && (
                   <div className="mt-3 border-t border-border/60 pt-3 space-y-2">
                     <div className="text-xs uppercase tracking-wide font-semibold text-primary">Delivery Submitted</div>
-                    {o.delivery_notes && <div className="text-sm"><span className="text-muted-foreground">Notes: </span>{o.delivery_notes}</div>}
+                    {o.notes_to_brand ? (
+                      <div className="text-sm"><span className="text-muted-foreground">Notes: </span>{o.notes_to_brand}</div>
+                    ) : (o.delivery_notes && <div className="text-sm"><span className="text-muted-foreground">Notes: </span>{o.delivery_notes}</div>)}
                     {(o.delivery_urls?.length ?? 0) > 0 && (
                       <div className="text-sm">
-                        <span className="text-muted-foreground">Proof: </span>
+                        <span className="text-muted-foreground">Delivery: </span>
                         {o.delivery_urls.map((u, i) => (
                           <a key={i} href={u} target="_blank" rel="noopener nofollow noreferrer" className="text-primary underline break-all">{u}</a>
                         )).reduce((acc, el, idx) => idx === 0 ? [el] : [...acc, <span key={`sep-${idx}`} className="text-muted-foreground">, </span>, el], [] as React.ReactNode[])}
                       </div>
                     )}
+                    {(o.proof_urls?.length ?? 0) > 0 && (
+                      <div className="text-sm">
+                        <span className="text-muted-foreground">Proof: </span>
+                        {(o.proof_urls || []).map((u, i) => (
+                          <a key={i} href={u} target="_blank" rel="noopener nofollow noreferrer" className="text-primary underline break-all">{u}</a>
+                        )).reduce((acc, el, idx) => idx === 0 ? [el] : [...acc, <span key={`sep-${idx}`} className="text-muted-foreground">, </span>, el], [] as React.ReactNode[])}
+                      </div>
+                    )}
                     {o.proof_description && <div className="text-sm text-muted-foreground">{o.proof_description}</div>}
-                    <BrandAcceptDeliveryButton orderId={o.id} />
+                    <div className="mt-3 flex flex-wrap items-start gap-3">
+                      <BrandAcceptDeliveryButton orderId={o.id} />
+                      <BrandRequestRevisionButton orderId={o.id} />
+                    </div>
+                    <div className="mt-2 rounded-md border border-primary/20 bg-primary/5 p-2 text-xs text-muted-foreground">
+                      <span className="font-semibold text-primary">Payment Protection: </span>
+                      Owner payout eligibility begins only after you accept this delivery — or, if left unanswered beyond the review period, after a WaveLead review.
+                    </div>
                   </div>
                 )}
                 {o.status === 'completed' && (
@@ -88,6 +117,7 @@ function statusStyle(s: string): string {
   if (s === 'owner_accepted') return 'bg-sky-100 text-sky-800';
   if (s === 'in_progress') return 'bg-indigo-100 text-indigo-800';
   if (s === 'submitted_for_review') return 'bg-violet-100 text-violet-800';
+  if (s === 'revision_requested') return 'bg-amber-100 text-amber-800';
   if (s === 'owner_rejected' || s === 'cancelled') return 'bg-slate-200 text-slate-700';
   return 'bg-primary/10 text-primary';
 }

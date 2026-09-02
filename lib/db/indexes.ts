@@ -212,5 +212,20 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { provider: 1, provider_order_id: 1 }, unique: true, name: 'uniq_provider_order', partialFilterExpression: { provider_order_id: { $type: 'string' } } },
       { key: { provider: 1, provider_capture_id: 1 }, unique: true, name: 'uniq_provider_capture', partialFilterExpression: { provider_capture_id: { $type: 'string' } } },
     ]),
+    // Phase B3.2 Gate B — Delivery submissions (versioned, append-only)
+    db.collection(COLLECTIONS.MARKETPLACE_DELIVERY_SUBMISSIONS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { marketplace_order_id: 1, revision_number: 1 }, unique: true, name: 'uniq_order_revision' },
+      { key: { marketplace_order_id: 1, submitted_at: -1 }, name: 'by_order_time' },
+    ]),
+    // Phase B3.2 Gate B — Delivery escalations
+    // At most ONE active escalation per (order, submission) — enforced by
+    // partial unique on is_active=true.
+    db.collection(COLLECTIONS.MARKETPLACE_DELIVERY_ESCALATIONS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { marketplace_order_id: 1, submission_id: 1, is_active: 1 }, unique: true, name: 'uniq_active_per_submission', partialFilterExpression: { is_active: true } },
+      { key: { status: 1, created_at: -1 }, name: 'by_status_time' },
+      { key: { marketplace_order_id: 1, created_at: -1 }, name: 'by_order_time' },
+    ]),
   ]);
 }

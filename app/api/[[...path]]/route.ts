@@ -1419,6 +1419,70 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const order = await marketplaceService.buyerAcceptDelivery(actor, path[2]);
       return applyCors(ok({ order }), request);
     }
+    // ── Phase B3.2 Gate B — Delivery + Payment Protection ──────────────────
+    // Buyer: request revision (submitted_for_review → revision_requested)
+    if (path.length === 4 && path[0] === 'marketplace' && path[1] === 'orders' && path[3] === 'request-revision' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      const order = await marketplaceService.buyerRequestRevision(actor, path[2], body);
+      return applyCors(ok({ order }), request);
+    }
+    // Owner: report no response (creates delivery escalation)
+    if (path.length === 4 && path[0] === 'marketplace' && path[1] === 'orders' && path[3] === 'report-no-response' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      const escalation = await marketplaceService.ownerReportNoResponse(actor, path[2], body);
+      return applyCors(ok({ escalation }), request);
+    }
+    // Buyer/Owner/Admin: read full delivery history + current escalation
+    if (path.length === 4 && path[0] === 'marketplace' && path[1] === 'orders' && path[3] === 'deliveries' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      const data = await marketplaceService.getDeliveryHistory(actor, path[2]);
+      return applyCors(ok(data), request);
+    }
+    // Admin: list escalations
+    if (path.length === 3 && path[0] === 'admin' && path[1] === 'marketplace' && path[2] === 'escalations' && method === 'GET') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const url = new URL(request.url);
+      const isActiveParam = url.searchParams.get('is_active');
+      const filter: { is_active?: boolean } = {};
+      if (isActiveParam === 'true') filter.is_active = true;
+      else if (isActiveParam === 'false') filter.is_active = false;
+      const escalations = await marketplaceService.adminListEscalations(actor, filter);
+      return applyCors(ok({ escalations }), request);
+    }
+    // Admin: approve delivery via escalation (submitted_for_review → completed)
+    if (path.length === 5 && path[0] === 'admin' && path[1] === 'marketplace' && path[2] === 'escalations' && path[4] === 'approve' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const body = await safeJson(request);
+      const { order, escalation } = await marketplaceService.adminApproveDeliveryEscalation(actor, path[3], body);
+      return applyCors(ok({ order, escalation }), request);
+    }
+    // Admin: request more evidence
+    if (path.length === 5 && path[0] === 'admin' && path[1] === 'marketplace' && path[2] === 'escalations' && path[4] === 'request-evidence' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const body = await safeJson(request);
+      const escalation = await marketplaceService.adminRequestMoreEvidence(actor, path[3], body);
+      return applyCors(ok({ escalation }), request);
+    }
+    // Admin: reject escalation (evidence insufficient)
+    if (path.length === 5 && path[0] === 'admin' && path[1] === 'marketplace' && path[2] === 'escalations' && path[4] === 'reject' && method === 'POST') {
+      const { marketplaceService } = await import('@/lib/services/marketplaceService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const body = await safeJson(request);
+      const escalation = await marketplaceService.adminRejectEscalation(actor, path[3], body);
+      return applyCors(ok({ escalation }), request);
+    }
     // Buyer: read a single order they own
     if (path.length === 3 && path[0] === 'marketplace' && path[1] === 'buyer' && method === 'GET' && path[2] !== 'orders') {
       // /marketplace/buyer/:orderId — only if this is not the list endpoint above

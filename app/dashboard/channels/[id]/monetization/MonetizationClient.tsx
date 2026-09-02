@@ -72,18 +72,34 @@ export default function MonetizationClient({
   async function submitDelivery(orderId: string) {
     const notes = deliveryDraft[orderId]?.notes?.trim();
     const urlsRaw = (deliveryDraft[orderId]?.urls || '').split('\n').map((s) => s.trim()).filter(Boolean);
-    if (!notes) { setMsg({ ok: false, text: 'Please add delivery notes.' }); return; }
+    if (!notes && urlsRaw.length === 0) { setMsg({ ok: false, text: 'Please add notes for the brand or at least one delivery URL.' }); return; }
     setBusy(true); setMsg(null);
     try {
       const r = await fetch(`/api/marketplace/orders/${orderId}/submit-delivery`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ delivery_notes: notes, delivery_urls: urlsRaw }),
+        body: JSON.stringify({ notes_to_brand: notes, delivery_urls: urlsRaw }),
       });
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Submission failed');
       setOrders((prev) => prev.map((o) => (o.id === orderId ? j.data.order as MarketplaceOrder : o)));
       setDeliveryDraft((d) => { const n = { ...d }; delete n[orderId]; return n; });
-      setMsg({ ok: true, text: 'Delivery submitted for buyer review.' });
+      setMsg({ ok: true, text: 'Delivery submitted for buyer review. Your earnings are protected by WaveLead until the brand accepts or a WaveLead review completes.' });
+    } catch (e) { setMsg({ ok: false, text: (e as Error).message }); }
+    finally { setBusy(false); }
+  }
+
+  async function reportNoResponse(orderId: string) {
+    if (busy) return;
+    if (!confirm('Ask WaveLead to review this delivery because the brand has not responded within the review period?')) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch(`/api/marketplace/orders/${orderId}/report-no-response`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: '{}',
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j?.error || 'Escalation failed');
+      setMsg({ ok: true, text: 'WaveLead has been notified. A moderator will review your submitted delivery.' });
     } catch (e) { setMsg({ ok: false, text: (e as Error).message }); }
     finally { setBusy(false); }
   }
@@ -191,20 +207,46 @@ export default function MonetizationClient({
               {o.status === 'paid' && o.economics_status !== 'finalized' && (
                 <div className="mt-3 text-sm text-muted-foreground">Payment received. Awaiting fee reconciliation before you can start work.</div>
               )}
-              {o.status === 'in_progress' && (
+              {(o.status === 'in_progress' || o.status === 'revision_requested') && (
                 <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">Submit Delivery</div>
-                  <textarea rows={3} placeholder="Delivery notes — what you did, when it ran, results if any." className={inputCls}
+                  {o.status === 'revision_requested' && (
+                    <div className="mb-2 rounded-md border border-amber-300 bg-amber-50 p-3">
+                      <div className="text-xs uppercase tracking-wide font-semibold text-amber-800">Revision requested</div>
+                      {o.revision_notes_latest && <div className="mt-1 text-sm text-amber-900 whitespace-pre-wrap">{o.revision_notes_latest}</div>}
+                      <div className="mt-1 text-xs text-amber-800/80">Update your work and submit a new delivery below. Your prior submission is preserved in the history.</div>
+                    </div>
+                  )}
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
+                    {o.status === 'revision_requested' ? 'Submit Revised Delivery' : 'Submit Delivery'}
+                  </div>
+                  <textarea rows={3} placeholder="Notes to brand — what you did, when it ran, results if any." className={inputCls}
                     value={deliveryDraft[o.id]?.notes || ''}
                     onChange={(e) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: e.target.value, urls: d[o.id]?.urls || '' } }))} />
                   <input placeholder="Proof URLs (one per line, http/https only)" className={inputCls}
                     value={deliveryDraft[o.id]?.urls || ''}
                     onChange={(e) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: d[o.id]?.notes || '', urls: e.target.value } }))} />
-                  <Button size="sm" onClick={() => submitDelivery(o.id)} disabled={busy}>Submit delivery for review</Button>
+                  <Button size="sm" onClick={() => submitDelivery(o.id)} disabled={busy}>
+                    {o.status === 'revision_requested' ? 'Submit Revision' : 'Submit delivery for review'}
+                  </Button>
                 </div>
               )}
               {o.status === 'submitted_for_review' && (
-                <div className="mt-3 text-sm text-muted-foreground">Awaiting buyer review — you&apos;ll be notified when accepted.</div>
+                <div className="mt-3 space-y-2">
+                  <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
+                    <div className="text-xs uppercase tracking-wide font-semibold text-primary">Delivery submitted</div>
+                    <div className="mt-1 text-sm">The brand is reviewing your delivery.</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">Your earnings are protected by WaveLead while the delivery is under review. Payout eligibility begins after the brand accepts your delivery or WaveLead resolves an eligible delivery review in your favor.</div>
+                  </div>
+                  {isReviewOverdue(o) && (
+                    <div className="rounded-md border border-amber-300 bg-amber-50 p-3">
+                      <div className="text-sm text-amber-900">The brand has not reviewed your submitted delivery within the review period.</div>
+                      <div className="mt-2">
+                        <Button size="sm" variant="outline" onClick={() => reportNoResponse(o.id)} disabled={busy}>Report No Response to WaveLead</Button>
+                      </div>
+                      <div className="mt-1 text-xs text-amber-800/80">This is not a payout request. A WaveLead moderator will review your submitted delivery.</div>
+                    </div>
+                  )}
+                </div>
               )}
               {o.status === 'completed' && (
                 <div className="mt-3 text-sm">
@@ -240,12 +282,25 @@ export default function MonetizationClient({
 
 const tabClass = (a: boolean) => `rounded-md px-3 py-1.5 text-sm font-medium ${a ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-secondary'}`;
 const inputCls = 'block w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40';
+
+// Client-side estimate of the review SLA — the server is authoritative.
+// Keep in sync with MARKETPLACE_DELIVERY_REVIEW_HOURS (default 72h).
+const REVIEW_SLA_HOURS_CLIENT = 72;
+function isReviewOverdue(o: MarketplaceOrder): boolean {
+  if (o.status !== 'submitted_for_review') return false;
+  const ts = o.submitted_for_review_at || o.submitted_at;
+  if (!ts) return false;
+  const startedMs = new Date(ts as unknown as string).getTime();
+  return (Date.now() - startedMs) >= REVIEW_SLA_HOURS_CLIENT * 3600 * 1000;
+}
+
 function statusStyle(s: string): string {
   if (s === 'paid' || s === 'completed') return 'bg-emerald-100 text-emerald-800';
   if (s === 'awaiting_payment') return 'bg-amber-100 text-amber-800';
   if (s === 'owner_accepted') return 'bg-sky-100 text-sky-800';
   if (s === 'in_progress') return 'bg-indigo-100 text-indigo-800';
   if (s === 'submitted_for_review') return 'bg-violet-100 text-violet-800';
+  if (s === 'revision_requested') return 'bg-amber-100 text-amber-800';
   if (s === 'owner_rejected' || s === 'cancelled') return 'bg-slate-200 text-slate-700';
   return 'bg-primary/10 text-primary';
 }

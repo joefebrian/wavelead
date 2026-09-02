@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, AlertTriangle } from 'lucide-react';
-import type { MarketplaceOrder, MarketplaceOwnerPayout, MarketplacePaymentMethod, MarketplacePaymentAttempt } from '@/lib/types';
+import type { MarketplaceDeliveryEscalation, MarketplaceOrder, MarketplaceOwnerPayout, MarketplacePaymentMethod, MarketplacePaymentAttempt } from '@/lib/types';
 
 interface Kpis {
   orders_total: number; awaiting_payment: number; paid: number;
@@ -11,7 +11,7 @@ interface Kpis {
   finalized_owner_earnings_minor: number; finalized_commission_minor: number;
   pending_fee_reconciliation: number;
 }
-type Tab = 'orders' | 'payables' | 'payouts' | 'payments';
+type Tab = 'orders' | 'payables' | 'payouts' | 'payments' | 'reviews';
 type AttemptRow = Omit<MarketplacePaymentAttempt, 'provider_order_id' | 'provider_capture_id'> & {
   provider_order_id: string | null;
   provider_capture_id: string | null;
@@ -28,6 +28,8 @@ export default function AdminMarketplaceClient({ initialItems, initialKpis }: { 
   const [payables, setPayables] = useState<MarketplaceOrder[]>([]);
   const [payouts, setPayouts] = useState<MarketplaceOwnerPayout[]>([]);
   const [payments, setPayments] = useState<AttemptRow[]>([]);
+  const [escalations, setEscalations] = useState<MarketplaceDeliveryEscalation[]>([]);
+  const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [payableFilter, setPayableFilter] = useState<'all' | 'eligible_for_payout' | 'paid_out' | 'blocked_fee_reconciliation' | 'submitted_for_review' | 'manual_reconciliation_required'>('eligible_for_payout');
 
   async function refetch() {
@@ -51,10 +53,33 @@ export default function AdminMarketplaceClient({ initialItems, initialKpis }: { 
     const j = await r.json();
     if (r.ok && j.ok) setPayments(j.data.items);
   }
+  async function refetchEscalations() {
+    const r = await fetch('/api/admin/marketplace/escalations?is_active=true', { credentials: 'include' });
+    const j = await r.json();
+    if (r.ok && j.ok) setEscalations(j.data.escalations || []);
+  }
+  async function escalationAction(escId: string, action: 'approve' | 'request-evidence' | 'reject') {
+    const notes = (reviewNotes[escId] || '').trim();
+    if (notes.length < 3) { alert('Resolution notes are required (at least 3 characters).'); return; }
+    if (action === 'approve' && !confirm('Approve this delivery on behalf of the brand? Owner earnings will become eligible for payout. No money will be sent by this action.')) return;
+    setBusy(escId);
+    try {
+      const r = await fetch(`/api/admin/marketplace/escalations/${escId}/${action}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ resolution_notes: notes }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) { alert(j?.error || 'Action failed'); return; }
+      setReviewNotes((d) => { const n = { ...d }; delete n[escId]; return n; });
+      await refetchEscalations();
+      await refetch();
+    } finally { setBusy(null); }
+  }
 
   useEffect(() => { if (tab === 'payables') refetchPayables(); }, [tab, payableFilter]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab === 'payouts') refetchPayouts(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab === 'payments') refetchPayments(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab === 'reviews') refetchEscalations(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const $$ = (m: number | null | undefined) => m == null ? '—' : `$${(m / 100).toFixed(2)}`;
 
@@ -63,6 +88,7 @@ export default function AdminMarketplaceClient({ initialItems, initialKpis }: { 
       <div className="flex gap-2 border-b border-border pb-3 flex-wrap">
         <button className={tabClass(tab === 'orders')} onClick={() => setTab('orders')}>Orders</button>
         <button className={tabClass(tab === 'payments')} onClick={() => setTab('payments')}>Payments</button>
+        <button className={tabClass(tab === 'reviews')} onClick={() => setTab('reviews')}>Delivery Reviews</button>
         <button className={tabClass(tab === 'payables')} onClick={() => setTab('payables')}>Owner Payables</button>
         <button className={tabClass(tab === 'payouts')} onClick={() => setTab('payouts')}>Payouts</button>
       </div>
@@ -263,6 +289,43 @@ export default function AdminMarketplaceClient({ initialItems, initialKpis }: { 
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {tab === 'reviews' && (
+        <div className="space-y-3" data-testid="admin-delivery-reviews">
+          <div className="rounded-md border border-primary/20 bg-primary/5 p-3 text-xs">
+            <div className="font-semibold text-primary">Delivery Reviews — Payment Protection</div>
+            <div className="mt-0.5 text-muted-foreground">
+              Escalations opened by channel owners when the brand has not reviewed a submitted delivery within the review period.
+              Approving finalizes the order and makes owner earnings eligible for payout. No money is sent by any action here.
+            </div>
+          </div>
+          {escalations.length === 0 && <div className="text-sm text-muted-foreground py-8 text-center">No active delivery escalations.</div>}
+          {escalations.map((e) => (
+            <div key={e.id} className="wh-card p-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="text-sm">
+                  <div>Order <span className="font-mono">{e.marketplace_order_id.slice(0, 8)}</span> · Owner <span className="font-mono">{e.owner_user_id.slice(0, 8)}</span> · Submission <span className="font-mono">{e.submission_id.slice(0, 8)}</span></div>
+                  <div className="text-xs text-muted-foreground">Opened {new Date(e.created_at).toLocaleString()} · Status: {e.status.replace(/_/g, ' ')}</div>
+                </div>
+                <Badge className="bg-amber-100 text-amber-800">{e.status.replace(/_/g, ' ')}</Badge>
+              </div>
+              {e.owner_notes && <div className="mt-2 text-sm"><span className="text-muted-foreground">Owner notes: </span>{e.owner_notes}</div>}
+              <div className="mt-3">
+                <textarea rows={2} placeholder="Resolution notes (required, 3+ chars)"
+                  value={reviewNotes[e.id] || ''}
+                  onChange={(ev) => setReviewNotes((d) => ({ ...d, [e.id]: ev.target.value }))}
+                  className="block w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40" />
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => escalationAction(e.id, 'approve')} disabled={busy === e.id}>Approve Delivery</Button>
+                  <Button size="sm" variant="outline" onClick={() => escalationAction(e.id, 'request-evidence')} disabled={busy === e.id}>Request More Evidence</Button>
+                  <Button size="sm" variant="outline" onClick={() => escalationAction(e.id, 'reject')} disabled={busy === e.id} className="text-rose-700">Reject Escalation</Button>
+                  <a href={`/api/marketplace/orders/${e.marketplace_order_id}/deliveries`} target="_blank" rel="noopener" className="text-xs text-primary underline self-center">View delivery history</a>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
