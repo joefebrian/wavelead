@@ -8,7 +8,7 @@ import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { ownerService } from '@/lib/services/ownerService';
 import { claimService } from '@/lib/services/claimService';
 import { sponsorshipLeadService } from '@/lib/services/sponsorshipLeadService';
-import { KeyRound, ShieldCheck, Send, Megaphone, Wallet, Handshake, Compass, Shield, Users, Cog, Activity } from 'lucide-react';
+import { KeyRound, ShieldCheck, Send, Megaphone, Wallet, Handshake, Compass, Shield, Users, Cog, Activity, Kanban } from 'lucide-react';
 
 export const metadata: Metadata = { title: 'Dashboard', robots: { index: false, follow: false } };
 export const dynamic = 'force-dynamic';
@@ -103,6 +103,18 @@ export default async function DashboardPage() {
             <div className="mt-2 text-3xl font-bold">→</div>
             <div className="mt-3 text-xs text-muted-foreground">Sponsorship packages you&apos;ve requested from channels.</div>
           </Link>
+          <Link
+            href="/dashboard/sponsorships/pipeline"
+            className="wh-card p-5 hover:border-primary/40 transition"
+            data-testid="nav-pipeline-card"
+          >
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Kanban className="h-4 w-4" /> Pipeline
+              <span className="ml-1 text-[10px] font-semibold uppercase tracking-wider text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">Pro</span>
+            </div>
+            <div className="mt-2 text-3xl font-bold">→</div>
+            <div className="mt-3 text-xs text-muted-foreground">Track active sponsorship opportunities across your channels — request to completion.</div>
+          </Link>
           <Link href="/submit" className="wh-card p-5 hover:border-primary/40 transition">
             <div className="flex items-center gap-2 text-sm text-muted-foreground"><Send className="h-4 w-4" /> Submit a channel</div>
             <div className="mt-2 text-3xl font-bold">+</div>
@@ -125,6 +137,14 @@ export default async function DashboardPage() {
           <Link href="/dashboard/channels"><Button variant="outline">My channels</Button></Link>
           <Link href="/dashboard/promotions"><Button variant="outline">Campaigns</Button></Link>
           <Link href="/dashboard/sponsorships"><Button variant="outline">My Sponsorships</Button></Link>
+          <Link href="/dashboard/sponsorships/pipeline" data-testid="nav-pipeline-button">
+            <Button variant="outline" className="gap-1.5">
+              <Kanban className="h-4 w-4" />
+              Pipeline
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">Pro</span>
+            </Button>
+          </Link>
+          <Link href="/dashboard/earnings"><Button variant="outline">Earnings</Button></Link>
           <Link href="/dashboard/billing"><Button variant="outline">Billing</Button></Link>
           <Link href="/dashboard/claims"><Button variant="outline">My claims</Button></Link>
           <Link href="/submit"><Button>Submit a channel</Button></Link>
