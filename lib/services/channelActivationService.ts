@@ -22,6 +22,7 @@ import { getCollection } from '@/lib/db/mongo';
 import { COLLECTIONS } from '@/lib/db/collections';
 import { getPaymentProvider } from '@/lib/services/payments/providerFactory';
 import { readActiveEnvironment } from '@/lib/services/payments/paypalConfigService';
+import { isActivationRequired } from '@/lib/services/payments/activationFlag';
 import { getConfiguredOrigin } from '@/lib/utils/canonicalOrigin';
 import type {
   Actor,
@@ -136,8 +137,46 @@ async function issueActivationCredit(payment: ChannelActivationPayment): Promise
   }
 }
 
-async function tryFinalize(paymentId: string): Promise<ChannelActivationPayment | null> {
-  const c = await payCol();
+// Idempotently append exactly ONE ACTIVATION_CREDIT_REVERSED event with a
+// negative amount equal to the original issuance. The unique index on
+// idempotency_key = 'activation_credit_reversal:{payment_id}' is the load-
+// bearing invariant that prevents duplicates under refund webhook replay,
+// browser callback, admin reconcile retries, or provider retry storms.
+//
+// If no prior ACTIVATION_CREDIT_ISSUED row exists for this payment (e.g., the
+// fee was never reconciled before the refund), we skip \u2014 the credit
+// balance was never incremented for this payment, so nothing to reverse.
+async function ensureCreditReversedForPayment(payment: ChannelActivationPayment): Promise<'reversed' | 'already_reversed' | 'no_credit_to_reverse'> {
+  const c = await creditCol();
+  const issued = await c.findOne({
+    source_type: 'channel_activation_payment',
+    source_id: payment.id,
+    event_type: 'ACTIVATION_CREDIT_ISSUED',
+  });
+  if (!issued) return 'no_credit_to_reverse';
+  const reversalDoc: WaveLeadCreditEvent = {
+    id: uuidv4(),
+    user_id: issued.user_id,
+    currency: issued.currency,
+    amount_minor: -Math.abs(issued.amount_minor),   // strict negative mirror
+    event_type: 'ACTIVATION_CREDIT_REVERSED',
+    source_type: 'channel_activation_payment',
+    source_id: payment.id,
+    provider_capture_id: payment.provider_capture_id,
+    idempotency_key: `activation_credit_reversal:${payment.id}`,
+    created_at: new Date(),
+  };
+  try {
+    await c.insertOne(reversalDoc as unknown as import('mongodb').OptionalUnlessRequiredId<WaveLeadCreditEvent>);
+    return 'reversed';
+  } catch (e) {
+    const msg = (e as { message?: string })?.message || '';
+    if (msg.includes('E11000') || msg.includes('duplicate key')) return 'already_reversed';
+    throw e;
+  }
+}
+
+async function tryFinalize(paymentId: string): Promise<ChannelActivationPayment | null> {  const c = await payCol();
   const p = await c.findOne({ id: paymentId });
   if (!p) return null;
   if (p.status === 'captured_finalized') return p;
@@ -178,6 +217,7 @@ export const channelActivationService = {
       activation_active_at: channel.activation_active_at || null,
       activation_revoked_at: channel.activation_revoked_at || null,
       environment: await currentEnvironment(),
+      activation_required: isActivationRequired(),
       activation_amount_minor: ACTIVATION_AMOUNT_MINOR,
       currency: ACTIVATION_CURRENCY,
       latest_payment: latest ? toOwnerPaymentView(latest) : null,
@@ -322,11 +362,25 @@ export const channelActivationService = {
   // Refund path. Applies the activation-only revocation: activation flips to
   // 'revoked' and public "Owner Verified" state stops rendering, but the
   // channel.owner_id + verification_status stay intact.
+  //
+  // If credit was already issued for this activation, we MUST append exactly
+  // ONE reversing WaveLead Credit event so the derived balance returns to
+  // its pre-activation amount. The ledger stays append-only \u2014 we never
+  // mutate or delete the original ACTIVATION_CREDIT_ISSUED row.
+  //
+  // Reversal is idempotent via the unique index on `idempotency_key`
+  // (`activation_credit_reversal:{payment_id}`). Duplicate refund webhooks,
+  // browser callbacks, and provider retries all coalesce to one -N event.
   async recordRefund(paymentId: string, refund_amount_minor: number): Promise<ChannelActivationPayment | null> {
     const c = await payCol();
     const p = await c.findOne({ id: paymentId });
     if (!p) return null;
-    if (p.status === 'refunded') return p;
+    if (p.status === 'refunded') {
+      // Still ensure a reversal event exists in case the previous refund
+      // record was written without one (defensive; idempotent by unique key).
+      await ensureCreditReversedForPayment(p);
+      return p;
+    }
     const newRefunded = p.amount_refunded_minor + refund_amount_minor;
     const nextStatus: ActivationPaymentStatus = newRefunded >= p.amount_captured_minor ? 'refunded' : 'partially_refunded';
     await c.updateOne({ id: paymentId }, { $set: { amount_refunded_minor: newRefunded, status: nextStatus, refunded_at: new Date(), updated_at: new Date() } });
@@ -336,6 +390,10 @@ export const channelActivationService = {
       activation_status: 'revoked',
       activation_revoked_at: new Date(),
     } as unknown as Partial<Channel>);
+    // Reverse the credit exactly once. If credit was never issued (fee was
+    // not yet reconciled at refund time), we skip \u2014 the balance was
+    // never incremented for this payment.
+    await ensureCreditReversedForPayment({ ...p, amount_refunded_minor: newRefunded, status: nextStatus });
     return c.findOne({ id: paymentId });
   },
 

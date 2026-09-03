@@ -18,6 +18,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { COLLECTIONS } from '@/lib/db/collections';
 import { _setPaymentProviderForTesting } from '@/lib/services/payments/providerFactory';
 import { channelActivationService, waveLeadCreditService, ACTIVATION_AMOUNT_MINOR } from '@/lib/services/channelActivationService';
+import { sanitizeChannel } from '@/lib/utils/sanitize';
 import type { Actor, ChannelActivationPayment } from '@/lib/types';
 import type {
   CreatePaymentInput, CapturePaymentInput, RefundInput, RetrieveCaptureInput,
@@ -199,10 +200,20 @@ describe('M11-Batch2B — Verified Owner Activation', () => {
     const chan = await withDb(async (db) => db.collection(COLLECTIONS.CHANNELS).findOne({ id: channelId }));
     expect(chan?.activation_status).toBe('pending');
 
-    // Public profile MUST NOT show Owner Verified yet.
-    const html = await (await fetch(`${PAGE}/channel/${channelSlug}`, { headers: { 'X-Forwarded-For': ip() } })).text();
-    expect(html).not.toContain('data-testid="owner-verified-badge"');
-    expect(html).not.toContain('Owner Verified');
+    // Under the strict invariant (activation_required=ON), public badge is
+    // withheld until activation is active. We verify this deterministically
+    // via sanitizeChannel so the test does not depend on the running Next.js
+    // process's env — release-safety semantics (flag OFF default) are
+    // covered by tests/m11_batch2b_release_safety.test.ts.
+    const prev = process.env.CHANNEL_OWNER_ACTIVATION_REQUIRED;
+    try {
+      process.env.CHANNEL_OWNER_ACTIVATION_REQUIRED = '1';
+      const pub = sanitizeChannel(chan as unknown as import('@/lib/types').Channel);
+      expect(pub.is_verified).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.CHANNEL_OWNER_ACTIVATION_REQUIRED;
+      else process.env.CHANNEL_OWNER_ACTIVATION_REQUIRED = prev;
+    }
   });
 
   it('§6/§7 admin reconciles fee → credit issued exactly once + activation active + idempotent', async () => {
@@ -231,10 +242,22 @@ describe('M11-Batch2B — Verified Owner Activation', () => {
     expect(chan?.activation_status).toBe('active');
     expect(chan?.activation_active_at).toBeTruthy();
 
-    // Public profile now DOES show Owner Verified.
+    // Public profile now DOES show Owner Verified (flag OFF: badge shows;
+    // flag ON: badge shows because activation is active).
     const html = await (await fetch(`${PAGE}/channel/${channelSlug}`, { headers: { 'X-Forwarded-For': ip() } })).text();
     expect(html).toContain('data-testid="owner-verified-badge"');
     expect(html).toContain('Owner Verified');
+    // Deterministic verification under the strict invariant as well.
+    const chanNow = await withDb(async (db) => db.collection(COLLECTIONS.CHANNELS).findOne({ id: channelId }));
+    const prev = process.env.CHANNEL_OWNER_ACTIVATION_REQUIRED;
+    try {
+      process.env.CHANNEL_OWNER_ACTIVATION_REQUIRED = '1';
+      const pub = sanitizeChannel(chanNow as unknown as import('@/lib/types').Channel);
+      expect(pub.is_verified).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.CHANNEL_OWNER_ACTIVATION_REQUIRED;
+      else process.env.CHANNEL_OWNER_ACTIVATION_REQUIRED = prev;
+    }
 
     // Credit balance endpoint reflects $0.97.
     const balance = await waveLeadCreditService.getBalance(owner.userId);
@@ -259,9 +282,19 @@ describe('M11-Batch2B — Verified Owner Activation', () => {
     // OWNERSHIP MUST SURVIVE.
     expect(chan?.owner_id).toBe(owner.userId);
     expect(chan?.verification_status).toBe('verified');
-    // Public "Owner Verified" no longer shown, but ownership record intact.
-    const html = await (await fetch(`${PAGE}/channel/${channelSlug}`, { headers: { 'X-Forwarded-For': ip() } })).text();
-    expect(html).not.toContain('data-testid="owner-verified-badge"');
+    // Under the strict invariant (activation_required=ON), the public badge
+    // is withheld once activation is revoked. Verified via sanitizeChannel
+    // so this test is env-independent — release-safety (flag OFF default)
+    // behavior is covered in tests/m11_batch2b_release_safety.test.ts.
+    const prev = process.env.CHANNEL_OWNER_ACTIVATION_REQUIRED;
+    try {
+      process.env.CHANNEL_OWNER_ACTIVATION_REQUIRED = '1';
+      const pub = sanitizeChannel(chan as unknown as import('@/lib/types').Channel);
+      expect(pub.is_verified).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.CHANNEL_OWNER_ACTIVATION_REQUIRED;
+      else process.env.CHANNEL_OWNER_ACTIVATION_REQUIRED = prev;
+    }
   });
 
   it('§10/§4 payment domains remain isolated (purpose queryable-distinct)', async () => {

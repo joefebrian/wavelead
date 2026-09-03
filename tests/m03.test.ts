@@ -397,13 +397,15 @@ describe('M03 \u2014 Public verified badge & regression', () => {
     expect(r.body.data!.channel).not.toHaveProperty('reviewed_by');
   });
 
-  it('M11-Batch2B invariant: ownership approved BUT activation not active → is_verified stays false', async () => {
-    const ch = await createApprovedChannel({ owner_id: 'x', verification_status: 'verified' /* no activation_status */ });
+  it('M11-Batch2B release-safety: flag OFF (default) → verified ownership without activation still shows Owner Verified', async () => {
+    // Release-safety default is CHANNEL_OWNER_ACTIVATION_REQUIRED=false so
+    // existing production owners retain their badge until activation is
+    // launched. The strict-mode invariant (flag ON) is covered separately
+    // in tests/m11_batch2b_release_safety.test.ts.
+    const ch = await createApprovedChannel({ owner_id: 'x', verification_status: 'verified' /* no activation seeded */ });
     const r = await api<{ channel: { is_verified: boolean; has_owner: boolean } }>(`/channels/${ch.slug}`);
     expect(r.status).toBe(200);
-    // Public "Owner Verified" badge withheld until $1 activation is finalized.
-    expect(r.body.data!.channel.is_verified).toBe(false);
-    // But ownership relationship is preserved.
+    expect(r.body.data!.channel.is_verified).toBe(true);
     expect(r.body.data!.channel.has_owner).toBe(true);
   });
 

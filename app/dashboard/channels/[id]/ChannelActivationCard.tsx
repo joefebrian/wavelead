@@ -39,6 +39,7 @@ interface StateView {
   ownership_status: 'approved' | 'pending';
   activation_status: ActivationStatus;
   environment: 'sandbox' | 'live';
+  activation_required: boolean;
   activation_amount_minor: number;
   currency: string;
   latest_payment: PaymentView | null;
@@ -126,8 +127,13 @@ export default function ChannelActivationCard({ channelId, returnActivationId, r
 
   if (!state) return null;
 
-  // SANDBOX-only visibility gate — never render the CTA against live PayPal.
-  if (state.environment !== 'sandbox') return null;
+  // Release-safety visibility rule:
+  //   \u2022 Sandbox environment \u2192 show the CTA for previewing / QA.
+  //   \u2022 Live environment \u2192 show the CTA only if the operator has
+  //     explicitly flipped CHANNEL_OWNER_ACTIVATION_REQUIRED to true.
+  //     Until then, existing verified owners must not see a broken $1 CTA
+  //     that would 503 against a live PayPal.
+  if (state.environment !== 'sandbox' && !state.activation_required) return null;
   const isActive = state.activation_status === 'active';
   const isPending = state.activation_status === 'pending' || state.latest_payment?.status === 'captured_pending_fee';
   const isRevoked = state.activation_status === 'revoked';

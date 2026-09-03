@@ -402,12 +402,64 @@ frontend_m02:
 
 test_plan:
   current_focus:
+    - "M11-Batch2B RELEASE SAFETY — activation feature flag + refund credit reversal (net-zero, idempotent)"
     - "M11-Batch2B — Verified Owner Activation ($1 SANDBOX; wavelead_credit_events ledger; refund revokes activation only)"
     - "M11-Batch3 — Cookie Consent + First-Party Analytics (consent manager, server-enforced ingest, first-party visitor_id, policy pages)"
     - "M11-Batch2A — Follower Evidence (owner-submitted, admin-verified snapshots + Owner Verified badge rename)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+# ---------- M11 BATCH 2B RELEASE SAFETY ----------
+backend_m11_batch2b_release_safety:
+  - task: "M11-Batch2B release-safety: activation feature flag + refund credit reversal"
+    implemented: true
+    working: true
+    file: "lib/services/payments/activationFlag.ts, lib/services/channelActivationService.ts, lib/utils/sanitize.ts, app/dashboard/channels/[id]/ChannelActivationCard.tsx, tests/m11_batch2b_release_safety.test.ts, tests/m11_batch2b_activation.test.ts (updated), tests/m03.test.ts (updated)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          FIX 1 — Activation feature flag. `CHANNEL_OWNER_ACTIVATION_REQUIRED`
+          env var, default FALSE. sanitizeChannel now applies:
+            is_verified = ownership_verified
+                          && hasOwner
+                          && (!activation_required || activation_status === 'active')
+          Existing production verified owners retain their badge across the
+          deploy. Owner dashboard hides the activation CTA in production
+          until the operator flips the flag on (Sandbox always shows the
+          CTA for preview / QA). `startActivation` still refuses on live
+          PayPal environments with 503 so no owner can accidentally trigger
+          a live capture until PayPal LIVE activation is explicitly unlocked.
+
+          FIX 2 — Refund appends `ACTIVATION_CREDIT_REVERSED` with a strict
+          -amount mirror of the original `ACTIVATION_CREDIT_ISSUED` row.
+          Ledger stays append-only — the issuance row is NEVER mutated or
+          deleted. Idempotency is enforced by the existing DB unique index
+          on `idempotency_key` (`activation_credit_reversal:{payment_id}`),
+          which coalesces duplicate refund webhooks, browser callbacks, admin
+          retries, and provider replays into exactly ONE reversal event. If
+          credit was never issued (fee was not reconciled before refund),
+          no reversal row is appended.
+
+          Ownership is untouched by both refund and reversal — owner_id and
+          verification_status survive; only activation_status flips to
+          'revoked' and the derived WaveLead Credit balance returns to its
+          pre-activation amount.
+
+          Tests (m11_batch2b_release_safety.test.ts) — 6/6 PASS:
+            §1 flag OFF → verified ownership without activation → is_verified TRUE
+            §2 flag ON  → verified ownership + inactive activation → is_verified FALSE
+            §3 flag ON  → verified ownership + active activation → is_verified TRUE
+            §4 owner state advertises activation_required for client CTA gating
+            §5..§9 activation → +97 issuance → refund → -97 reversal → balance=0, ownership preserved, duplicate refund still 1 reversal
+            + refund BEFORE fee reconciliation → NO reversal row appended
+          Regression: 59/59 across m11-batch1, m11-batch2a, m11-batch2b,
+          m11-batch2b-release-safety, m11-batch3, m03. PayPal regression:
+          135/135 (m07, m08b1, m08b2, m08b3). Typecheck PASS, `yarn build` PASS.
 
 # ---------- M11 BATCH 2B — VERIFIED OWNER ACTIVATION ----------
 backend_m11_batch2b:
