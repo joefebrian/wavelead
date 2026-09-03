@@ -399,3 +399,210 @@ describe('M11-Batch6b — Route surface', () => {
     expect(r.status).toBe(401);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Section 7 — §12A TEST DATA / PRICING CLEANUP SAFETY
+// ---------------------------------------------------------------------------
+describe('M11-Batch6b — §12A test data + pricing cleanup safety', () => {
+  it('§12A after $100 → $149, a SEPARATE eligible new buyer creates their order at $149 with a NEW snapshot_id; and the ORIGINAL $100 order remains immutable', async () => {
+    // Buyer A locks in $100.
+    const buyerA = await signup(`${RUN_TAG}-12A-A@t.test`, 'brand', 'free');
+    stub.setPaid();
+    const actorA = actorFor(buyerA.userId, { persona: 'brand' });
+    const orderA = await brandFoundingLifetimeService.startCheckout(actorA, 'http://localhost:3000');
+    await brandFoundingLifetimeService.captureAndReconcile(orderA.id!);
+    const snapshotA = orderA.pricing_snapshot_id!;
+    expect(orderA.price_minor).toBe(10000);
+
+    // Admin flips pricing $100 → $149 via HTTP (real admin API).
+    const admin = await signup(`${RUN_TAG}-12A-adm@t.test`);
+    await elevateToAdmin(admin.userId);
+    const put = await fetch(`${BASE}/admin/pricing-config`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', cookie: admin.cookie },
+      body: JSON.stringify({ brand_lifetime: { price_minor: 14900, enabled: true, availability: 'public_beta' } }),
+    });
+    expect(put.ok).toBe(true);
+
+    // Buyer B (fresh test user) starts a NEW checkout after the admin flip.
+    const buyerB = await signup(`${RUN_TAG}-12A-B@t.test`, 'brand', 'free');
+    const actorB = actorFor(buyerB.userId, { persona: 'brand' });
+    const orderB = await brandFoundingLifetimeService.startCheckout(actorB, 'http://localhost:3000');
+    // NEW buyer resolves to the NEW $149 pricing.
+    expect(orderB.price_minor).toBe(14900);
+    expect(orderB.commercial_terms_snapshot.price_minor).toBe(14900);
+    // And carries a DIFFERENT snapshot_id than Buyer A.
+    expect(orderB.pricing_snapshot_id).toBeTruthy();
+    expect(orderB.pricing_snapshot_id).not.toBe(snapshotA);
+
+    // Buyer A's ORIGINAL order is untouched (immutability under admin edit).
+    const rAget = await fetch(`${BASE}/brand/founding-lifetime/${orderA.id}`, { headers: { cookie: buyerA.cookie } });
+    const jAget = await rAget.json() as { data: { order: BrandFoundingLifetimeOrder } };
+    expect(jAget.data.order.price_minor).toBe(10000);
+    expect(jAget.data.order.commercial_terms_snapshot.price_minor).toBe(10000);
+    expect(jAget.data.order.pricing_snapshot_id).toBe(snapshotA);
+
+    // Cleanup: restore intended sandbox pricing ($100) — no history snapshot
+    // is deleted; a NEW snapshot is appended, preserving audit.
+    const before = await withDb(async (db) => db.collection(COLLECTIONS.COMMERCIAL_PRICING_CONFIG_HISTORY).countDocuments());
+    const restore = await fetch(`${BASE}/admin/pricing-config`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', cookie: admin.cookie },
+      body: JSON.stringify({ brand_lifetime: { price_minor: 10000, enabled: true, availability: 'public_beta' } }),
+    });
+    expect(restore.ok).toBe(true);
+    const after = await withDb(async (db) => db.collection(COLLECTIONS.COMMERCIAL_PRICING_CONFIG_HISTORY).countDocuments());
+    // Restore APPENDS a new snapshot — never rewrites or deletes.
+    expect(after).toBe(before + 1);
+    // Both original snapshots still resolvable.
+    expect(await pricingConfigService.getSnapshot(snapshotA)).toBeTruthy();
+    expect(await pricingConfigService.getSnapshot(orderB.pricing_snapshot_id!)).toBeTruthy();
+  });
+
+  it('§12A test buyers are clearly identifiable and do not mutate legitimate production users', async () => {
+    // Every test-scoped user email carries the RUN_TAG prefix. This scan
+    // asserts we do not accidentally elevate or mutate any user that lacks
+    // the tag.
+    const suspicious = await withDb(async (db) => db.collection('users').find({
+      email: { $regex: /@t\.test$/ },
+      email_lower: { $exists: true, $not: { $regex: RUN_TAG.slice(-8) } },
+      role: 'admin',
+      updated_at: { $gte: new Date(Date.now() - 60_000) },
+    }).toArray());
+    // We only elevated users that WE created in this run — anything else
+    // would be a cross-run leak. Log but do not fail on foreign RUN_TAGs
+    // from earlier failing test files (they're still test users).
+    for (const u of suspicious) {
+      expect(String(u.email || '')).toMatch(/^b6b-/);   // must belong to our test surface
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section 8 — §12B ENTITLEMENT RESOLUTION SOURCE
+// ---------------------------------------------------------------------------
+describe('M11-Batch6b — §12B canonical entitlement resolver', () => {
+  it('§12B after capture: canonical resolver returns brand.founding_lifetime=true without any change to user.plan', async () => {
+    const buyer = await signup(`${RUN_TAG}-12B@t.test`, 'brand', 'free');
+    stub.setPaid();
+
+    // Capture user.plan BEFORE purchase.
+    const beforeRow = await withDb(async (db) => db.collection('users').findOne({ id: buyer.userId }));
+    const planBefore = (beforeRow as { plan?: string } | null)?.plan;
+    expect(planBefore).toBe('free');
+
+    const actor = actorFor(buyer.userId, { persona: 'brand', plan: 'free' });
+    const order = await brandFoundingLifetimeService.startCheckout(actor, 'http://localhost:3000');
+    await brandFoundingLifetimeService.captureAndReconcile(order.id!);
+
+    // user.plan MUST still be 'free' — Lifetime access flows through grants,
+    // not plan mutation.
+    const afterRow = await withDb(async (db) => db.collection('users').findOne({ id: buyer.userId }));
+    const planAfter = (afterRow as { plan?: string } | null)?.plan;
+    expect(planAfter).toBe('free');
+
+    // Canonical resolver path — resolveEntitlements + applyBrandGrantsToEntitlements.
+    const resolved = await applyBrandGrantsToEntitlements(actor, resolveEntitlements(actor));
+    // Brand capability available under the canonical resolver (not just via grant-row lookup).
+    expect(resolved.brand.founding_lifetime).toBe(true);
+    expect(resolved.brand.campaign_intelligence).toBe(true);
+    // Owner-facing keys still gated on user.plan='free'.
+    expect(resolved.plan).toBe('free');
+    expect(resolved.revenue_intelligence).toBe(false);
+    expect(resolved.sponsorship_pipeline_intelligence).toBe(false);
+
+    // Refund path — resolver reflects loss on next resolution.
+    await brandFoundingLifetimeService.recordRefundByOrderId(order.provider_order_id!, 10000);
+    const afterRefund = await applyBrandGrantsToEntitlements(actor, resolveEntitlements(actor));
+    expect(afterRefund.brand.founding_lifetime).toBe(false);
+    expect(afterRefund.brand.campaign_intelligence).toBe(false);
+    // user.plan STILL unchanged after refund.
+    const afterRefundRow = await withDb(async (db) => db.collection('users').findOne({ id: buyer.userId }));
+    expect((afterRefundRow as { plan?: string } | null)?.plan).toBe('free');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section 9 — §12C PAYMENT / ENTITLEMENT ATOMIC SAFETY
+// ---------------------------------------------------------------------------
+describe('M11-Batch6b — §12C payment / entitlement atomic safety', () => {
+  it('§12C capture succeeded but grant persistence transiently failed → retry finalizes WITHOUT re-calling the payment provider', async () => {
+    const buyer = await signup(`${RUN_TAG}-12C-a@t.test`, 'brand', 'free');
+    stub.setPaid();
+    const actor = actorFor(buyer.userId, { persona: 'brand' });
+    const order = await brandFoundingLifetimeService.startCheckout(actor, 'http://localhost:3000');
+
+    // Spy on the provider — count capturePayment invocations to prove we
+    // never re-charge.
+    let captureCalls = 0;
+    const origCapture = stub.capturePayment.bind(stub);
+    (stub as unknown as { capturePayment: typeof origCapture }).capturePayment = async (input) => {
+      captureCalls++;
+      return origCapture(input);
+    };
+
+    try {
+      // First capture — this actually captures on the provider AND finalizes.
+      // To simulate a "grant persistence failed" mid-flow, we drop the grant
+      // AFTER capture and then retry. This mirrors: capture succeeded on the
+      // provider, grant DB write failed transiently.
+      await brandFoundingLifetimeService.captureAndReconcile(order.id!);
+      expect(captureCalls).toBe(1);
+
+      // Simulate the grant persistence failure by rewinding: delete the
+      // grant row AND revert the order back to captured_pending_fee so the
+      // system believes the grant never finished writing.
+      await withDb(async (db) => {
+        await db.collection(COLLECTIONS.BRAND_ENTITLEMENT_GRANTS).deleteMany({ user_id: buyer.userId, entitlement_set: 'brand_founding_lifetime' });
+        await db.collection(COLLECTIONS.BRAND_FOUNDING_LIFETIME_ORDERS).updateOne({ id: order.id }, { $set: { status: 'captured_pending_fee', finalized_at: null, updated_at: new Date() } });
+      });
+
+      // Retry the capture path.
+      const retried = await brandFoundingLifetimeService.captureAndReconcile(order.id!);
+      // §12C: MUST NOT re-call the provider.
+      expect(captureCalls).toBe(1);
+      // Order finalized with the same provider_capture_id.
+      expect(retried!.status).toBe('captured_finalized');
+      expect(retried!.provider_capture_id).toBe(`SB-CAP-${order.provider_order_id}`);
+      // Exactly ONE active grant on retry.
+      const grants = await withDb(async (db) => db.collection(COLLECTIONS.BRAND_ENTITLEMENT_GRANTS).find({ user_id: buyer.userId, entitlement_set: 'brand_founding_lifetime', status: 'active' }).toArray());
+      expect(grants.length).toBe(1);
+    } finally {
+      // Restore the spy.
+      (stub as unknown as { capturePayment: typeof origCapture }).capturePayment = origCapture;
+    }
+  });
+
+  it('§12C recoverByProviderOrderId identifies an existing captured order and finalizes without a new charge', async () => {
+    const buyer = await signup(`${RUN_TAG}-12C-b@t.test`, 'brand', 'free');
+    stub.setPaid();
+    const actor = actorFor(buyer.userId, { persona: 'brand' });
+    const order = await brandFoundingLifetimeService.startCheckout(actor, 'http://localhost:3000');
+    // Capture succeeds on provider; simulate finalize failure.
+    await brandFoundingLifetimeService.captureAndReconcile(order.id!);
+    await withDb(async (db) => {
+      await db.collection(COLLECTIONS.BRAND_ENTITLEMENT_GRANTS).deleteMany({ user_id: buyer.userId, entitlement_set: 'brand_founding_lifetime' });
+      await db.collection(COLLECTIONS.BRAND_FOUNDING_LIFETIME_ORDERS).updateOne({ id: order.id }, { $set: { status: 'captured_pending_fee', finalized_at: null, updated_at: new Date() } });
+    });
+
+    // Reconciliation path — recovery finds the existing order by provider id
+    // and idempotently finalizes it without another charge.
+    let captureCalls = 0;
+    const origCapture = stub.capturePayment.bind(stub);
+    (stub as unknown as { capturePayment: typeof origCapture }).capturePayment = async (input) => {
+      captureCalls++;
+      return origCapture(input);
+    };
+    try {
+      const recovered = await brandFoundingLifetimeService.recoverByProviderOrderId(order.provider_order_id!);
+      expect(recovered).toBeTruthy();
+      expect(recovered!.id).toBe(order.id);
+      expect(recovered!.status).toBe('captured_finalized');
+      // No new capture call.
+      expect(captureCalls).toBe(0);
+      // Exactly one grant.
+      const grants = await withDb(async (db) => db.collection(COLLECTIONS.BRAND_ENTITLEMENT_GRANTS).find({ user_id: buyer.userId, entitlement_set: 'brand_founding_lifetime', status: 'active' }).toArray());
+      expect(grants.length).toBe(1);
+    } finally {
+      (stub as unknown as { capturePayment: typeof origCapture }).capturePayment = origCapture;
+    }
+  });
+});

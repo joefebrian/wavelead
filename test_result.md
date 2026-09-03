@@ -473,6 +473,36 @@ backend_m11_batch6b:
               "Reserve Founding Lifetime" waitlist CTA. Verified in the SSR
               response.
 
+          §12A — Test data + pricing cleanup safety:
+            • Every test-scoped user email carries RUN_TAG prefix.
+            • $100 → $149 test creates a SEPARATE eligible test buyer to
+              prove new orders get $149 with a fresh snapshot_id, while
+              buyer A's ORIGINAL $100 order is byte-for-byte identical.
+            • Pricing config restore APPENDS a new history snapshot — never
+              rewrites/deletes prior snapshots. Both snapshots remain
+              resolvable via pricingConfigService.getSnapshot().
+
+          §12B — Canonical entitlement resolver:
+            • Access proven via resolveEntitlements() + applyBrandGrantsToEntitlements()
+              (NOT just by grant row existence).
+            • Buyer's user.plan is 'free' before AND after purchase; brand
+              access flows entirely through the grant-based resolver, never
+              via user.plan mutation.
+            • Post-refund: canonical resolver returns brand.founding_lifetime=false
+              on the next resolution. user.plan still 'free'.
+
+          §12C — Payment / entitlement atomic safety:
+            • Fix: captureAndReconcile now skips provider.capturePayment on
+              retry when the order is already in 'captured_pending_fee' —
+              buyer NEVER pays twice under a transient finalize failure.
+            • New recoverByProviderOrderId() surfaces an existing captured
+              order by provider identifiers and idempotently finalizes it.
+            • Tests: simulate grant persistence failure by wiping the grant
+              and reverting status to captured_pending_fee, then retry via
+              (a) captureAndReconcile and (b) recoverByProviderOrderId — a
+              spy on the provider proves capturePayment is never re-invoked;
+              exactly ONE active grant results.
+
 # ---------- M11 BATCH 6 — FOUNDING BRAND PRO LIFETIME (SANDBOX ONE-TIME) ----------
 backend_m11_batch6:
   - task: "M11-Batch6 Founding Brand Pro Lifetime SANDBOX (immutable pricing snapshot history, scoped brand entitlements, isolated PayPal one-time order, LIVE-checkout feature-flagged OFF)"

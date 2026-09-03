@@ -268,6 +268,13 @@ export const brandFoundingLifetimeService = {
    * Browser return is NEVER authoritative — this method calls the provider
    * to actually capture the order, and only proceeds if the provider
    * confirms `paid`.
+   *
+   * §12C — ATOMIC SAFETY: if a previous run already captured the payment
+   * (status='captured_pending_fee', provider_capture_id set) but the grant
+   * persistence step failed, this method MUST NOT re-call the provider on
+   * retry — that would either double-charge or hit ORDER_ALREADY_CAPTURED.
+   * Instead, we advance straight to tryFinalize using the persisted capture
+   * record. Grant creation itself is idempotent (unique idempotency_key).
    */
   async captureAndReconcile(orderId: string): Promise<BrandFoundingLifetimeOrder | null> {
     const c = await orderCol();
@@ -275,6 +282,13 @@ export const brandFoundingLifetimeService = {
     if (!o) throw new HttpError(404, 'Order not found');
     if (o.status === 'captured_finalized' || o.status === 'refunded' || o.status === 'partially_refunded') {
       // Already captured — ensure grant exists (idempotent) and return.
+      await tryFinalize(orderId);
+      return c.findOne({ id: orderId });
+    }
+    // §12C — Provider already confirmed capture on a previous attempt.
+    // Recovery path: finalize from the persisted capture record without
+    // touching the payment provider. Buyer NEVER pays twice.
+    if (o.status === 'captured_pending_fee') {
       await tryFinalize(orderId);
       return c.findOne({ id: orderId });
     }
@@ -300,6 +314,25 @@ export const brandFoundingLifetimeService = {
       captured_at: new Date(),
     });
     return tryFinalize(orderId);
+  },
+
+  /**
+   * §12C — Recovery lookup by provider identifiers. Given a provider_order_id
+   * (retrieved from PayPal / an inbound webhook / an admin recovery UI) this
+   * returns the existing order — enabling reconciliation without a second
+   * charge.
+   */
+  async recoverByProviderOrderId(providerOrderId: string): Promise<BrandFoundingLifetimeOrder | null> {
+    const c = await orderCol();
+    const o = await c.findOne({ provider: 'paypal', provider_order_id: providerOrderId });
+    if (!o) return null;
+    // If capture already succeeded on the provider but our finalize failed,
+    // advance the order to captured_finalized idempotently.
+    if (o.status === 'captured_pending_fee') {
+      await tryFinalize(o.id);
+      return c.findOne({ id: o.id });
+    }
+    return o;
   },
 
   /**
