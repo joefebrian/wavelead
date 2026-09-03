@@ -402,6 +402,7 @@ frontend_m02:
 
 test_plan:
   current_focus:
+    - "M11-Batch6 — Founding Brand Pro Lifetime (SANDBOX one-time PayPal, feature-flagged, scoped entitlements, immutable snapshot terms)"
     - "M11-Batch5 — Admin-configurable commercial pricing (canonical config, admin CRUD, dynamic public rendering, no money-moving side effects)"
     - "M11-Batch4 — Pre-Public-Beta commercial repositioning (Brand-first pricing, footer redesign, homepage dual-audience emphasis, honest Founding Lifetime copy, activation coming-soon state)"
     - "M11-Batch2B RELEASE SAFETY — activation feature flag + refund credit reversal (net-zero, idempotent)"
@@ -411,6 +412,84 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+# ---------- M11 BATCH 6 — FOUNDING BRAND PRO LIFETIME (SANDBOX ONE-TIME) ----------
+backend_m11_batch6:
+  - task: "M11-Batch6 Founding Brand Pro Lifetime SANDBOX (immutable pricing snapshot history, scoped brand entitlements, isolated PayPal one-time order, LIVE-checkout feature-flagged OFF)"
+    implemented: true
+    working: true
+    file: "lib/services/pricingConfigService.ts (snapshot_id + history writer + getSnapshot), lib/services/pricingConfigTypes.ts (snapshot_id field), lib/services/brandEntitlementService.ts (scoped brand resolver + idempotent grant CRUD + applyBrandGrantsToEntitlements), lib/services/brandFoundingLifetimeService.ts (SANDBOX checkout/capture/refund + feature flag + duplicate-purchase guard), lib/entitlements.ts (nested brand sub-entitlement object; owner keys unaffected), lib/db/collections.ts (COMMERCIAL_PRICING_CONFIG_HISTORY, BRAND_ENTITLEMENT_GRANTS, BRAND_FOUNDING_LIFETIME_ORDERS), lib/db/indexes.ts (unique idempotency_key + provider_order_id/capture_id partial-unique), lib/types.ts (BrandEntitlementGrant, BrandFoundingLifetimeOrder, terms snapshot), app/api/[[...path]]/route.ts (public state, checkout, capture, get-order, webhook domain routing branch), app/pricing/PricingClient.tsx (state fetch, conditional CTA swap, browser-return capture kick, sandbox notice), .env (BRAND_FOUNDING_LIFETIME_CHECKOUT_ENABLED=0), tests/m11_batch6_brand_founding_lifetime.test.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Founding Brand Pro Lifetime SANDBOX one-time PayPal purchase live behind
+          BRAND_FOUNDING_LIFETIME_CHECKOUT_ENABLED (default 0). LIVE PayPal
+          environment additionally refused at service level.
+
+          PRICING SNAPSHOT HISTORY: every admin PUT to commercial_pricing_config
+          appends an immutable row to commercial_pricing_config_history and
+          rotates active.snapshot_id. Purchases embed both `pricing_snapshot_id`
+          and `commercial_terms_snapshot` on the order — admin flipping
+          $100 → $120 after purchase NEVER rewrites past economics (§2 verified).
+
+          PAYMENT DOMAIN ISOLATION: brand_founding_lifetime_orders is a fresh
+          collection with purpose='BRAND_FOUNDING_LIFETIME'. Refund + capture
+          rows never touch Marketplace / Promote / Owner Activation / Credit
+          ledger. Regression asserted at §3, §14.
+
+          SCOPED BRAND ENTITLEMENTS: new Entitlements.brand sub-object holds
+          brand-only flags (founding_lifetime, advanced_channel_discovery,
+          rate_card_intelligence_brand_view, campaign_reporting,
+          campaign_intelligence, plus Coming-Soon ai_campaign_brief +
+          campaign_channel_recommendations which STAY false even for grant
+          holders). Owner-facing keys (revenue_intelligence,
+          sponsorship_pipeline_intelligence, benchmarking, …) are NEVER
+          unlocked by a Lifetime grant. Owner Pro alone does NOT unlock brand
+          entitlements. persona='both' sees both sets with no cross-leak.
+          §8, §9, §10 verified.
+
+          IDEMPOTENCY: grant creation is guarded by unique idempotency_key
+          `brand_lifetime_grant:{order_id}` on brand_entitlement_grants.
+          Duplicate captures (browser return + webhook replay + retries) all
+          coalesce to exactly ONE active grant. §11 verified.
+
+          DUPLICATE PURCHASE: startCheckout throws 409 when an active
+          Lifetime grant already exists. Friendly copy — no accidental
+          second $100 charge. §12 verified.
+
+          REFUND SAFETY: full refund flips order.status='refunded' and
+          grant.status='refunded' (row preserved, never deleted). Brand.*
+          drops to false on next resolution. Owner channels / marketplace
+          orders / WaveLead Credit ledger UNCHANGED. Duplicate refund
+          webhook is idempotent. §13, §13b verified.
+
+          BROWSER RETURN NON-AUTHORITATIVE: capture endpoint calls the
+          provider and only advances the order when the provider confirms
+          'paid'. A pending capture leaves the order unfinalized and NO
+          grant is issued. §6 verified.
+
+          PRODUCTION CHECKOUT FLAG: default OFF. When OFF, /state returns
+          checkout_enabled=false and /checkout throws 503 at both service
+          and route level. §15, §15b verified. UI keeps the safe
+          'Reserve Founding Lifetime' CTA on production.
+
+          NO LIVE PAYMENT: readActiveEnvironment().environment === 'live'
+          → 503 with clear message. All test-run orders are sandbox. §16
+          verified.
+
+          Tests: tests/m11_batch6_brand_founding_lifetime.test.ts §1–§17
+          — 19/19 passing (~14s). Regression suites — tests/m09_entitlements,
+          m09_persona, m11_batch2b_activation, m11_batch2b_release_safety,
+          m11_batch5_admin_pricing, m11_batch4_repositioning = 77/77 green;
+          tests/m08b3_paypal_checkout, m07_paypal_activation, m08b1_marketplace
+          = 100/100 green.
+
+          Typecheck: `yarn tsc --noEmit` clean (4s).
+          Build: `yarn build` clean (40s, all routes present).
 
 # ---------- M11 BATCH 5 — ADMIN-CONFIGURABLE COMMERCIAL PRICING ----------
 backend_m11_batch5:

@@ -53,6 +53,18 @@ export const COLLECTIONS = {
   CHANNEL_ACTIVATION_PAYMENTS: 'channel_activation_payments',
   // M11-Batch2B — Append-only WaveLead Credit ledger.
   WAVELEAD_CREDIT_EVENTS: 'wavelead_credit_events',
+  // M11-Batch6 — Immutable append-only history of commercial pricing changes.
+  //              Every successful admin PUT to commercial_pricing_config writes
+  //              a new snapshot here (uuid-keyed). Purchases embed snapshot_id
+  //              so admin flipping $25 → $29 never rewrites past economics.
+  COMMERCIAL_PRICING_CONFIG_HISTORY: 'commercial_pricing_config_history',
+  // M11-Batch6 — Scoped brand entitlement grants. product_scope='brand' —
+  //              a grant here NEVER unlocks owner-facing entitlements
+  //              (revenue_intelligence, sponsorship_pipeline_intelligence, …).
+  BRAND_ENTITLEMENT_GRANTS: 'brand_entitlement_grants',
+  // M11-Batch6 — Founding Brand Pro Lifetime one-time PayPal orders. Isolated
+  //              from Marketplace / Promote / Owner Activation domains.
+  BRAND_FOUNDING_LIFETIME_ORDERS: 'brand_founding_lifetime_orders',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

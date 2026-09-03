@@ -13,6 +13,7 @@
 // Client-safe types + formatMinorUSD live in ./pricingConfigTypes so React
 // Client Components can import them WITHOUT dragging mongodb into the bundle.
 import { z } from 'zod';
+import { v4 as uuidv4 } from 'uuid';
 import { getCollection } from '@/lib/db/mongo';
 import { COLLECTIONS } from '@/lib/db/collections';
 import { HttpError, requireAuth, ROLES, rankOf } from '@/lib/auth/rbac';
@@ -90,6 +91,20 @@ function toPublic(cfg: CommercialPricingConfig): PublicPricing {
   };
 }
 
+// -------- Immutable snapshot history --------
+// Every successful admin update APPENDS a full snapshot here with a UUID
+// `snapshot_id`. Purchases record `snapshot_id` so admin edits after the fact
+// NEVER rewrite an existing purchase's economics.
+export interface CommercialPricingSnapshot {
+  snapshot_id: string;                    // uuid — the id purchases reference
+  config: CommercialPricingConfig;        // full pricing payload as of this snapshot
+  created_at: Date;
+  created_by_user_id: string | null;
+}
+async function historyCol() {
+  return getCollection<CommercialPricingSnapshot>(COLLECTIONS.COMMERCIAL_PRICING_CONFIG_HISTORY);
+}
+
 export const pricingConfigService = {
   DEFAULT: DEFAULT_PRICING_CONFIG,
 
@@ -108,6 +123,17 @@ export const pricingConfigService = {
     return toPublic(cfg);
   },
 
+  // Fetch a specific historical snapshot by id. Used by admin surfaces and by
+  // /api/brand/founding-lifetime/[id] status views that want to render the
+  // exact terms a buyer purchased at. Purchases NEVER re-derive economics from
+  // the current config — they read this row via `snapshot_id`.
+  async getSnapshot(snapshot_id: string): Promise<CommercialPricingSnapshot | null> {
+    try {
+      const c = await historyCol();
+      return (await c.findOne({ snapshot_id })) as CommercialPricingSnapshot | null;
+    } catch { return null; }
+  },
+
   async updatePricing(actor: Actor | null, patch: unknown): Promise<CommercialPricingConfig> {
     requireAdmin(actor);
     const parsed = pricingUpdateSchema.safeParse(patch);
@@ -123,8 +149,10 @@ export const pricingConfigService = {
     const c = await coll();
     const current = (await c.findOne({ id: ACTIVE_ID })) as CommercialPricingConfig | null;
     const now = new Date();
+    const nextSnapshotId = uuidv4();
     const next: CommercialPricingConfig = {
       id: ACTIVE_ID,
+      snapshot_id: nextSnapshotId,
       currency: 'USD',
       brand_free: parsed.data.brand_free ?? current?.brand_free ?? DEFAULT_PRICING_CONFIG.brand_free,
       brand_pro: parsed.data.brand_pro ?? current?.brand_pro ?? DEFAULT_PRICING_CONFIG.brand_pro,
@@ -135,6 +163,15 @@ export const pricingConfigService = {
       updated_by_user_id: actor!.user.id,
       created_at: current?.created_at || now,
     };
+    // Append the immutable snapshot FIRST so a purchase created concurrently
+    // with the rotation can always resolve `snapshot_id` against a real row.
+    const hist = await historyCol();
+    await hist.insertOne({
+      snapshot_id: nextSnapshotId,
+      config: next,
+      created_at: now,
+      created_by_user_id: actor!.user.id,
+    } as unknown as import('mongodb').OptionalUnlessRequiredId<CommercialPricingSnapshot>);
     await c.updateOne({ id: ACTIVE_ID }, { $set: next }, { upsert: true });
     return next;
   },

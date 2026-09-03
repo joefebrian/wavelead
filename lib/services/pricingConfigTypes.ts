@@ -14,6 +14,12 @@
 
 export interface CommercialPricingConfig {
   id: string;                              // always 'active' in this patch
+  // M11-Batch6 — Immutable snapshot id of the current pricing state. Every
+  // successful admin update appends a full snapshot to
+  // commercial_pricing_config_history and rotates snapshot_id here.
+  // Purchases record this snapshot_id so admin edits after the fact NEVER
+  // rewrite an existing purchase's commercial terms.
+  snapshot_id: string;
   currency: 'USD';
   brand_free:       { price_minor: number; enabled: boolean };
   brand_pro:        { beta_price_minor: number; regular_price_minor: number; beta_duration_months: number; enabled: boolean };
@@ -26,11 +32,13 @@ export interface CommercialPricingConfig {
 }
 
 // Public-safe projection returned to unauthenticated visitors. Strips ALL
-// internal audit metadata (updated_by_user_id, updated_at, created_at) —
-// only commercial-display fields are exposed publicly.
+// internal audit metadata (updated_by_user_id, updated_at, created_at,
+// snapshot_id). snapshot_id is intentionally NOT exposed — the server always
+// re-reads the current active config at order-creation time so no client-
+// supplied "which snapshot" hint can influence purchase economics.
 export type PublicPricing = Omit<
   CommercialPricingConfig,
-  'updated_by_user_id' | 'created_at' | 'updated_at'
+  'updated_by_user_id' | 'created_at' | 'updated_at' | 'snapshot_id'
 > & {
   // Note: the OWNER activation price surfaced publicly is display-only.
   //       Real billing amount remains locked server-side.
@@ -39,6 +47,7 @@ export type PublicPricing = Omit<
 
 export const DEFAULT_PRICING_CONFIG: CommercialPricingConfig = {
   id: 'active',
+  snapshot_id: '00000000-0000-0000-0000-000000000000',   // sentinel — no purchase can reference this
   currency: 'USD',
   brand_free:       { price_minor: 0,       enabled: true },
   brand_pro:        { beta_price_minor: 1500, regular_price_minor: 2500, beta_duration_months: 3, enabled: true },

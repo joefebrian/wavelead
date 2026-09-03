@@ -1414,5 +1414,91 @@ export interface WaveLeadCreditEvent {
   created_at: Date;
 }
 
+// ============================================================
+// M11-Batch6 — Founding Brand Pro Lifetime (SANDBOX, one-time PayPal)
+// ============================================================
+// Scoped brand entitlement. product_scope is FIXED at 'brand' — a grant here
+// NEVER unlocks owner-facing entitlements (revenue_intelligence, sponsorship
+// pipeline, benchmarking, etc.) because those live on `user.plan` and are
+// resolved by lib/entitlements.ts *independently*.
+export type BrandEntitlementScope = 'brand';
+export type BrandEntitlementSet = 'brand_pro' | 'brand_founding_lifetime';
+export type BrandEntitlementSource =
+  | 'brand_founding_lifetime'          // paid one-time
+  | 'brand_pro_subscription'           // reserved for future recurring
+  | 'admin_grant';                     // operational / comp
+export type BrandEntitlementStatus =
+  | 'active'
+  | 'past_due'
+  | 'cancelled'
+  | 'expired'
+  | 'refunded';
+
+export interface BrandEntitlementGrant {
+  id: string;
+  user_id: string;
+  product_scope: BrandEntitlementScope;         // always 'brand'
+  entitlement_set: BrandEntitlementSet;
+  source: BrandEntitlementSource;
+  status: BrandEntitlementStatus;
+  valid_from: Date;
+  valid_until: Date | null;                     // null → no expiry (Lifetime)
+  source_id: string | null;                     // e.g. brand_founding_lifetime_orders.id
+  pricing_snapshot_id: string | null;           // → commercial_pricing_config_history.snapshot_id
+  idempotency_key: string;                      // e.g. 'brand_lifetime_grant:{order_id}'
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type BrandFoundingLifetimeOrderStatus =
+  | 'created'
+  | 'checkout_created'
+  | 'pending'
+  | 'captured_pending_fee'
+  | 'captured_finalized'
+  | 'failed'
+  | 'cancelled'
+  | 'partially_refunded'
+  | 'refunded';
+
+export type BrandFoundingLifetimePurpose = 'BRAND_FOUNDING_LIFETIME';
+
+export interface BrandFoundingLifetimeCommercialTerms {
+  price_minor: number;                          // server-derived at order creation time
+  currency: 'USD';
+  product_name: 'Founding Brand Pro Lifetime';
+  availability_at_purchase: 'public_beta' | 'always';
+}
+
+export interface BrandFoundingLifetimeOrder {
+  id: string;
+  buyer_user_id: string;
+  purpose: BrandFoundingLifetimePurpose;
+  status: BrandFoundingLifetimeOrderStatus;
+  // Server-authoritative economics — immutable after insert. Client CANNOT
+  // supply or override any of these values.
+  price_minor: number;
+  currency: 'USD';
+  pricing_snapshot_id: string;                  // → commercial_pricing_config_history.snapshot_id
+  commercial_terms_snapshot: BrandFoundingLifetimeCommercialTerms;
+  // Provider trail (mirrors ChannelActivationPayment shape).
+  provider: 'paypal';
+  provider_environment: 'sandbox' | 'live';
+  provider_order_id: string | null;
+  provider_capture_id: string | null;
+  provider_fee_minor: number | null;
+  provider_net_minor: number | null;
+  amount_captured_minor: number;
+  amount_refunded_minor: number;
+  approve_url: string | null;
+  return_url: string;
+  cancel_url: string;
+  captured_at: Date | null;
+  finalized_at: Date | null;                    // when entitlement grant was created
+  refunded_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
 
 

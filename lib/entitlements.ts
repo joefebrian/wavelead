@@ -39,7 +39,7 @@ export interface Entitlements {
   max_managed_channels: number;      // 1 for Free, 10 for Pro, UNLIMITED for Ent
   analytics_history_days: number;    // 30 / 365 / UNLIMITED
   team_seats: number;                // 0 / 0 / 10 (Ent-only feature)
-  // Boolean flags
+  // Boolean flags (OWNER-scoped — never automatically unlocked by a Brand purchase).
   advanced_analytics: boolean;
   revenue_intelligence: boolean;
   benchmarking: boolean;
@@ -58,13 +58,41 @@ export interface Entitlements {
   promote_pay_per_campaign: true;
   basic_rate_card: true;
   basic_analytics: true;
+  // M11-Batch6 — BRAND-scoped entitlements. These are ALLOWLISTED per grant
+  // via lib/services/brandEntitlementService.ts. They are NEVER unlocked as a
+  // side-effect of a Channel Owner Pro plan and NEVER unlock owner-facing
+  // capabilities above. A persona='both' account holding both an owner plan
+  // and a brand grant sees both — with no cross-leak.
+  brand: {
+    founding_lifetime: boolean;                       // has an active Founding Lifetime grant
+    advanced_channel_discovery: boolean;              // BRAND-side discovery — shipping
+    rate_card_intelligence_brand_view: boolean;       // BRAND-side rate-card intel — shipping
+    campaign_reporting: boolean;                      // shipping
+    campaign_intelligence: boolean;                   // shipping
+    ai_campaign_brief: boolean;                       // Coming Soon: catalog only, UI stays gated
+    campaign_channel_recommendations: boolean;        // Coming Soon: catalog only, UI stays gated
+  };
 }
 
-export type EntitlementKey = keyof Omit<Entitlements, 'plan'>;
+export type EntitlementKey = keyof Omit<Entitlements, 'plan' | 'brand'>;
+export type BrandEntitlementFlag = keyof Entitlements['brand'];
 
 // ---------------------------------------------------------------------------
 // Plan → Entitlements
 // ---------------------------------------------------------------------------
+// Baseline BRAND sub-entitlements — every plan starts with brand: {all false}.
+// Brand capabilities are ONLY unlocked by an active brand_entitlement_grant
+// (see brandEntitlementService.applyToEntitlements), NOT by an owner Plan tier.
+const BRAND_NONE: Entitlements['brand'] = {
+  founding_lifetime: false,
+  advanced_channel_discovery: false,
+  rate_card_intelligence_brand_view: false,
+  campaign_reporting: false,
+  campaign_intelligence: false,
+  ai_campaign_brief: false,                        // Coming Soon
+  campaign_channel_recommendations: false,         // Coming Soon
+};
+
 const FREE: Entitlements = {
   plan: 'free',
   max_managed_channels: 1,
@@ -87,6 +115,7 @@ const FREE: Entitlements = {
   promote_pay_per_campaign: true,
   basic_rate_card: true,
   basic_analytics: true,
+  brand: { ...BRAND_NONE },
 };
 
 const PRO: Entitlements = {
@@ -101,6 +130,7 @@ const PRO: Entitlements = {
   sponsorship_pipeline_intelligence: true,
   promote_performance_intelligence: true,
   advanced_exports: true,
+  brand: { ...BRAND_NONE },   // Owner Pro NEVER auto-grants brand capabilities
 };
 
 const ENTERPRISE: Entitlements = {
@@ -114,6 +144,7 @@ const ENTERPRISE: Entitlements = {
   portfolio_analytics: true,
   api_access: true,
   account_management: true,
+  brand: { ...BRAND_NONE },
 };
 
 // Admin-bypass entitlements — every gate open, every quota unlimited.
@@ -125,6 +156,18 @@ const ADMIN_BYPASS: Entitlements = {
   max_managed_channels: UNLIMITED,
   analytics_history_days: UNLIMITED,
   team_seats: UNLIMITED,
+  // Admin bypass: brand capabilities open too, so admin operational UI
+  // can inspect the brand surfaces. Coming Soon capabilities remain false —
+  // they should not render as "live" for anyone, even admin.
+  brand: {
+    founding_lifetime: true,
+    advanced_channel_discovery: true,
+    rate_card_intelligence_brand_view: true,
+    campaign_reporting: true,
+    campaign_intelligence: true,
+    ai_campaign_brief: false,                     // Coming Soon — stays false
+    campaign_channel_recommendations: false,      // Coming Soon — stays false
+  },
 };
 
 /** Pure resolver: plan → entitlements. Never touches the network or DB. */
@@ -153,11 +196,19 @@ export function getUserPlan(user: PublicUser | null | undefined): Plan {
  *   - visitor / null → Free entitlements (read-only anyway; gate on auth first).
  *   - admin / super_admin → ADMIN_BYPASS (never limited by SaaS caps).
  *   - everyone else → entitlementsForPlan(user.plan).
+ *
+ * NOTE: BRAND-scoped entitlements are LAYERED on top of the owner-facing
+ * baseline resolved here. Call sites that need brand capabilities go through
+ * lib/services/brandEntitlementService.resolveBrandEntitlementsForUser() and
+ * merge into the returned `.brand` sub-object. Owner-plan resolution NEVER
+ * grants brand capabilities, so a Channel Owner Pro on a persona='owner'
+ * account does not accidentally unlock Brand Pro features.
  */
 export function resolveEntitlements(actor: Actor | null | undefined): Entitlements {
-  if (!actor) return { ...FREE };
-  if (hasAtLeastRole(actor.user, ROLES.ADMIN)) return { ...ADMIN_BYPASS };
-  return entitlementsForPlan(getUserPlan(actor.user));
+  if (!actor) return { ...FREE, brand: { ...BRAND_NONE } };
+  if (hasAtLeastRole(actor.user, ROLES.ADMIN)) return { ...ADMIN_BYPASS, brand: { ...ADMIN_BYPASS.brand } };
+  const base = entitlementsForPlan(getUserPlan(actor.user));
+  return { ...base, brand: { ...BRAND_NONE } };   // brand starts empty; layered by brand service
 }
 
 // ---------------------------------------------------------------------------

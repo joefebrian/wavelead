@@ -277,5 +277,27 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { source_type: 1, source_id: 1 }, name: 'by_source' },
       { key: { idempotency_key: 1 }, unique: true, name: 'uniq_idempotency' },
     ]),
+    // M11-Batch6 — Pricing config history is APPEND-ONLY. snapshot_id is
+    // globally unique; purchases embed it to freeze economics.
+    db.collection(COLLECTIONS.COMMERCIAL_PRICING_CONFIG_HISTORY).createIndexes([
+      { key: { snapshot_id: 1 }, unique: true, name: 'uniq_snapshot_id' },
+      { key: { created_at: -1 }, name: 'by_created_at' },
+    ]),
+    // M11-Batch6 — Brand-scoped entitlement grants. idempotency_key UNIQUE
+    // per-grant prevents duplicate grant issuance under any race scenario.
+    db.collection(COLLECTIONS.BRAND_ENTITLEMENT_GRANTS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { user_id: 1, entitlement_set: 1, status: 1 }, name: 'by_user_set_status' },
+      { key: { idempotency_key: 1 }, unique: true, name: 'uniq_idempotency' },
+    ]),
+    // M11-Batch6 — Founding Brand Pro Lifetime orders (SANDBOX one-time).
+    // Provider identifiers unique across the collection when set (partial).
+    db.collection(COLLECTIONS.BRAND_FOUNDING_LIFETIME_ORDERS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { buyer_user_id: 1, created_at: -1 }, name: 'by_buyer_time' },
+      { key: { status: 1, created_at: -1 }, name: 'by_status_time' },
+      { key: { provider: 1, provider_order_id: 1 }, unique: true, name: 'uniq_provider_order', partialFilterExpression: { provider_order_id: { $type: 'string' } } },
+      { key: { provider: 1, provider_capture_id: 1 }, unique: true, name: 'uniq_provider_capture', partialFilterExpression: { provider_capture_id: { $type: 'string' } } },
+    ]),
   ]);
 }

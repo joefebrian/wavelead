@@ -934,10 +934,15 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
           const fee_minor: number | null = typeof feeVal === 'string' ? Math.round(parseFloat(feeVal) * 100) : null;
           const net_minor: number | null = typeof netVal === 'string' ? Math.round(parseFloat(netVal) * 100) : null;
           if (orderId && captureId && amt_minor > 0) {
-            // First try marketplace (B3). Falls through to promote when not found.
+            // Domain routing: marketplace → promote → activation → founding-lifetime.
             const mp = await marketplaceService.finalizeMarketplaceCaptureFromWebhook(orderId, captureId, amt_minor, currency, fee_minor, net_minor);
             if (!mp) {
-              await campaignFundingService.finalizePaidByProviderOrderId(orderId, captureId, amt_minor);
+              // Founding Brand Pro Lifetime (SaaS one-time).
+              const { brandFoundingLifetimeService } = await import('@/lib/services/brandFoundingLifetimeService');
+              const lt = await brandFoundingLifetimeService.finalizeFromWebhookByOrderId(orderId, captureId, amt_minor, fee_minor, net_minor);
+              if (!lt) {
+                await campaignFundingService.finalizePaidByProviderOrderId(orderId, captureId, amt_minor);
+              }
             }
           }
         } else if (v.event_type === 'CHECKOUT.ORDER.APPROVED') {
@@ -969,7 +974,12 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
               refundRef,
             );
             if (!mp) {
-              await campaignFundingService.recordRefund(orderId, amt_minor, refundRef);
+              // Founding Brand Pro Lifetime refund path (revokes grant idempotently).
+              const { brandFoundingLifetimeService } = await import('@/lib/services/brandFoundingLifetimeService');
+              const lt = await brandFoundingLifetimeService.recordRefundByOrderId(orderId, amt_minor);
+              if (!lt) {
+                await campaignFundingService.recordRefund(orderId, amt_minor, refundRef);
+              }
             }
           }
         }
@@ -1352,6 +1362,44 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const actor = await resolveActor(request);
       const body = await safeJson(request);
       return applyCors(ok(await pricingConfigService.updatePricing(actor, body)), request);
+    }
+
+    // ---------- M11-Batch6 FOUNDING BRAND PRO LIFETIME (SANDBOX ONE-TIME) ----------
+    // Public state — safe for unauthenticated visitors to poll the page.
+    if (route === '/brand/founding-lifetime/state' && method === 'GET') {
+      const { brandFoundingLifetimeService } = await import('@/lib/services/brandFoundingLifetimeService');
+      const actor = await resolveActor(request);   // may be null
+      return applyCors(ok(await brandFoundingLifetimeService.getBuyerState(actor)), request);
+    }
+    // Start checkout — requires auth + feature flag ON + sandbox environment.
+    if (route === '/brand/founding-lifetime/checkout' && method === 'POST') {
+      const { brandFoundingLifetimeService } = await import('@/lib/services/brandFoundingLifetimeService');
+      const actor = await resolveActor(request);
+      const origin = request.headers.get('origin') || undefined;
+      const order = await brandFoundingLifetimeService.startCheckout(actor, origin);
+      return applyCors(ok({ order }, { status: 201 }), request);
+    }
+    // Browser-return capture. Idempotent; must not be treated as payment proof.
+    if (path.length === 3 && path[0] === 'brand' && path[1] === 'founding-lifetime' && method === 'POST' && !['checkout', 'state'].includes(path[2])) {
+      // /api/brand/founding-lifetime/[id]/capture
+      // handled below by 4-segment match
+    }
+    if (path.length === 4 && path[0] === 'brand' && path[1] === 'founding-lifetime' && path[3] === 'capture' && method === 'POST') {
+      const { brandFoundingLifetimeService } = await import('@/lib/services/brandFoundingLifetimeService');
+      const actor = await resolveActor(request);
+      // Actor must be the buyer — service enforces ownership.
+      // (We still let the capture proceed for unauthenticated PayPal return
+      //  callbacks, so we do NOT requireAuth here — capture is idempotent and
+      //  identity-agnostic since providerOrderId is what authorizes the flip.)
+      void actor;
+      const result = await brandFoundingLifetimeService.captureAndReconcile(path[2]);
+      return applyCors(ok({ order: result }), request);
+    }
+    if (path.length === 3 && path[0] === 'brand' && path[1] === 'founding-lifetime' && method === 'GET' && !['state', 'checkout'].includes(path[2])) {
+      const { brandFoundingLifetimeService } = await import('@/lib/services/brandFoundingLifetimeService');
+      const actor = await resolveActor(request);
+      const order = await brandFoundingLifetimeService.getForBuyer(actor, path[2]);
+      return applyCors(ok({ order }), request);
     }
 
     // ---------- M11-Batch2B VERIFIED OWNER ACTIVATION (SANDBOX) ----------

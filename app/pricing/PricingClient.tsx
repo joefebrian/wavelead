@@ -129,6 +129,20 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
   const [waitlistOpen, setWaitlistOpen] = useState(false);
   const [waitlistFocus, setWaitlistFocus] = useState<'brand_pro' | 'brand_founding_lifetime'>('brand_pro');
   const [entOpen, setEntOpen] = useState(false);
+  // M11-Batch6 — live Founding Lifetime buyer state. checkout_enabled reflects
+  // the server-side BRAND_FOUNDING_LIFETIME_CHECKOUT_ENABLED flag AND the
+  // pricing config's brand_lifetime.enabled. already_active blocks duplicate
+  // purchase. When checkout is enabled we swap the "Reserve" CTA for a real
+  // sandbox PayPal checkout button.
+  const [lifetimeState, setLifetimeState] = useState<{
+    checkout_enabled: boolean;
+    lifetime_available: boolean;
+    environment: 'sandbox' | 'live';
+    already_active: boolean;
+    display_price_minor: number;
+  } | null>(null);
+  const [lifetimeBusy, setLifetimeBusy] = useState(false);
+  const [lifetimeErr, setLifetimeErr] = useState<string | null>(null);
   const tiers = buildTiers(pricing);
   const ownerActivationPrice = formatMinorUSD(pricing.owner_activation.display_price_minor);
   const bpDur = pricing.brand_pro.beta_duration_months;
@@ -141,6 +155,35 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
       .then((r) => setMe((r?.data?.user as PublicUser) || null))
       .catch(() => setMe(null))
       .finally(() => setMeLoaded(true));
+    fetch('/api/brand/founding-lifetime/state', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((r) => setLifetimeState((r?.data as typeof lifetimeState) || null))
+      .catch(() => setLifetimeState(null));
+    // Browser-return capture kick. Browser return is NEVER payment proof —
+    // the server calls PayPal capture and only advances the order when the
+    // provider confirms. We just poke the endpoint here.
+    try {
+      const url = new URL(window.location.href);
+      const orderId = url.searchParams.get('founding_lifetime');
+      const status = url.searchParams.get('status');
+      if (orderId && status === 'paid') {
+        fetch(`/api/brand/founding-lifetime/${encodeURIComponent(orderId)}/capture`, {
+          method: 'POST', credentials: 'include',
+        }).finally(() => {
+          // Refresh buyer state so the CTA flips to "active".
+          fetch('/api/brand/founding-lifetime/state', { credentials: 'include' })
+            .then((r) => r.json())
+            .then((r) => setLifetimeState((r?.data as typeof lifetimeState) || null))
+            .catch(() => {});
+          // Strip the params so a reload doesn't retrigger capture.
+          url.searchParams.delete('founding_lifetime');
+          url.searchParams.delete('status');
+          window.history.replaceState({}, '', url.toString());
+        });
+      }
+    } catch { /* window may not be available during SSR shim */ }
+    // ESLint: intentionally run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function handleFree() {
@@ -148,6 +191,33 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
     else router.push('/signup?next=/dashboard');
   }
   function openWaitlist(focus: 'brand_pro' | 'brand_founding_lifetime') { setWaitlistFocus(focus); setWaitlistOpen(true); }
+
+  async function startFoundingLifetimeCheckout() {
+    if (lifetimeBusy) return;
+    setLifetimeBusy(true); setLifetimeErr(null);
+    try {
+      if (!me) { router.push('/signup?next=/pricing'); return; }
+      const r = await fetch('/api/brand/founding-lifetime/checkout', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const j = await r.json() as { ok?: boolean; data?: { order?: { approve_url?: string } }; error?: { message?: string } | string };
+      if (!r.ok || !j.data?.order?.approve_url) {
+        const msg = typeof j.error === 'string' ? j.error : (j.error?.message || 'Checkout failed');
+        throw new Error(msg);
+      }
+      // Server-hosted PayPal checkout — browser return will hit /pricing with
+      // ?founding_lifetime=<id>&status=paid and the capture endpoint fires.
+      window.location.href = j.data.order.approve_url;
+    } catch (e) {
+      setLifetimeErr((e as Error).message);
+      setLifetimeBusy(false);
+    }
+  }
+
+  const lifetimeCheckoutLive = !!lifetimeState?.checkout_enabled && !!lifetimeState?.lifetime_available;
+  const lifetimeAlreadyActive = !!lifetimeState?.already_active;
 
   return (
     <>
@@ -208,7 +278,15 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
                 <Button className="w-full" onClick={() => openWaitlist('brand_pro')} data-testid="cta-brand-pro">{tier.cta}</Button>
               )}
               {tier.kind === 'brand_founding_lifetime' && (
-                <Button className="w-full" variant="outline" onClick={() => openWaitlist('brand_founding_lifetime')} data-testid="cta-brand-founding-lifetime">{tier.cta}</Button>
+                lifetimeAlreadyActive ? (
+                  <Button className="w-full" variant="outline" disabled data-testid="cta-brand-founding-lifetime-active">Founding Lifetime active</Button>
+                ) : lifetimeCheckoutLive ? (
+                  <Button className="w-full" onClick={startFoundingLifetimeCheckout} disabled={lifetimeBusy || !meLoaded} data-testid="cta-brand-founding-lifetime-checkout">
+                    {lifetimeBusy ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Opening PayPal…</> : `Get Founding Lifetime — ${lifetimeDisplay}`}
+                  </Button>
+                ) : (
+                  <Button className="w-full" variant="outline" onClick={() => openWaitlist('brand_founding_lifetime')} data-testid="cta-brand-founding-lifetime">{tier.cta}</Button>
+                )
               )}
               {tier.kind === 'enterprise' && (
                 <Button className="w-full" variant="outline" onClick={() => setEntOpen(true)} data-testid="cta-enterprise">{tier.cta}</Button>
@@ -223,6 +301,16 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
         Lifetime is a one-time {lifetimeDisplay} offer available only during Public Beta. Automated recurring billing is being finalized —
         Founding Beta and Founding Lifetime spots are secured today through the WaveLead commercial team.
       </p>
+      {lifetimeErr && (
+        <div className="mt-2 inline-flex items-center gap-1 text-sm text-rose-600" data-testid="lifetime-err">
+          <AlertTriangle className="h-4 w-4" />{lifetimeErr}
+        </div>
+      )}
+      {lifetimeCheckoutLive && lifetimeState?.environment === 'sandbox' && (
+        <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block" data-testid="lifetime-sandbox-notice">
+          Founding Lifetime is currently running in <strong>PayPal Sandbox</strong>. LIVE checkout is not enabled yet.
+        </p>
+      )}
 
       <section className="mt-14 wh-card p-6 md:p-8" data-testid="channel-owner-pricing">
         <div className="flex items-center justify-between gap-4 flex-wrap">
