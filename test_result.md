@@ -402,6 +402,7 @@ frontend_m02:
 
 test_plan:
   current_focus:
+    - "M11-Batch6b — Founding Brand Pro Lifetime SANDBOX enabled (BRAND_FOUNDING_LIFETIME_CHECKOUT_ENABLED=1 in preview, LIVE PayPal still refused) with full lifecycle e2e proof"
     - "M11-Batch6 — Founding Brand Pro Lifetime (SANDBOX one-time PayPal, feature-flagged, scoped entitlements, immutable snapshot terms)"
     - "M11-Batch5 — Admin-configurable commercial pricing (canonical config, admin CRUD, dynamic public rendering, no money-moving side effects)"
     - "M11-Batch4 — Pre-Public-Beta commercial repositioning (Brand-first pricing, footer redesign, homepage dual-audience emphasis, honest Founding Lifetime copy, activation coming-soon state)"
@@ -412,6 +413,65 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+# ---------- M11 BATCH 6b — SANDBOX ENABLED + E2E ACCEPTANCE ----------
+backend_m11_batch6b:
+  - task: "M11-Batch6b Enable Founding Lifetime SANDBOX in preview + end-to-end lifecycle acceptance"
+    implemented: true
+    working: true
+    file: ".env (BRAND_FOUNDING_LIFETIME_CHECKOUT_ENABLED=1 preview only), tests/m11_batch6b_lifetime_sandbox_e2e.test.ts, tests/m11_batch6_brand_founding_lifetime.test.ts (§15b service-level after runtime enablement)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          SANDBOX checkout flag now ENABLED in preview/dev (.env
+          BRAND_FOUNDING_LIFETIME_CHECKOUT_ENABLED=1). Belt-and-suspenders:
+          LIVE PayPal environment is separately refused at service level
+          (readActiveEnvironment().environment === 'live' → 503), so setting
+          the flag never causes production to charge real money unless a
+          separate rollout patch explicitly enables LIVE PayPal.
+
+          NEW E2E test tests/m11_batch6b_lifetime_sandbox_e2e.test.ts (15 tests):
+            §10 unauth GET /state → checkout_enabled=true, sandbox, $100
+            §2/§4 server derives $100; client-supplied price/currency IGNORED
+            §5 browser return NOT authoritative — pending capture → no grant
+            §3 capture → captured_finalized, fee=$3.50, net=$96.50, grant issued
+            §3 HTTP: GET /:id shows frozen commercial terms after admin flip
+            §3 brand.* unlocked; owner-facing revenue/sponsorship stay OFF
+            §10 HTTP: /state advertises already_active + active_grant details
+            §6 duplicate purchase throws /already active/
+            §7 3 captures + 2 webhooks → still exactly ONE active grant
+            §8 refund → grant.status=refunded, brand.* falls to false, history preserved
+            §4 persona=both + owner Pro + brand Lifetime → both dimensions, no leak
+            §9 admin $100 → $149 via HTTP → existing order still $100
+            §14 marketplace/promote/activation/credits row counts unchanged
+            §10 unauth POST /checkout → 401
+            §17 unauth GET /:id → 401
+
+          All money-moving primitives (createPayment/capture/refund) use the
+          same deterministic sandbox stub the underlying PayPal adapter is
+          already regressioned against (m07_paypal_activation +
+          m08b3_paypal_checkout = 66 passing tests). A live PayPal sandbox
+          click-through is unnecessarily fragile for CI per the spec's own
+          allowance for "existing deterministic provider-mocked refund path".
+
+          Regression: 168/168 passing across 10 test files (batch6, batch6b,
+          batch5, batch4, batch2b, batch2b-release-safety, entitlements,
+          persona, paypal-checkout, paypal-activation).
+
+          Typecheck + build both clean.
+
+          Production safety:
+            • .env in this preview has flag=1 — production deployment must
+              leave the flag unset or 0. Even if it accidentally leaked, the
+              LIVE PayPal environment check refuses live charges.
+            • Pricing page CTA logic uses server /state — production servers
+              without the flag return checkout_enabled=false → UI keeps the
+              "Reserve Founding Lifetime" waitlist CTA. Verified in the SSR
+              response.
 
 # ---------- M11 BATCH 6 — FOUNDING BRAND PRO LIFETIME (SANDBOX ONE-TIME) ----------
 backend_m11_batch6:

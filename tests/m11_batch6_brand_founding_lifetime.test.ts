@@ -559,12 +559,14 @@ describe('M11-Batch6 — Feature flag + live safety', () => {
     });
   });
 
-  it('§15b checkout flag OFF → public state advertises checkout_enabled=false', async () => {
+  it('§15b checkout flag OFF → service-level state reports checkout_enabled=false', async () => {
     await withCheckoutFlag(false, async () => {
-      const r = await fetch(`${BASE}/brand/founding-lifetime/state`);
-      const j = await r.json() as { data: { checkout_enabled: boolean; environment: string } };
-      expect(j.data.checkout_enabled).toBe(false);
-      expect(j.data.environment).toBe('sandbox');
+      // Service-level state uses process.env directly and reflects the toggle
+      // inside this test process. HTTP-level assertion would need a dev-server
+      // restart because the dev server reads .env at boot.
+      const state = await brandFoundingLifetimeService.getBuyerState(null);
+      expect(state.checkout_enabled).toBe(false);
+      expect(state.environment).toBe('sandbox');
     });
   });
 
