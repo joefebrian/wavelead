@@ -114,6 +114,18 @@ user_problem_statement: |
   RBAC must resolve current DB role via resolveActor().
 
 backend:
+  - task: "P1 FIX: Google login 'No session id' — corrected Emergent managed-auth START URL"
+    implemented: true
+    working: "NA"
+    file: "lib/services/auth/emergentGoogleAdapter.ts, tests/m07_google_auth.test.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "P1 production incident on https://wavelead.org/auth/google/callback: 'No session id was returned from Google.' Root cause (confirmed vs integration playbook): the browser START URL was the EXCHANGE API host demobackend.emergentagent.com/auth/v1/env/oauth, which completes Google consent but returns to the callback WITHOUT a session_id on production/custom domains. Fix (auth-only; activation logic untouched): emergentGoogleAdapter.cfg() now decouples START host = https://auth.emergentagent.com/ (browser entry, canonical) from EXCHANGE host = https://demobackend.emergentagent.com (server session-data redemption, unchanged). buildStartUrl() now emits exactly https://auth.emergentagent.com/?redirect=<encoded callback>. Exchange still GET .../auth/v1/env/oauth/session-data with X-Session-ID (methods default GET,POST). Overridable via EMERGENT_AUTH_START_URL (no redeploy). The callback correctly expecting a one-time Emergent session_id is BY DESIGN, not a bug. Verified: 11/11 m07_google_auth vitest pass; tsc clean. DEPLOY REQUIRED to take effect on prod. RESIDUAL EXTERNAL DEPENDENCY: per playbook, Emergent may need to explicitly authorize the exact prod callback https://wavelead.org/auth/google/callback (and www variant if used); if the start-URL fix + redeploy does not resolve prod E2E, that domain authorization is an Emergent-support action, not fixable in app code."
+
   - task: "Verified Owner Activation — controlled LIVE rollout scaffolding (SANDBOX-verify only)"
     implemented: true
     working: true

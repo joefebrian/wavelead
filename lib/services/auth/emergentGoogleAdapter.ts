@@ -20,19 +20,28 @@ import { z } from 'zod';
 
 // -------- Contract knobs (env-driven so we never redeploy for a URL change) --------
 function cfg() {
-  const host = (process.env.EMERGENT_AUTH_HOST || 'https://demobackend.emergentagent.com').replace(/\/+$/, '');
-  // Start URL: verified via runtime probe on 2026-08-24 — this endpoint 302s to
-  // Google OAuth consent (scope=openid+email+profile) and, after consent, 302s
-  // back to <callback>?session_id=... (or #session_id=...) for one-time redemption.
-  const startPath = process.env.EMERGENT_AUTH_START_PATH || '/auth/v1/env/oauth';
-  // Optional full-override env; wins over host+startPath composition.
+  // EXCHANGE host: the backend API host the SERVER calls to redeem a session id
+  // for the Google identity (GET .../session-data with X-Session-ID). This is the
+  // demobackend API host and is NOT the browser entry point.
+  const exchangeHost = (process.env.EMERGENT_AUTH_HOST || 'https://demobackend.emergentagent.com').replace(/\/+$/, '');
+  // START host: the MANAGED-AUTH entry point the BROWSER is redirected to. This is
+  // auth.emergentagent.com — it 302s to Google consent and, after consent, 302s
+  // back to <callback>#session_id=... for one-time redemption.
+  //
+  // INCIDENT FIX (2026-09-03): previously we sent the browser to the demobackend
+  // API host (/auth/v1/env/oauth). That path completes Google consent but returns
+  // to the callback WITHOUT a session_id on production/custom domains, producing
+  // "No session id was returned". The canonical browser start host is
+  // https://auth.emergentagent.com/?redirect=<callback>. Override via
+  // EMERGENT_AUTH_START_URL if Emergent changes it (no redeploy needed).
   const startUrlOverride = process.env.EMERGENT_AUTH_START_URL || '';
+  const startUrl = (startUrlOverride || 'https://auth.emergentagent.com/').replace(/\/+$/, '');
   return {
-    startUrl: (startUrlOverride || `${host}${startPath}`).replace(/\/*$/, ''),
-    exchangeHost: host,
+    startUrl,
+    exchangeHost,
     exchangePath: process.env.EMERGENT_AUTH_SESSION_PATH || '/auth/v1/env/oauth/session-data',
-    // Comma-separated list of methods to try in order (some Emergent envs are GET, some POST).
-    exchangeMethods: (process.env.EMERGENT_AUTH_SESSION_METHOD || 'POST,GET').split(',').map((m) => m.trim().toUpperCase()),
+    // Managed auth expects GET with X-Session-ID; keep POST as a tolerant fallback.
+    exchangeMethods: (process.env.EMERGENT_AUTH_SESSION_METHOD || 'GET,POST').split(',').map((m) => m.trim().toUpperCase()),
     enabled: (process.env.AUTH_GOOGLE_ENABLED || '').toLowerCase() === 'true',
   };
 }
@@ -43,7 +52,11 @@ export function isGoogleAuthEnabled(): boolean {
 
 export function buildStartUrl(callbackUrl: string): string {
   const { startUrl } = cfg();
-  return `${startUrl}?redirect=${encodeURIComponent(callbackUrl)}`;
+  // startUrl has trailing slashes stripped; normalize back to a single "/" base
+  // so the result is exactly https://auth.emergentagent.com/?redirect=<encoded>.
+  const u = new URL(`${startUrl}/`);
+  u.searchParams.set('redirect', callbackUrl);
+  return u.toString();
 }
 
 // Session-id shape guard — accept opaque URL-safe token up to a sane cap.

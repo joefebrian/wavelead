@@ -52,8 +52,10 @@ describe('M07-google §A — API surface (feature flag + endpoint semantics)', (
     const r = await api('/auth/google/start');
     expect(r.status).toBe(302);
     const loc = r.headers.get('location') || '';
-    // Correct start URL is on demobackend.emergentagent.com/auth/v1/env/oauth (verified 2026-08-24)
-    expect(loc.startsWith('https://demobackend.emergentagent.com/auth/v1/env/oauth')).toBe(true);
+    // Canonical managed-auth START host is auth.emergentagent.com/?redirect=<callback>.
+    // (Using demobackend.../oauth as the browser start URL completes Google consent
+    // but returns to the callback WITHOUT a session_id — the 2026-09-03 prod incident.)
+    expect(loc.startsWith('https://auth.emergentagent.com/')).toBe(true);
     expect(loc).toMatch(/[?&]redirect=/);
     expect(decodeURIComponent(loc.split('redirect=')[1] || '')).toMatch(/\/auth\/google\/callback$/);
   });
