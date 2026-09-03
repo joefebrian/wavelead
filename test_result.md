@@ -503,6 +503,101 @@ backend_m11_batch6b:
               spy on the provider proves capturePayment is never re-invoked;
               exactly ONE active grant results.
 
+# ---------- M11 BATCH 6c — LIVE ROLLOUT READINESS AUDIT ----------
+backend_m11_batch6c:
+  - task: "M11-Batch6c Founding Lifetime LIVE rollout readiness audit (no live payment; no flag flip)"
+    implemented: true
+    working: true
+    file: "tests/m11_batch6c_lifetime_live_rollout_prep.test.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Readiness audit is READ-ONLY — no live payment created, no
+          production flag flipped. Verified 21 acceptance points in
+          tests/m11_batch6c_lifetime_live_rollout_prep.test.ts covering
+          §2, §3, §4, §11, §12, §13 plus cross-links to existing suites
+          for §5, §6, §7, §8, §10.
+
+          READINESS FINGERPRINT (safe, no secrets):
+            provider                     : paypal
+            environment (this preview)   : sandbox
+            environment_source           : env (PAYPAL_MODE=sandbox)
+            credentials configured       : yes (via env fallback in preview;
+                                                 LIVE would use admin vault)
+            client_secret ever printed   : NO
+            webhook_configured           : yes (PAYPAL_WEBHOOK_ID present)
+            webhook events supported     : PAYMENT.CAPTURE.COMPLETED
+                                            PAYMENT.CAPTURE.REFUNDED
+                                            PAYMENT.CAPTURE.REVERSED
+                                            CHECKOUT.ORDER.APPROVED
+            webhook route                : POST /api/payments/paypal/webhook
+            webhook fan-out includes     : brandFoundingLifetimeService
+                                            .finalizeFromWebhookByOrderId
+                                            .recordRefundByOrderId
+            lifetime purpose             : BRAND_FOUNDING_LIFETIME
+            lifetime collection          : brand_founding_lifetime_orders
+            entitlement collection       : brand_entitlement_grants
+            history collection           : commercial_pricing_config_history
+            unique-per-order index       : uniq_provider_order (partial)
+            unique-per-capture index     : uniq_provider_capture (partial)
+            checkout flag (preview)      : ON (sandbox)
+            checkout flag (production)   : must remain OFF at rollout time
+
+          LIVE SMOKE PLAN (documented; NOT executed here):
+            Step 1  Confirm production BRAND_FOUNDING_LIFETIME_CHECKOUT_ENABLED
+                    is unset or 0. Confirm /api/brand/founding-lifetime/state
+                    returns checkout_enabled=false, environment=live.
+            Step 2  Confirm /api/admin/payment-health returns
+                    providers.paypal.configured=true, mode='live',
+                    webhook_configured=true.
+            Step 3  Flip production BRAND_FOUNDING_LIFETIME_CHECKOUT_ENABLED=1.
+                    Confirm /state now returns checkout_enabled=true.
+            Step 4  Sign in as the SINGLE authorized internal Brand test
+                    account (identified by RUN_TAG email or role='brand_lifetime_smoke').
+            Step 5  POST /api/brand/founding-lifetime/checkout → confirm the
+                    returned order carries price_minor=<canonical Lifetime
+                    price>, pricing_snapshot_id present, provider_environment=live.
+            Step 6  Complete PayPal LIVE approval in the browser.
+            Step 7  On return, capture endpoint fires. Confirm order status
+                    flips to captured_finalized, provider_capture_id present,
+                    provider_fee_minor > 0, provider_net_minor > 0.
+            Step 8  Confirm exactly ONE row in brand_entitlement_grants for
+                    the buyer with product_scope='brand',
+                    entitlement_set='brand_founding_lifetime', status='active'.
+            Step 9  Attempt a second checkout on the same account → confirm
+                    HTTP 409 "Founding Lifetime already active on this account.".
+            Step 10 DO NOT refund unless explicitly approved by finance/ops.
+            Step 11 If ANY invariant fails (fee=0, duplicate grant, wrong
+                    price, wrong environment):
+                    → immediately flip BRAND_FOUNDING_LIFETIME_CHECKOUT_ENABLED=0.
+                    Existing paid entitlements remain untouched.
+                    No code redeploy required.
+
+          MANUAL PAYPAL DASHBOARD ACTION REQUIRED:
+            NONE for event types. The existing LIVE webhook subscription in
+            the PayPal Developer Dashboard must already include the three
+            event types (PAYMENT.CAPTURE.COMPLETED / .REFUNDED / .REVERSED)
+            which the Marketplace + Owner Activation domains already use in
+            production. Founding Lifetime reuses the SAME endpoint + SAME
+            subscription — no new PayPal Dashboard configuration is needed
+            for this batch.
+
+            OPERATOR CHECK before flipping the flag: log into the PayPal
+            Developer Dashboard for the LIVE app, open Webhooks, and confirm
+            the endpoint pointing at /api/payments/paypal/webhook includes
+            all three events. If any is missing, add it and re-test the
+            webhook receiver in the same dashboard "Simulate event" UI.
+            No code change required.
+
+          Regression: 185/185 passing across 10 test files (batch6, batch6b,
+          batch6c, batch5, batch4, batch2b, batch2b-release-safety,
+          entitlements, persona, paypal-checkout, paypal-activation).
+          Typecheck clean.
+
 # ---------- M11 BATCH 6 — FOUNDING BRAND PRO LIFETIME (SANDBOX ONE-TIME) ----------
 backend_m11_batch6:
   - task: "M11-Batch6 Founding Brand Pro Lifetime SANDBOX (immutable pricing snapshot history, scoped brand entitlements, isolated PayPal one-time order, LIVE-checkout feature-flagged OFF)"
