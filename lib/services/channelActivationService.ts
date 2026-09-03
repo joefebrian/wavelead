@@ -22,7 +22,7 @@ import { getCollection } from '@/lib/db/mongo';
 import { COLLECTIONS } from '@/lib/db/collections';
 import { getPaymentProvider } from '@/lib/services/payments/providerFactory';
 import { readActiveEnvironment } from '@/lib/services/payments/paypalConfigService';
-import { isActivationRequired } from '@/lib/services/payments/activationFlag';
+import { isActivationRequired, isActivationLiveCheckoutEnabled } from '@/lib/services/payments/activationFlag';
 import { getConfiguredOrigin } from '@/lib/utils/canonicalOrigin';
 import type {
   Actor,
@@ -45,11 +45,19 @@ async function currentEnvironment(): Promise<'sandbox' | 'live'> {
   return r.environment;
 }
 
-async function assertSandbox(): Promise<void> {
+// M11-Batch2B controlled LIVE rollout. Owner-Activation checkout is allowed:
+//   • SANDBOX — always (unchanged behavior).
+//   • LIVE    — ONLY when the narrow capability flag
+//               CHANNEL_OWNER_ACTIVATION_LIVE_ENABLED is ON. This is the sole
+//               activation-domain unlock; global PayPal env/credential
+//               protections (paypalConfigService fail-closed) are untouched,
+//               and the Founding Lifetime domain is unaffected.
+async function assertActivationCheckoutAllowed(): Promise<'sandbox' | 'live'> {
   const env = await currentEnvironment();
-  if (env === 'live') {
-    throw new HttpError(503, 'Verified Owner Activation is not enabled on the production PayPal environment yet.');
+  if (env === 'live' && !isActivationLiveCheckoutEnabled()) {
+    throw new HttpError(503, 'Verified Owner Activation LIVE checkout is not enabled yet. It unlocks only after the controlled $1 production smoke passes.');
   }
+  return env;
 }
 
 function assertOwnershipApproved(channel: Channel): void {
@@ -226,7 +234,7 @@ export const channelActivationService = {
 
   // Kick off the sandbox activation checkout.
   async startActivation(actor: Actor | null, channelId: string, requestOrigin?: string) {
-    await assertSandbox();
+    await assertActivationCheckoutAllowed();
     requireAuth(actor);
     const channel = await channelRepo.findById(channelId);
     if (!channel) throw new HttpError(404, 'Channel not found');

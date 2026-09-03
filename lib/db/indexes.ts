@@ -300,4 +300,24 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { provider: 1, provider_capture_id: 1 }, unique: true, name: 'uniq_provider_capture', partialFilterExpression: { provider_capture_id: { $type: 'string' } } },
     ]),
   ]);
+
+  // M11-Batch2B — Verified Owner Activation LIVE rollout: GRANDFATHER backfill.
+  // Deterministic + idempotent. Any channel that was ALREADY ownership-verified
+  // at the rollout cutoff (verification_status ∈ {verified, official} AND a real
+  // owner_id) but has NO canonical activation_status yet is marked
+  // activation_status='not_required' so it permanently keeps its "Owner
+  // Verified" badge even after CHANNEL_OWNER_ACTIVATION_REQUIRED is flipped ON.
+  //
+  // It NEVER creates activation payment rows, NEVER issues WaveLead Credit, and
+  // NEVER touches ownership (owner_id / verification_status / verified_at) or
+  // history. Rows that already carry ANY activation_status
+  // (not_required|pending|active|revoked) are left untouched → safe to re-run.
+  await db.collection(COLLECTIONS.CHANNELS).updateMany(
+    {
+      verification_status: { $in: ['verified', 'official'] },
+      owner_id: { $type: 'string' },
+      $or: [{ activation_status: null }, { activation_status: { $exists: false } }],
+    },
+    { $set: { activation_status: 'not_required' } },
+  );
 }

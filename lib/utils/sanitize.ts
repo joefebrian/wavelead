@@ -26,7 +26,14 @@ export function sanitizeChannel(c: Channel): PublicChannel {
   // ON. Before that, existing verified owners retain their badge without any
   // activation being required. After that, activation_status must be 'active'.
   const activationRequired = isActivationRequired();
-  const activationOk = !activationRequired || c.activation_status === 'active';
+  // Grandfather-safe: a channel explicitly marked 'not_required' (existing
+  // ownership-verified owners at the LIVE rollout cutoff) ALWAYS keeps its
+  // badge, even after the operator flips CHANNEL_OWNER_ACTIVATION_REQUIRED on.
+  // Newly verified channels subject to activation must reach 'active'.
+  const activationOk =
+    !activationRequired ||
+    c.activation_status === 'active' ||
+    c.activation_status === 'not_required';
   return {
     ...rest,
     is_verified: rawVerified && hasOwner && activationOk,

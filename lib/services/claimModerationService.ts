@@ -11,6 +11,16 @@ import {
   claimApproveSchema, claimRejectSchema, claimRequestInfoSchema,
 } from '../validation/claimSchemas';
 import type { Actor, Channel, ChannelClaim, ClaimStatus } from '@/lib/types';
+import { isActivationRequired } from '../services/payments/activationFlag';
+
+// M11-Batch2B — activation state to stamp on a channel at ownership approval.
+//   • requirement ON  → 'pending' (owner must complete the $1 activation)
+//   • requirement OFF → 'not_required' (badge granted on ownership alone; no
+//     forced paywall during the controlled-rollout window)
+// Never applied to a channel already 'active' (guarded by the update filter).
+function activationStateForNewlyVerified(): 'pending' | 'not_required' {
+  return isActivationRequired() ? 'pending' : 'not_required';
+}
 
 const ALLOWED_STATUS_FILTERS: ClaimStatus[] = [
   'pending', 'needs_information', 'approved', 'rejected', 'cancelled',
@@ -103,6 +113,13 @@ export const claimModerationService = {
     if (!updated || updated.owner_id !== claim.claimant_user_id) {
       throw new HttpError(409, 'Channel is no longer eligible for this claim (it may already have a different owner). Use "Verify Current Owner" if the claimant is the existing owner.');
     }
+
+    // M11-Batch2B — stamp post-cutoff activation state. Never downgrades an
+    // already-active channel (filter guards activation_status != 'active').
+    await channelsColl.updateOne(
+      { id: claim.channel_id, activation_status: { $ne: 'active' } },
+      { $set: { activation_status: activationStateForNewlyVerified(), updated_at: now } },
+    );
 
     // Cancel any other active claims on this channel — a channel can have
     // only one verified owner.
@@ -262,6 +279,12 @@ export const claimModerationService = {
     if (!updated || updated.owner_id !== preservedOwnerId || updated.verification_status !== 'verified') {
       throw new HttpError(409, 'Channel state changed under this operation. Refresh and try again.');
     }
+
+    // M11-Batch2B — stamp post-cutoff activation state (never downgrades active).
+    await channelsColl.updateOne(
+      { id: channelId, activation_status: { $ne: 'active' } },
+      { $set: { activation_status: activationStateForNewlyVerified(), updated_at: now } },
+    );
 
     // Best-effort: if the current owner has an active claim (pending or
     // needs_information), mark it approved so it stops appearing in the queue.
