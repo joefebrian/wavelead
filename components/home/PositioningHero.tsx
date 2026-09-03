@@ -42,17 +42,22 @@ export default function PositioningHero({ totalApproved }: { totalApproved?: num
           <p className="mt-4 text-base md:text-lg text-muted-foreground" data-testid="hero-subhead">
             Discover channels, grow audiences, manage sponsorships and measure what drives results — all in one place.
           </p>
+          <div className="mt-2 text-sm text-foreground/80">
+            <span className="font-semibold">For Channel Owners</span>: grow &amp; monetize.
+            <span className="mx-1.5">·</span>
+            <span className="font-semibold">For Brands</span>: discover, plan and sponsor.
+          </div>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
             <Link href="/channels" data-testid="hero-cta-primary">
-              <Button size="lg" className="gap-1.5">Explore Channels <ArrowRight className="h-4 w-4" /></Button>
+              <Button size="lg" className="gap-1.5">Start a Campaign — For Brands <ArrowRight className="h-4 w-4" /></Button>
             </Link>
             <Link href="/submit" data-testid="hero-cta-secondary">
               <Button size="lg" variant="outline">List Your Channel</Button>
             </Link>
           </div>
           <div className="mt-3 text-xs text-muted-foreground">
-            <Link href="/channels" className="hover:text-primary underline underline-offset-2" data-testid="hero-cta-tertiary">
-              For Brands &amp; Agencies →
+            <Link href="/pricing" className="hover:text-primary underline underline-offset-2" data-testid="hero-cta-tertiary">
+              See pricing for Brands &amp; Channel Owners →
             </Link>
           </div>
           <form onSubmit={submit} className="mt-8 max-w-xl mx-auto" role="search" aria-label="Search WaveLead">

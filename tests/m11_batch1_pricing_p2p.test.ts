@@ -15,17 +15,19 @@ async function html(path: string): Promise<string> {
   return r.text();
 }
 
-describe('Commercial launch B1 §1 — Pricing update', () => {
-  it('#1 /pricing publishes Free $0 Forever, Pro $19/month Founding Beta, Enterprise Custom', async () => {
+describe('Commercial launch B1 §1 — Pricing update (updated for M11-Batch4 brand-first repositioning)', () => {
+  it('#1 /pricing publishes Brand Free $0, Brand Pro $15 Founding Beta, Founding Lifetime $100, Enterprise Custom', async () => {
     const h = await html('/pricing');
     expect(h).toMatch(/\$0/);
-    expect(h).toMatch(/Forever/i);
-    expect(h).toMatch(/\$19\s*\/\s*month/i);
+    expect(h).toMatch(/\$15\s*\/\s*month/i);
     expect(h).toContain('Founding Beta');
+    expect(h).toContain('$100');
+    expect(h).toContain('Public Beta Offer');
     expect(h).toMatch(/Custom/);
-    // CTAs unchanged — no recurring billing surface.
-    expect(h).toContain('Get Started');
-    expect(h).toContain('Join Pro Waitlist');
+    // Updated CTAs — no recurring billing surface.
+    expect(h).toContain('Start Free');
+    expect(h).toContain('Join Founding Beta');
+    expect(h).toContain('Reserve Founding Lifetime');
     expect(h).toContain('Contact Sales');
     // No recurring billing / Stripe / PayPal-subscription verbiage introduced.
     expect(h).not.toMatch(/\bStart Subscription\b/i);
@@ -33,35 +35,36 @@ describe('Commercial launch B1 §1 — Pricing update', () => {
     expect(h).not.toMatch(/\bCheckout\b/i);
   });
 
-  it('#2 homepage teaser shows Free/Pro/Enterprise + $19 real price + Founding Beta status', async () => {
+  it('#2 homepage teaser shows the four brand-first tiers with Founding Beta $15 status', async () => {
     const h = await html('/');
-    expect(h).toContain('data-testid="pricing-teaser-free"');
-    expect(h).toContain('data-testid="pricing-teaser-pro"');
+    expect(h).toContain('data-testid="pricing-teaser-brand-free"');
+    expect(h).toContain('data-testid="pricing-teaser-brand-pro"');
+    expect(h).toContain('data-testid="pricing-teaser-founding-lifetime"');
     expect(h).toContain('data-testid="pricing-teaser-enterprise"');
     expect(h).toContain('Founding Beta');
-    expect(h).toMatch(/\$19\s*\/\s*mo/i);
-    expect(h).toContain('$0 Forever');
+    expect(h).toMatch(/\$15\s*\/\s*mo/i);
+    expect(h).toContain('$100 one-time');
   });
 });
 
 describe('Commercial launch B1 §2 — P2P Labs attribution', () => {
-  it('#3 Footer shows P2P Labs attribution and full company nav (Privacy/Terms/Cookies)', async () => {
+  it('#3 Footer shows P2P Labs attribution and full legal row (Privacy/Terms/Cookies/Contact)', async () => {
     const h = await html('/');
     expect(h).toContain('data-testid="footer-attribution"');
     expect(h).toContain('P2P Labs');
-    // Company column now includes Cookie Policy. Cookie Preferences link is
-    // held back until Batch 3 activates the real consent manager (per user
-    // directive: no fake / dead links in production).
+    // Post-Batch-4 footer uses page-based Contact route, not raw mailto.
+    // The legal row exposes Privacy / Terms / Cookies / Contact + Cookie Preferences.
     expect(h).toContain('/privacy');
     expect(h).toContain('/terms');
     expect(h).toContain('/cookies');
+    expect(h).toContain('/contact');
+    expect(h).toContain('data-testid="footer-cookie-preferences"');
     expect(h).not.toContain('#cookie-preferences');
-    expect(h).toContain('mailto:hello@p2plabs.asia');
   });
 
   it('#4 Footer includes explicit independence disclosure', async () => {
     const h = await html('/');
-    expect(h).toMatch(/Not affiliated with, endorsed by, or an official product of WhatsApp or Meta/i);
+    expect(h).toMatch(/not affiliated with, endorsed by, or an official product of WhatsApp or Meta/i);
   });
 });
 

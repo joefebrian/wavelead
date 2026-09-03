@@ -1,46 +1,88 @@
 'use client';
-
+// M11-Batch4 — Pre-Public-Beta pricing repositioning.
+//
+// Commercial audience is now BRANDS / SPONSORS first. Channel Owners have
+// low-friction free participation and a small dedicated section below.
+//
+// Founding Lifetime is a public-beta-only offer — the copy explicitly
+// caps its promise to "Brand Pro features included in your Founding plan"
+// + "Priority product support". No unlimited AI / API / enterprise claims.
+//
+// Billing is NOT wired up in this patch. Brand Pro Founding Beta and
+// Founding Lifetime CTAs both convert through the existing commercial-lead
+// waitlist endpoint (pro-waitlist) with a `plan_focus` tag so the operator
+// can distinguish leads later.
 import { useState, useEffect, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Check, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Check, Loader2, CheckCircle2, AlertTriangle, Sparkles, Info } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import type { PublicUser } from '@/lib/types';
+import Link from 'next/link';
 
-interface Plan { name: string; price: string; blurb: string; features: string[]; cta: string; highlight?: boolean; kind: 'free' | 'pro' | 'enterprise'; status?: string; }
+interface Tier {
+  kind: 'brand_free' | 'brand_pro' | 'brand_founding_lifetime' | 'enterprise';
+  name: string;
+  price: string;
+  priceNote?: string;
+  status?: string;
+  blurb: string;
+  features: Array<{ label: string; badge?: 'Beta' | 'Coming Soon' }>;
+  cta: string;
+  highlight?: boolean;
+}
 
-const PLANS: Plan[] = [
+const BRAND_TIERS: Tier[] = [
   {
-    kind: 'free',
-    name: 'Free',
+    kind: 'brand_free',
+    name: 'Brand Free',
     price: '$0',
     status: 'Active',
-    blurb: 'Forever. Start and monetize your WhatsApp Channel — the full sponsorship money loop, no plan required.',
-    cta: 'Get Started',
+    blurb: 'Explore and sponsor WhatsApp Channels.',
+    cta: 'Start Free',
     features: [
-      '1 owned / managed channel',
-      'Claim & verify your channel',
-      'Basic sponsorship marketplace (receive brand requests, deliver work)',
-      'Basic earnings dashboard & external payout request',
-      'Promote (pay per campaign, USD via PayPal)',
-      'Basic rate card & delivery / payment protection',
-      'Basic channel analytics',
+      { label: 'Discover channels' },
+      { label: 'View channel profiles' },
+      { label: 'View sponsorship packages' },
+      { label: 'Book sponsorships' },
+      { label: 'Track campaign delivery' },
+      { label: 'Payment Protection on every booking' },
     ],
   },
   {
-    kind: 'pro',
-    name: 'Pro',
-    price: '$19 / month',
+    kind: 'brand_pro',
+    name: 'Brand Pro',
+    price: '$15 / month',
+    priceNote: 'Founding Beta price for the first 3 months, then $25 / month.',
     status: 'Founding Beta',
     highlight: true,
-    blurb: 'Growth & Revenue Intelligence for serious channel operators.',
-    cta: 'Join Pro Waitlist',
+    blurb: 'Campaign Intelligence & Sponsorship Operating System for brands and agencies.',
+    cta: 'Join Founding Beta',
     features: [
-      'Everything in Free',
-      'Revenue Intelligence',
-      'Sponsorship Pipeline',
-      'Core Marketplace remains available on Free',
-      'Promote remains pay-per-campaign',
+      { label: 'Everything in Brand Free' },
+      { label: 'Advanced Channel Discovery & Filtering' },
+      { label: 'Advanced Rate Card Analysis & Benchmarking' },
+      { label: 'Sponsorship Portfolio Reporting' },
+      { label: 'Campaign Reporting' },
+      { label: 'Revenue / Campaign Intelligence' },
+      { label: 'AI Campaign Brief', badge: 'Coming Soon' },
+      { label: 'Recommended Channels for This Campaign', badge: 'Coming Soon' },
+    ],
+  },
+  {
+    kind: 'brand_founding_lifetime',
+    name: 'Founding Lifetime',
+    price: '$100',
+    priceNote: 'One-time. Public Beta offer only — not a permanent price.',
+    status: 'Public Beta Offer',
+    blurb: 'Lifetime access to the Brand Pro features included in your Founding plan. Priority product support.',
+    cta: 'Reserve Founding Lifetime',
+    features: [
+      { label: 'Lifetime access to the Brand Pro features included in your Founding plan' },
+      { label: 'Priority product support' },
+      { label: 'Founding Member badge in your workspace' },
+      { label: 'Founding Lifetime does NOT include future Enterprise capabilities' },
+      { label: 'Founding Lifetime does NOT include unlimited API / high-volume AI usage' },
     ],
   },
   {
@@ -48,13 +90,13 @@ const PLANS: Plan[] = [
     name: 'Enterprise',
     price: 'Custom',
     status: 'Contact Sales',
-    blurb: 'Channel Business OS for agencies, publishers and portfolio operators.',
+    blurb: 'For agencies, publishers and portfolio operators.',
     cta: 'Contact Sales',
     features: [
-      'Everything in Pro',
-      'Portfolio operations across multiple channels',
-      'Custom onboarding',
-      'Priority support',
+      { label: 'Everything in Brand Pro' },
+      { label: 'Portfolio operations across multiple accounts' },
+      { label: 'Custom onboarding & account management' },
+      { label: 'Priority support' },
     ],
   },
 ];
@@ -81,7 +123,8 @@ export default function PricingClient() {
   const router = useRouter();
   const [me, setMe] = useState<PublicUser | null>(null);
   const [meLoaded, setMeLoaded] = useState(false);
-  const [proOpen, setProOpen] = useState(false);
+  const [waitlistOpen, setWaitlistOpen] = useState(false);
+  const [waitlistFocus, setWaitlistFocus] = useState<'brand_pro' | 'brand_founding_lifetime'>('brand_pro');
   const [entOpen, setEntOpen] = useState(false);
 
   useEffect(() => {
@@ -93,90 +136,153 @@ export default function PricingClient() {
   }, []);
 
   function handleFree() {
-    // Server owns login-redirect logic. For CTA we route directly to the right
-    // page based on authenticated state (already fetched above).
     if (me) router.push('/dashboard');
     else router.push('/signup?next=/dashboard');
   }
 
+  function openWaitlist(focus: 'brand_pro' | 'brand_founding_lifetime') {
+    setWaitlistFocus(focus);
+    setWaitlistOpen(true);
+  }
+
   return (
     <>
-      <div className="mt-12 grid gap-4 md:grid-cols-3" data-testid="pricing-grid">
-        {PLANS.map((plan) => (
+      <div className="mt-6 flex items-center gap-2 flex-wrap">
+        <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-3 py-1 text-xs font-semibold">
+          <Sparkles className="h-3.5 w-3.5" /> Brands & Sponsors
+        </span>
+        <span className="text-xs text-muted-foreground">Campaign intelligence, sponsorship operations, and channel discovery.</span>
+      </div>
+
+      <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4" data-testid="pricing-grid">
+        {BRAND_TIERS.map((tier) => (
           <div
-            key={plan.kind}
-            data-testid={`pricing-card-${plan.kind}`}
-            className={`wh-card p-6 flex flex-col ${plan.highlight ? 'ring-2 ring-primary/60' : ''}`}
+            key={tier.kind}
+            data-testid={`pricing-card-${tier.kind}`}
+            className={`wh-card p-6 flex flex-col ${tier.highlight ? 'ring-2 ring-primary/60' : ''}`}
           >
             <div className="flex items-center justify-between">
-              <div className="text-lg font-semibold">{plan.name}</div>
-              {plan.status && (
+              <div className="text-lg font-semibold">{tier.name}</div>
+              {tier.status && (
                 <span
                   className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded-full ${
-                    plan.status === 'Active'
+                    tier.status === 'Active'
                       ? 'text-emerald-700 bg-emerald-100'
-                      : plan.status === 'Coming Soon'
+                      : tier.status === 'Founding Beta' || tier.status === 'Public Beta Offer'
                       ? 'text-primary bg-primary/10'
                       : 'text-muted-foreground bg-muted'
                   }`}
-                  data-testid={`pricing-status-${plan.kind}`}
+                  data-testid={`pricing-status-${tier.kind}`}
                 >
-                  {plan.status}
+                  {tier.status}
                 </span>
               )}
             </div>
-            <div className="mt-3 text-3xl font-bold">{plan.price}</div>
-            <p className="text-sm text-muted-foreground mt-1">{plan.blurb}</p>
+            <div className="mt-3 text-3xl font-bold">{tier.price}</div>
+            {tier.priceNote && <div className="mt-1 text-xs text-muted-foreground" data-testid={`price-note-${tier.kind}`}>{tier.priceNote}</div>}
+            <p className="text-sm text-muted-foreground mt-2">{tier.blurb}</p>
             <ul className="mt-5 space-y-2 text-sm flex-1">
-              {plan.features.map((f) => (<li key={f} className="flex gap-2"><Check className="h-4 w-4 text-primary mt-0.5" /><span>{f}</span></li>))}
+              {tier.features.map((f) => (
+                <li key={f.label} className="flex gap-2 items-start">
+                  <Check className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                  <span>
+                    {f.label}
+                    {f.badge && (
+                      <span className="ml-1.5 inline-block rounded bg-amber-100 text-amber-800 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" data-testid={`feature-badge-${f.badge.toLowerCase().replace(/\s+/g, '-')}`}>
+                        {f.badge}
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
             </ul>
             <div className="mt-6">
-              {plan.kind === 'free' && (
-                <Button
-                  className="w-full"
-                  variant="outline"
-                  onClick={handleFree}
-                  disabled={!meLoaded}
-                  data-testid="cta-free"
-                >
-                  {plan.cta}
-                </Button>
+              {tier.kind === 'brand_free' && (
+                <Button className="w-full" variant="outline" onClick={handleFree} disabled={!meLoaded} data-testid="cta-brand-free">{tier.cta}</Button>
               )}
-              {plan.kind === 'pro' && (
-                <Button
-                  className="w-full"
-                  onClick={() => setProOpen(true)}
-                  data-testid="cta-pro"
-                >
-                  {plan.cta}
-                </Button>
+              {tier.kind === 'brand_pro' && (
+                <Button className="w-full" onClick={() => openWaitlist('brand_pro')} data-testid="cta-brand-pro">{tier.cta}</Button>
               )}
-              {plan.kind === 'enterprise' && (
-                <Button
-                  className="w-full"
-                  variant="outline"
-                  onClick={() => setEntOpen(true)}
-                  data-testid="cta-enterprise"
-                >
-                  {plan.cta}
-                </Button>
+              {tier.kind === 'brand_founding_lifetime' && (
+                <Button className="w-full" variant="outline" onClick={() => openWaitlist('brand_founding_lifetime')} data-testid="cta-brand-founding-lifetime">{tier.cta}</Button>
+              )}
+              {tier.kind === 'enterprise' && (
+                <Button className="w-full" variant="outline" onClick={() => setEntOpen(true)} data-testid="cta-enterprise">{tier.cta}</Button>
               )}
             </div>
           </div>
         ))}
       </div>
-      <p className="mt-10 text-center text-xs text-muted-foreground">Free covers the full sponsorship money loop today. Pro subscription bundling is coming soon; Promote capacity is billed per campaign in USD via PayPal.</p>
 
-      <ProWaitlistDialog open={proOpen} onOpenChange={setProOpen} me={me} />
+      <p className="mt-6 text-xs text-muted-foreground max-w-3xl" data-testid="brand-billing-note">
+        Brand Pro Founding Beta is $15/month for the first 3 months, then $25/month afterward. Founding Lifetime is a
+        one-time $100 offer available only during Public Beta. Automated recurring billing is being finalized —
+        Founding Beta and Founding Lifetime spots are secured today through the WaveLead commercial team.
+      </p>
+
+      {/* ============================================================
+          For Channel Owners — low-friction supply-side section.
+         ============================================================ */}
+      <section className="mt-14 wh-card p-6 md:p-8" data-testid="channel-owner-pricing">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <div className="inline-flex items-center gap-1 rounded-full bg-secondary text-secondary-foreground px-3 py-1 text-xs font-semibold">For Channel Owners</div>
+            <h2 className="mt-3 text-2xl font-bold">Grow &amp; monetize your WhatsApp Channel</h2>
+            <p className="mt-1 text-sm text-muted-foreground max-w-xl">
+              Get discovered by brands, publish sponsorship packages, and monetize your WhatsApp Channel.
+            </p>
+          </div>
+          <Link href="/submit"><Button variant="outline" data-testid="cta-owner-submit">Submit your channel</Button></Link>
+        </div>
+        <div className="mt-6 grid gap-3 md:grid-cols-3">
+          <div className="rounded-md border border-border p-4" data-testid="owner-tile-list">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">List your channel</div>
+            <div className="mt-1 text-lg font-bold">Free</div>
+            <p className="mt-1 text-xs text-muted-foreground">List, claim, and publish sponsorship packages at no cost.</p>
+          </div>
+          <div className="rounded-md border border-border p-4" data-testid="owner-tile-marketplace">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Marketplace earning</div>
+            <div className="mt-1 text-lg font-bold">Free participation</div>
+            <p className="mt-1 text-xs text-muted-foreground">Receive sponsorships, deliver campaigns, request external payout. 90% owner / 10% WaveLead on every sponsorship.</p>
+          </div>
+          <div className="rounded-md border border-border p-4" data-testid="owner-tile-activation">
+            <div className="flex items-center gap-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Verified Owner Activation</div>
+              <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-muted text-muted-foreground" data-testid="activation-rollout-pill">Rollout Coming Soon</span>
+            </div>
+            <div className="mt-1 text-lg font-bold">$1 per channel</div>
+            <p className="mt-1 text-xs text-muted-foreground">One-time activation transaction — not a subscription. Ownership must be approved first; payment alone never proves ownership.</p>
+          </div>
+        </div>
+        <div className="mt-4 rounded-md border border-border p-4" data-testid="owner-tile-promote">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Promote your channel</div>
+          <div className="mt-1 text-lg font-bold">Pay as you go</div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Promote is optional paid placement. Sponsored placements are always clearly labeled and never silently
+            influence organic recommendations — they run beside organic results, never as an undisclosed replacement.
+          </p>
+        </div>
+      </section>
+
+      {/* Existing owner-facing Pro / Enterprise entitlements remain intact for
+          accounts that already have them; we simply no longer merchandise a
+          Channel Owner Pro plan on this page. Existing users see no regression. */}
+      <p className="mt-6 text-xs text-muted-foreground">
+        Existing Channel Owner Pro accounts remain fully active. If you’re on Channel Owner Pro, nothing changes for
+        you — Revenue Intelligence, Sponsorship Pipeline, and other Pro features continue to work.
+      </p>
+
+      <WaitlistDialog open={waitlistOpen} onOpenChange={setWaitlistOpen} me={me} focus={waitlistFocus} />
       <EnterpriseDialog open={entOpen} onOpenChange={setEntOpen} me={me} />
     </>
   );
 }
 
 // ============================================================================
-// Pro waitlist modal
+// Brand Pro / Founding Lifetime waitlist — reuses existing pro-waitlist endpoint
+// with a `plan_focus` tag so operations can distinguish leads later.
 // ============================================================================
-function ProWaitlistDialog({ open, onOpenChange, me }: { open: boolean; onOpenChange: (o: boolean) => void; me: PublicUser | null }) {
+function WaitlistDialog({ open, onOpenChange, me, focus }: { open: boolean; onOpenChange: (o: boolean) => void; me: PublicUser | null; focus: 'brand_pro' | 'brand_founding_lifetime' }) {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -192,14 +298,21 @@ function ProWaitlistDialog({ open, onOpenChange, me }: { open: boolean; onOpenCh
     }
   }, [open, me]);
 
+  const isLifetime = focus === 'brand_founding_lifetime';
+  const title = isLifetime ? 'Reserve Founding Lifetime access' : 'Join the Brand Pro Founding Beta';
+  const description = isLifetime
+    ? "A member of the WaveLead team will reach out to secure your Founding Lifetime spot. Public Beta offer — not a permanent price."
+    : 'Founding Beta pricing is $15/month for the first 3 months, then $25/month. No obligation to submit interest.';
+  const submitLabel = isLifetime ? 'Reserve My Spot' : 'Join Founding Beta';
+
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (busy) return; // duplicate-click guard
+    if (busy) return;
     setBusy(true); setError(null);
     try {
       const r = await fetch('/api/commercial-leads/pro-waitlist', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ email, ...(name ? { name } : {}) }),
+        body: JSON.stringify({ email, ...(name ? { name } : {}), plan_focus: focus }),
       });
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Submission failed');
@@ -210,47 +323,39 @@ function ProWaitlistDialog({ open, onOpenChange, me }: { open: boolean; onOpenCh
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="pro-waitlist-dialog">
+      <DialogContent data-testid="waitlist-dialog">
         <DialogHeader>
-          <DialogTitle>Join the WaveLead Pro Waitlist</DialogTitle>
-          <DialogDescription>We&apos;ll email you when Pro launches. No obligation.</DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         {done ? (
           <div className="py-6 text-center">
             <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" />
             <div className="mt-3 font-semibold">You&apos;re on the list.</div>
-            <p className="mt-1 text-sm text-muted-foreground">We&apos;ll let you know when WaveLead Pro becomes available.</p>
+            <p className="mt-1 text-sm text-muted-foreground">A WaveLead team member will follow up shortly.</p>
             <Button className="mt-4" onClick={() => onOpenChange(false)}>Close</Button>
           </div>
         ) : (
           <form onSubmit={submit} className="space-y-3">
             <div>
               <label className="block text-sm font-medium mb-1">Email</label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className={inputCls}
-                data-testid="pro-email"
-              />
+              <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} data-testid="pro-email" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Name <span className="text-xs text-muted-foreground">(optional)</span></label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className={inputCls}
-                data-testid="pro-name"
-                maxLength={120}
-              />
+              <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputCls} data-testid="pro-name" maxLength={120} />
             </div>
+            {isLifetime && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 inline-flex items-start gap-2">
+                <Info className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>Founding Lifetime includes the Brand Pro features listed in the Founding plan and priority product support. It does <strong>not</strong> promise unlimited future Enterprise, API, or high-volume AI capabilities.</span>
+              </div>
+            )}
             {error && <div className="text-sm text-rose-600 flex items-center gap-1"><AlertTriangle className="h-4 w-4" />{error}</div>}
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
               <Button type="submit" disabled={busy} data-testid="pro-submit">
-                {busy ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Submitting…</> : 'Join Pro Waitlist'}
+                {busy ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Submitting…</> : submitLabel}
               </Button>
             </div>
           </form>
@@ -260,43 +365,21 @@ function ProWaitlistDialog({ open, onOpenChange, me }: { open: boolean; onOpenCh
   );
 }
 
-// ============================================================================
-// Enterprise modal
-// ============================================================================
 function EnterpriseDialog({ open, onOpenChange, me }: { open: boolean; onOpenChange: (o: boolean) => void; me: PublicUser | null }) {
-  const [form, setForm] = useState({
-    company_name: '', contact_name: '', email: '',
-    company_type: 'brand' as string,
-    channel_count: '' as string,
-    country: '' as string,
-    message: '',
-  });
+  const [form, setForm] = useState({ company_name: '', contact_name: '', email: '', company_type: 'brand' as string, channel_count: '' as string, country: '' as string, message: '' });
   const [interests, setInterests] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
   useEffect(() => {
     if (open) {
-      setForm({
-        company_name: '', contact_name: me?.display_name || '', email: me?.email || '',
-        company_type: 'brand', channel_count: '', country: me?.country_code || '',
-        message: '',
-      });
-      setInterests(new Set());
-      setDone(false);
-      setError(null);
+      setForm({ company_name: '', contact_name: me?.display_name || '', email: me?.email || '', company_type: 'brand', channel_count: '', country: me?.country_code || '', message: '' });
+      setInterests(new Set()); setDone(false); setError(null);
     }
   }, [open, me]);
-
   function toggleInterest(v: string) {
-    setInterests((prev) => {
-      const next = new Set(prev);
-      if (next.has(v)) next.delete(v); else next.add(v);
-      return next;
-    });
+    setInterests((prev) => { const next = new Set(prev); if (next.has(v)) next.delete(v); else next.add(v); return next; });
   }
-
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (busy) return;
@@ -313,17 +396,13 @@ function EnterpriseDialog({ open, onOpenChange, me }: { open: boolean; onOpenCha
         ...(form.channel_count ? { channel_count: Number(form.channel_count) } : {}),
         ...(form.country ? { country: form.country.toUpperCase() } : {}),
       };
-      const r = await fetch('/api/commercial-leads/enterprise', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify(payload),
-      });
+      const r = await fetch('/api/commercial-leads/enterprise', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Submission failed');
       setDone(true);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg" data-testid="enterprise-dialog">
@@ -335,67 +414,22 @@ function EnterpriseDialog({ open, onOpenChange, me }: { open: boolean; onOpenCha
           <div className="py-6 text-center">
             <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" />
             <div className="mt-3 font-semibold">Thanks — we&apos;ve got your request.</div>
-            <p className="mt-1 text-sm text-muted-foreground">A member of the WaveLead team will be in touch shortly.</p>
             <Button className="mt-4" onClick={() => onOpenChange(false)}>Close</Button>
           </div>
         ) : (
           <form onSubmit={submit} className="space-y-3">
             <div className="grid md:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium mb-1">Company Name</label>
-                <input required maxLength={200} value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} className={inputCls} data-testid="ent-company" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Contact Name</label>
-                <input required maxLength={120} value={form.contact_name} onChange={(e) => setForm({ ...form, contact_name: e.target.value })} className={inputCls} data-testid="ent-contact" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Work Email</label>
-                <input required type="email" maxLength={200} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={inputCls} data-testid="ent-email" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Company Type</label>
-                <select value={form.company_type} onChange={(e) => setForm({ ...form, company_type: e.target.value })} className={inputCls} data-testid="ent-type">
-                  {ENTERPRISE_COMPANY_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Approx. # of Channels <span className="text-xs text-muted-foreground">(optional)</span></label>
-                <input type="number" min={0} max={1000000} value={form.channel_count} onChange={(e) => setForm({ ...form, channel_count: e.target.value })} className={inputCls} />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Country <span className="text-xs text-muted-foreground">(ISO-2, optional)</span></label>
-                <input type="text" maxLength={2} value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value.toUpperCase() })} className={inputCls} placeholder="US" />
-              </div>
+              <div><label className="block text-sm font-medium mb-1">Company Name</label><input required maxLength={200} value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} className={inputCls} data-testid="ent-company" /></div>
+              <div><label className="block text-sm font-medium mb-1">Contact Name</label><input required maxLength={120} value={form.contact_name} onChange={(e) => setForm({ ...form, contact_name: e.target.value })} className={inputCls} data-testid="ent-contact" /></div>
+              <div><label className="block text-sm font-medium mb-1">Work Email</label><input required type="email" maxLength={200} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={inputCls} data-testid="ent-email" /></div>
+              <div><label className="block text-sm font-medium mb-1">Company Type</label><select value={form.company_type} onChange={(e) => setForm({ ...form, company_type: e.target.value })} className={inputCls} data-testid="ent-type">{ENTERPRISE_COMPANY_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select></div>
+              <div><label className="block text-sm font-medium mb-1">Approx. # of Channels <span className="text-xs text-muted-foreground">(optional)</span></label><input type="number" min={0} max={1000000} value={form.channel_count} onChange={(e) => setForm({ ...form, channel_count: e.target.value })} className={inputCls} /></div>
+              <div><label className="block text-sm font-medium mb-1">Country <span className="text-xs text-muted-foreground">(ISO-2, optional)</span></label><input type="text" maxLength={2} value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value.toUpperCase() })} className={inputCls} placeholder="US" /></div>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">What do you need? <span className="text-xs text-muted-foreground">(select all that apply)</span></label>
-              <div className="grid grid-cols-2 gap-1.5" data-testid="ent-interests">
-                {ENTERPRISE_INTERESTS.map((i) => (
-                  <label key={i.value} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={interests.has(i.value)}
-                      onChange={() => toggleInterest(i.value)}
-                      className="h-4 w-4"
-                      data-testid={`ent-interest-${i.value}`}
-                    />
-                    <span>{i.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Message / Requirements</label>
-              <textarea required rows={4} maxLength={4000} value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} className={inputCls} data-testid="ent-message" />
-            </div>
+            <div><label className="block text-sm font-medium mb-1">What do you need? <span className="text-xs text-muted-foreground">(select all that apply)</span></label><div className="grid grid-cols-2 gap-1.5" data-testid="ent-interests">{ENTERPRISE_INTERESTS.map((i) => (<label key={i.value} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={interests.has(i.value)} onChange={() => toggleInterest(i.value)} className="h-4 w-4" data-testid={`ent-interest-${i.value}`} /><span>{i.label}</span></label>))}</div></div>
+            <div><label className="block text-sm font-medium mb-1">Message / Requirements</label><textarea required rows={4} maxLength={4000} value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} className={inputCls} data-testid="ent-message" /></div>
             {error && <div className="text-sm text-rose-600 flex items-center gap-1"><AlertTriangle className="h-4 w-4" />{error}</div>}
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
-              <Button type="submit" disabled={busy} data-testid="ent-submit">
-                {busy ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Submitting…</> : 'Contact WaveLead'}
-              </Button>
-            </div>
+            <div className="flex justify-end gap-2 pt-2"><Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button><Button type="submit" disabled={busy} data-testid="ent-submit">{busy ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Submitting…</> : 'Contact WaveLead'}</Button></div>
           </form>
         )}
       </DialogContent>

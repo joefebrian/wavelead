@@ -402,13 +402,93 @@ frontend_m02:
 
 test_plan:
   current_focus:
+    - "M11-Batch4 — Pre-Public-Beta commercial repositioning (Brand-first pricing, footer redesign, homepage dual-audience emphasis, honest Founding Lifetime copy, activation coming-soon state)"
     - "M11-Batch2B RELEASE SAFETY — activation feature flag + refund credit reversal (net-zero, idempotent)"
-    - "M11-Batch2B — Verified Owner Activation ($1 SANDBOX; wavelead_credit_events ledger; refund revokes activation only)"
-    - "M11-Batch3 — Cookie Consent + First-Party Analytics (consent manager, server-enforced ingest, first-party visitor_id, policy pages)"
-    - "M11-Batch2A — Follower Evidence (owner-submitted, admin-verified snapshots + Owner Verified badge rename)"
+    - "M11-Batch2B — Verified Owner Activation ($1 SANDBOX)"
+    - "M11-Batch3 — Cookie Consent + First-Party Analytics"
+    - "M11-Batch2A — Follower Evidence"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+# ---------- M11 BATCH 4 — COMMERCIAL REPOSITIONING ----------
+frontend_m11_batch4:
+  - task: "M11-Batch4 Brand-first pricing / footer redesign / homepage dual-audience / activation coming-soon"
+    implemented: true
+    working: true
+    file: "app/pricing/PricingClient.tsx, components/layout/Footer.tsx, components/home/PositioningHero.tsx, components/home/LaunchSections.tsx, app/dashboard/channels/[id]/ChannelActivationCard.tsx, tests/m11_batch4_repositioning.test.ts, tests/m11_batch1_pricing_p2p.test.ts (updated to new pricing), tests/m10_homepage_launch.test.ts (updated), tests/m11_batch3_consent_analytics.test.ts (updated)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Pricing repositioned Brand-first:
+            Brand Free  $0                        Discover & sponsor
+            Brand Pro   $15/mo Founding Beta       Campaign Intelligence & Sponsorship OS
+                                                   (first 3 months, then $25/mo)
+            Founding Lifetime  $100 one-time       Public Beta offer only — NOT permanent
+                                                   Includes: Brand Pro features + priority
+                                                   product support. Explicitly excludes:
+                                                   future Enterprise capabilities, unlimited
+                                                   API, unlimited AI usage.
+            Enterprise   Custom                    Contact Sales
+          Separate low-friction "For Channel Owners" section:
+            List Free · Marketplace Free (90/10) · Verified Owner Activation $1 per channel
+            (Rollout Coming Soon pill) · Promote pay-as-you-go
+          Brand Pro surfaces AI Campaign Brief + Recommended Channels for This Campaign
+          as "Coming Soon" badges. No fake shipping claims.
+
+          Footer redesign — 4 clean columns:
+            COL1  WaveLead + P2P Labs attribution + 1-liner positioning
+            COL2  Discover (All Channels / Trending / Top / Categories / Countries)
+            COL3  Channel Owners (Submit / Dashboard / Monetization / Pricing)
+            COL4  Brands & Agencies (For Brands / Discover / Pricing / Sign In)
+          Bottom legal row: © 2026 P2P Labs. + Privacy/Terms/Cookies/Contact + Cookie
+          Preferences trigger + WhatsApp/Meta independence disclosure.
+          Tablet: 2x2 (sm:grid-cols-2). Mobile: stacked. No horizontal overflow.
+          Old nested Company block removed.
+
+          Homepage hero now dual-audience:
+            H1 unchanged. Subhead labels split: "For Channel Owners: grow & monetize."
+            and "For Brands: discover, plan and sponsor." Primary CTA is now the more
+            prominent brand-focused "Start a Campaign — For Brands" alongside "List
+            Your Channel" and a pricing link.
+          PricingTeaser rewritten as 4-tile brand-first grid matching /pricing.
+
+          ChannelActivationCard release-safety tightened:
+            Live env + flag OFF → renders positioning-only tile ("$1 per channel —
+            Rollout Coming Soon") instead of hiding entirely. NO fetch to /start, so
+            zero risk of a production 503. Sandbox OR flag ON still shows the full
+            CTA path. LIVE PayPal activation remains disabled (assertSandbox 503).
+
+          Test file `tests/m11_batch4_repositioning.test.ts` — 9/9 PASS covering:
+            brand-first pricing tiles + prices + statuses
+            Founding Lifetime honest limitation copy
+            AI Campaign Brief / Recommended Channels as Coming Soon
+            Channel Owner section (list / marketplace / activation coming soon / promote)
+            Brand billing note discloses Beta duration + post-beta $25 + Public Beta lifetime
+            Footer 4-column + attribution + legal row + independence disclosure
+            Old Company subblock is gone
+            Homepage dual-audience emphasis
+            Consent + P2P attribution invariants preserved.
+
+          Regression (updated old Batch 1 / m10 assertions to new pricing):
+            m11-batch1 pricing_p2p     6/6 PASS
+            m11-batch2a follower       6/6 PASS
+            m11-batch2b activation     8/8 PASS
+            m11-batch2b release-safety 6/6 PASS
+            m11-batch3 consent         12/12 PASS
+            m11-batch4 repositioning   9/9 PASS
+            m10 homepage_launch        10/10 PASS
+            m10 buyer_auth             13/13 PASS
+            m03 lifecycle              21/21 PASS
+            TOTAL M11+M10+M03: 91/91.
+          PayPal + marketplace: 135/135 (m07, m08b1, m08b2, m08b3). No economics
+          regression, no owner earnings regression, no delivery/payout regression.
+          Typecheck: PASS. `yarn build`: PASS. NO new billing wired. NO PayPal
+          LIVE activation. NO AI recommendation engine started.
 
 # ---------- M11 BATCH 2B RELEASE SAFETY ----------
 backend_m11_batch2b_release_safety:

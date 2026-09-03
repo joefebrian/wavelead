@@ -256,6 +256,6 @@ describe('M11-Batch3 — Policies + Invariants', () => {
     expect(home.html).toContain('data-testid="footer-attribution"');
     expect(home.html).toContain('P2P Labs');
     expect(home.html).toContain('Founding Beta');
-    expect(home.html).toMatch(/\$19\s*\/\s*mo/i);
+    expect(home.html).toMatch(/\$15\s*\/\s*mo/i);
   });
 });

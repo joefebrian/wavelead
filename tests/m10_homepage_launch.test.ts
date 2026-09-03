@@ -113,20 +113,22 @@ describe('Homepage launch §6 — Trust section', () => {
   });
 });
 
-describe('Homepage launch §7 — Pricing teaser', () => {
-  it('#7 Free / Pro / Enterprise tiers with correct CTAs and no fake monthly prices', async () => {
+describe('Homepage launch §7 — Pricing teaser (M11-Batch4 brand-first)', () => {
+  it('#7 Brand Free / Brand Pro / Founding Lifetime / Enterprise tiers with correct CTAs', async () => {
     const html = await fetchHome();
     expect(html).toContain('data-testid="home-pricing-teaser"');
-    expect(html).toContain('data-testid="pricing-teaser-free"');
-    expect(html).toContain('data-testid="pricing-teaser-pro"');
+    expect(html).toContain('data-testid="pricing-teaser-brand-free"');
+    expect(html).toContain('data-testid="pricing-teaser-brand-pro"');
+    expect(html).toContain('data-testid="pricing-teaser-founding-lifetime"');
     expect(html).toContain('data-testid="pricing-teaser-enterprise"');
-    expect(html).toContain('Get Started');
-    expect(html).toContain('Join Pro Waitlist');
+    expect(html).toContain('Start Free');
+    expect(html).toContain('Join Founding Beta');
+    expect(html).toContain('Reserve Founding Lifetime');
     expect(html).toContain('Contact Sales');
-    expect(html).toContain('View Pricing');
-    // Pro price now published as $19 / mo Founding Beta.
-    expect(html).toMatch(/\$19\s*\/\s*mo/i);
+    // M11-Batch4 — homepage teaser is now brand-first: $15 / mo Founding Beta.
+    expect(html).toMatch(/\$15\s*\/\s*mo/i);
     expect(html).toContain('Founding Beta');
+    expect(html).toContain('$100 one-time');
     // Never fabricated prices for Free or Enterprise.
     expect(html).not.toMatch(/Free:\s*\$\d+\s*\/\s*mo/i);
   });

@@ -129,15 +129,45 @@ export default function ChannelActivationCard({ channelId, returnActivationId, r
 
   // Release-safety visibility rule:
   //   \u2022 Sandbox environment \u2192 show the CTA for previewing / QA.
-  //   \u2022 Live environment \u2192 show the CTA only if the operator has
-  //     explicitly flipped CHANNEL_OWNER_ACTIVATION_REQUIRED to true.
-  //     Until then, existing verified owners must not see a broken $1 CTA
-  //     that would 503 against a live PayPal.
-  if (state.environment !== 'sandbox' && !state.activation_required) return null;
+  //   \u2022 Live + flag ON \u2192 show the CTA (activation officially rolled out).
+  //   \u2022 Live + flag OFF \u2192 show a positioning-only tile ("Rollout Coming
+  //     Soon") so owners see $1 pricing but can never be routed into a live
+  //     503; the CTA is disabled with truthful copy.
+  const showActiveCta = state.environment === 'sandbox' || state.activation_required;
   const isActive = state.activation_status === 'active';
   const isPending = state.activation_status === 'pending' || state.latest_payment?.status === 'captured_pending_fee';
   const isRevoked = state.activation_status === 'revoked';
   const ownershipApproved = state.ownership_status === 'approved';
+
+  if (!showActiveCta) {
+    // Positioning-only tile. No fetch to /start, no 503 exposure.
+    return (
+      <section className="wh-card p-5" data-testid="activation-card">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5 text-primary" />
+          <h2 className="text-lg font-semibold">Verified Owner Activation</h2>
+          <span className="ml-1 rounded-full bg-muted text-muted-foreground px-2 py-0.5 text-[10px] uppercase tracking-wide" data-testid="activation-rollout-pill">Rollout Coming Soon</span>
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <div className="rounded-md border border-border p-3">
+            <div className="text-xs text-muted-foreground uppercase tracking-wide">Ownership</div>
+            <div className="mt-1 inline-flex items-center gap-1.5 text-sm font-semibold" data-testid="ownership-status">
+              {ownershipApproved ? <><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Ownership Approved</> : <>Ownership Pending</>}
+            </div>
+          </div>
+          <div className="rounded-md border border-border p-3">
+            <div className="text-xs text-muted-foreground uppercase tracking-wide">Activation</div>
+            <div className="mt-1 text-sm font-semibold">$1 per channel <span className="ml-1 text-xs text-muted-foreground font-normal">— coming soon</span></div>
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Verified Owner Activation is a one-time $1 transaction that unlocks the public &ldquo;Owner Verified&rdquo; state
+          for your channel. Rollout to production is coming soon — until then your existing verified status remains
+          intact and no action is required.
+        </p>
+      </section>
+    );
+  }
 
   async function onStart() {
     setBusy('start'); setError(null); setInfo(null);

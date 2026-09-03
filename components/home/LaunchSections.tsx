@@ -264,26 +264,31 @@ export function TrustSection() {
 // Pricing teaser — matches Phase 3 architecture. NO subscription checkout.
 // ---------------------------------------------------------------------------
 export function PricingTeaser() {
+  // M11-Batch4 — Brand-first repositioning. Homepage teaser now mirrors the
+  // /pricing page: Brand Free, Brand Pro Founding Beta ($15/mo → $25/mo),
+  // Founding Lifetime ($100 one-time, Public Beta only), Enterprise.
   const tiers = [
-    { name: 'Free',       status: 'Active',         positioning: 'Start and monetize your WhatsApp Channel',        cta: 'Get Started',       href: '/signup', price: '$0 Forever' },
-    { name: 'Pro',        status: 'Founding Beta',  positioning: 'Growth & Revenue Intelligence for serious channel operators', cta: 'Join Pro Waitlist', href: '/pricing', highlight: true, price: '$19 / mo' },
-    { name: 'Enterprise', status: 'Contact Sales',  positioning: 'Channel Business OS for agencies and portfolio operators', cta: 'Contact Sales', href: '/pricing', price: 'Custom' },
+    { name: 'Brand Free',        status: 'Active',            positioning: 'Discover and sponsor WhatsApp Channels',                     cta: 'Start Free',                 href: '/signup', price: '$0' },
+    { name: 'Brand Pro',         status: 'Founding Beta',     positioning: 'Campaign Intelligence & Sponsorship Operating System',       cta: 'Join Founding Beta',         href: '/pricing', highlight: true, price: '$15 / mo' },
+    { name: 'Founding Lifetime', status: 'Public Beta Offer', positioning: 'One-time lifetime access to Brand Pro Founding features',    cta: 'Reserve Founding Lifetime',  href: '/pricing', price: '$100 one-time' },
+    { name: 'Enterprise',        status: 'Contact Sales',     positioning: 'Portfolio operations for agencies, publishers and networks', cta: 'Contact Sales',              href: '/pricing', price: 'Custom' },
   ];
   return (
     <section className="border-y border-border/60 bg-muted/30" data-testid="home-pricing-teaser">
       <div className="container py-14">
         <div className="text-center max-w-2xl mx-auto">
-          <h2 className="text-2xl md:text-3xl font-bold">Pricing that respects creators</h2>
+          <h2 className="text-2xl md:text-3xl font-bold">Pricing built for brands — friendly for creators</h2>
           <p className="mt-2 text-muted-foreground">
-            Free covers the full sponsorship money loop. Paid tiers add growth &amp; revenue intelligence and multi-channel operations.
+            Brand Free covers marketplace participation. Brand Pro adds campaign intelligence. Channel Owners can
+            list, publish packages and earn for free — see the Channel Owner section on the pricing page.
           </p>
         </div>
-        <div className="mt-8 grid gap-4 md:grid-cols-3">
+        <div className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {tiers.map((t) => (
             <div
               key={t.name}
               className={`wh-card p-6 flex flex-col ${t.highlight ? 'ring-2 ring-primary/40 bg-primary/5' : ''}`}
-              data-testid={`pricing-teaser-${t.name.toLowerCase()}`}
+              data-testid={`pricing-teaser-${t.name.toLowerCase().replace(/\s+/g, '-')}`}
             >
               <div className="flex items-center justify-between">
                 <div className="text-lg font-semibold">{t.name}</div>
@@ -291,7 +296,7 @@ export function PricingTeaser() {
                   className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded-full ${
                     t.status === 'Active'
                       ? 'text-emerald-700 bg-emerald-100'
-                      : t.status === 'Coming Soon'
+                      : t.status === 'Founding Beta' || t.status === 'Public Beta Offer'
                       ? 'text-primary bg-primary/10'
                       : 'text-muted-foreground bg-muted'
                   }`}
