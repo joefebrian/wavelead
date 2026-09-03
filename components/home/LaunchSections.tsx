@@ -16,6 +16,17 @@ import {
   Megaphone, Handshake, Users, Compass, TrendingUp, Wallet, BarChart3, ShieldCheck,
   CheckCircle2, FileText, PackageCheck, RefreshCw, Sparkles, ArrowRight, Kanban,
 } from 'lucide-react';
+import { formatMinorUSD } from '@/lib/services/pricingConfigTypes';
+
+// M11-Batch5 — Minimal shape the homepage teaser needs from the server-side
+// pricing config. Kept local so unrelated homepage sections don't take a
+// runtime dependency on the full config surface.
+export interface PublicPricingProp {
+  brand_free:      { price_minor: number; enabled: boolean };
+  brand_pro:       { beta_price_minor: number; regular_price_minor: number; beta_duration_months: number; enabled: boolean };
+  brand_lifetime:  { price_minor: number; enabled: boolean; availability: 'public_beta' | 'always' };
+  enterprise:      { enabled: boolean };
+}
 
 // ---------------------------------------------------------------------------
 // Persona entry — three paths
@@ -263,14 +274,15 @@ export function TrustSection() {
 // ---------------------------------------------------------------------------
 // Pricing teaser — matches Phase 3 architecture. NO subscription checkout.
 // ---------------------------------------------------------------------------
-export function PricingTeaser() {
-  // M11-Batch4 — Brand-first repositioning. Homepage teaser now mirrors the
-  // /pricing page: Brand Free, Brand Pro Founding Beta ($15/mo → $25/mo),
-  // Founding Lifetime ($100 one-time, Public Beta only), Enterprise.
+export function PricingTeaser({ pricing }: { pricing: PublicPricingProp }) {
+  // M11-Batch5 — Homepage teaser reads from the same admin-configurable
+  // pricing config as /pricing. No hardcoded dollar amounts.
+  const bpBeta = formatMinorUSD(pricing.brand_pro.beta_price_minor);
+  const lifetime = formatMinorUSD(pricing.brand_lifetime.price_minor);
   const tiers = [
-    { name: 'Brand Free',        status: 'Active',            positioning: 'Discover and sponsor WhatsApp Channels',                     cta: 'Start Free',                 href: '/signup', price: '$0' },
-    { name: 'Brand Pro',         status: 'Founding Beta',     positioning: 'Campaign Intelligence & Sponsorship Operating System',       cta: 'Join Founding Beta',         href: '/pricing', highlight: true, price: '$15 / mo' },
-    { name: 'Founding Lifetime', status: 'Public Beta Offer', positioning: 'One-time lifetime access to Brand Pro Founding features',    cta: 'Reserve Founding Lifetime',  href: '/pricing', price: '$100 one-time' },
+    { name: 'Brand Free',        status: 'Active',            positioning: 'Discover and sponsor WhatsApp Channels',                     cta: 'Start Free',                 href: '/signup', price: formatMinorUSD(pricing.brand_free.price_minor) },
+    { name: 'Brand Pro',         status: 'Founding Beta',     positioning: 'Campaign Intelligence & Sponsorship Operating System',       cta: 'Join Founding Beta',         href: '/pricing', highlight: true, price: `${bpBeta} / mo` },
+    { name: 'Founding Lifetime', status: 'Public Beta Offer', positioning: 'One-time lifetime access to Brand Pro Founding features',    cta: 'Reserve Founding Lifetime',  href: '/pricing', price: `${lifetime} one-time` },
     { name: 'Enterprise',        status: 'Contact Sales',     positioning: 'Portfolio operations for agencies, publishers and networks', cta: 'Contact Sales',              href: '/pricing', price: 'Custom' },
   ];
   return (

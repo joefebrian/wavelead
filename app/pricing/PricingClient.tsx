@@ -1,24 +1,15 @@
 'use client';
-// M11-Batch4 — Pre-Public-Beta pricing repositioning.
-//
-// Commercial audience is now BRANDS / SPONSORS first. Channel Owners have
-// low-friction free participation and a small dedicated section below.
-//
-// Founding Lifetime is a public-beta-only offer — the copy explicitly
-// caps its promise to "Brand Pro features included in your Founding plan"
-// + "Priority product support". No unlimited AI / API / enterprise claims.
-//
-// Billing is NOT wired up in this patch. Brand Pro Founding Beta and
-// Founding Lifetime CTAs both convert through the existing commercial-lead
-// waitlist endpoint (pro-waitlist) with a `plan_focus` tag so the operator
-// can distinguish leads later.
+// M11-Batch5 — Admin-configurable pricing. All dollar amounts come from
+// the server-side pricingConfigService. No hardcoded prices in this file.
 import { useState, useEffect, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Check, Loader2, CheckCircle2, AlertTriangle, Sparkles, Info } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import type { PublicUser } from '@/lib/types';
-import Link from 'next/link';
+import type { PublicPricing } from '@/lib/services/pricingConfigTypes';
+import { formatMinorUSD } from '@/lib/services/pricingConfigTypes';
 
 interface Tier {
   kind: 'brand_free' | 'brand_pro' | 'brand_founding_lifetime' | 'enterprise';
@@ -30,76 +21,88 @@ interface Tier {
   features: Array<{ label: string; badge?: 'Beta' | 'Coming Soon' }>;
   cta: string;
   highlight?: boolean;
+  enabled: boolean;
 }
 
-const BRAND_TIERS: Tier[] = [
-  {
-    kind: 'brand_free',
-    name: 'Brand Free',
-    price: '$0',
-    status: 'Active',
-    blurb: 'Explore and sponsor WhatsApp Channels.',
-    cta: 'Start Free',
-    features: [
-      { label: 'Discover channels' },
-      { label: 'View channel profiles' },
-      { label: 'View sponsorship packages' },
-      { label: 'Book sponsorships' },
-      { label: 'Track campaign delivery' },
-      { label: 'Payment Protection on every booking' },
-    ],
-  },
-  {
-    kind: 'brand_pro',
-    name: 'Brand Pro',
-    price: '$15 / month',
-    priceNote: 'Founding Beta price for the first 3 months, then $25 / month.',
-    status: 'Founding Beta',
-    highlight: true,
-    blurb: 'Campaign Intelligence & Sponsorship Operating System for brands and agencies.',
-    cta: 'Join Founding Beta',
-    features: [
-      { label: 'Everything in Brand Free' },
-      { label: 'Advanced Channel Discovery & Filtering' },
-      { label: 'Advanced Rate Card Analysis & Benchmarking' },
-      { label: 'Sponsorship Portfolio Reporting' },
-      { label: 'Campaign Reporting' },
-      { label: 'Revenue / Campaign Intelligence' },
-      { label: 'AI Campaign Brief', badge: 'Coming Soon' },
-      { label: 'Recommended Channels for This Campaign', badge: 'Coming Soon' },
-    ],
-  },
-  {
-    kind: 'brand_founding_lifetime',
-    name: 'Founding Lifetime',
-    price: '$100',
-    priceNote: 'One-time. Public Beta offer only — not a permanent price.',
-    status: 'Public Beta Offer',
-    blurb: 'Lifetime access to the Brand Pro features included in your Founding plan. Priority product support.',
-    cta: 'Reserve Founding Lifetime',
-    features: [
-      { label: 'Lifetime access to the Brand Pro features included in your Founding plan' },
-      { label: 'Priority product support' },
-      { label: 'Founding Member badge in your workspace' },
-      { label: 'Founding Lifetime does NOT include future Enterprise capabilities' },
-      { label: 'Founding Lifetime does NOT include unlimited API / high-volume AI usage' },
-    ],
-  },
-  {
-    kind: 'enterprise',
-    name: 'Enterprise',
-    price: 'Custom',
-    status: 'Contact Sales',
-    blurb: 'For agencies, publishers and portfolio operators.',
-    cta: 'Contact Sales',
-    features: [
-      { label: 'Everything in Brand Pro' },
-      { label: 'Portfolio operations across multiple accounts' },
-      { label: 'Custom onboarding & account management' },
-      { label: 'Priority support' },
-    ],
-  },
-];
+function buildTiers(p: PublicPricing): Tier[] {
+  const bpBeta = formatMinorUSD(p.brand_pro.beta_price_minor);
+  const bpReg = formatMinorUSD(p.brand_pro.regular_price_minor);
+  const bpDur = p.brand_pro.beta_duration_months;
+  return [
+    {
+      kind: 'brand_free',
+      name: 'Brand Free',
+      price: formatMinorUSD(p.brand_free.price_minor),
+      status: 'Active',
+      blurb: 'Explore and sponsor WhatsApp Channels.',
+      cta: 'Start Free',
+      enabled: p.brand_free.enabled,
+      features: [
+        { label: 'Discover channels' },
+        { label: 'View channel profiles' },
+        { label: 'View sponsorship packages' },
+        { label: 'Book sponsorships' },
+        { label: 'Track campaign delivery' },
+        { label: 'Payment Protection on every booking' },
+      ],
+    },
+    {
+      kind: 'brand_pro',
+      name: 'Brand Pro',
+      price: `${bpBeta} / month`,
+      priceNote: `Founding Beta price for the first ${bpDur} month${bpDur === 1 ? '' : 's'}, then ${bpReg} / month.`,
+      status: 'Founding Beta',
+      highlight: true,
+      enabled: p.brand_pro.enabled,
+      blurb: 'Campaign Intelligence & Sponsorship Operating System for brands and agencies.',
+      cta: 'Join Founding Beta',
+      features: [
+        { label: 'Everything in Brand Free' },
+        { label: 'Advanced Channel Discovery & Filtering' },
+        { label: 'Advanced Rate Card Analysis & Benchmarking' },
+        { label: 'Sponsorship Portfolio Reporting' },
+        { label: 'Campaign Reporting' },
+        { label: 'Revenue / Campaign Intelligence' },
+        { label: 'AI Campaign Brief', badge: 'Coming Soon' },
+        { label: 'Recommended Channels for This Campaign', badge: 'Coming Soon' },
+      ],
+    },
+    {
+      kind: 'brand_founding_lifetime',
+      name: 'Founding Lifetime',
+      price: formatMinorUSD(p.brand_lifetime.price_minor),
+      priceNote: p.brand_lifetime.availability === 'public_beta'
+        ? 'One-time. Public Beta offer only — not a permanent price.'
+        : 'One-time.',
+      status: p.brand_lifetime.availability === 'public_beta' ? 'Public Beta Offer' : 'Available',
+      blurb: 'Lifetime access to the Brand Pro features included in your Founding plan. Priority product support.',
+      cta: 'Reserve Founding Lifetime',
+      enabled: p.brand_lifetime.enabled,
+      features: [
+        { label: 'Lifetime access to the Brand Pro features included in your Founding plan' },
+        { label: 'Priority product support' },
+        { label: 'Founding Member badge in your workspace' },
+        { label: 'Founding Lifetime does NOT include future Enterprise capabilities' },
+        { label: 'Founding Lifetime does NOT include unlimited API / high-volume AI usage' },
+      ],
+    },
+    {
+      kind: 'enterprise',
+      name: 'Enterprise',
+      price: 'Custom',
+      status: 'Contact Sales',
+      blurb: 'For agencies, publishers and portfolio operators.',
+      cta: 'Contact Sales',
+      enabled: p.enterprise.enabled,
+      features: [
+        { label: 'Everything in Brand Pro' },
+        { label: 'Portfolio operations across multiple accounts' },
+        { label: 'Custom onboarding & account management' },
+        { label: 'Priority support' },
+      ],
+    },
+  ];
+}
 
 const ENTERPRISE_COMPANY_TYPES = [
   { value: 'brand', label: 'Brand' },
@@ -119,13 +122,18 @@ const ENTERPRISE_INTERESTS = [
   { value: 'other', label: 'Other' },
 ] as const;
 
-export default function PricingClient() {
+export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
   const router = useRouter();
   const [me, setMe] = useState<PublicUser | null>(null);
   const [meLoaded, setMeLoaded] = useState(false);
   const [waitlistOpen, setWaitlistOpen] = useState(false);
   const [waitlistFocus, setWaitlistFocus] = useState<'brand_pro' | 'brand_founding_lifetime'>('brand_pro');
   const [entOpen, setEntOpen] = useState(false);
+  const tiers = buildTiers(pricing);
+  const ownerActivationPrice = formatMinorUSD(pricing.owner_activation.display_price_minor);
+  const bpDur = pricing.brand_pro.beta_duration_months;
+  const bpRegDisplay = formatMinorUSD(pricing.brand_pro.regular_price_minor);
+  const lifetimeDisplay = formatMinorUSD(pricing.brand_lifetime.price_minor);
 
   useEffect(() => {
     fetch('/api/auth/me', { credentials: 'include' })
@@ -139,11 +147,7 @@ export default function PricingClient() {
     if (me) router.push('/dashboard');
     else router.push('/signup?next=/dashboard');
   }
-
-  function openWaitlist(focus: 'brand_pro' | 'brand_founding_lifetime') {
-    setWaitlistFocus(focus);
-    setWaitlistOpen(true);
-  }
+  function openWaitlist(focus: 'brand_pro' | 'brand_founding_lifetime') { setWaitlistFocus(focus); setWaitlistOpen(true); }
 
   return (
     <>
@@ -155,7 +159,7 @@ export default function PricingClient() {
       </div>
 
       <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4" data-testid="pricing-grid">
-        {BRAND_TIERS.map((tier) => (
+        {tiers.filter((t) => t.enabled).map((tier) => (
           <div
             key={tier.kind}
             data-testid={`pricing-card-${tier.kind}`}
@@ -178,7 +182,7 @@ export default function PricingClient() {
                 </span>
               )}
             </div>
-            <div className="mt-3 text-3xl font-bold">{tier.price}</div>
+            <div className="mt-3 text-3xl font-bold" data-testid={`pricing-price-${tier.kind}`}>{tier.price}</div>
             {tier.priceNote && <div className="mt-1 text-xs text-muted-foreground" data-testid={`price-note-${tier.kind}`}>{tier.priceNote}</div>}
             <p className="text-sm text-muted-foreground mt-2">{tier.blurb}</p>
             <ul className="mt-5 space-y-2 text-sm flex-1">
@@ -215,14 +219,11 @@ export default function PricingClient() {
       </div>
 
       <p className="mt-6 text-xs text-muted-foreground max-w-3xl" data-testid="brand-billing-note">
-        Brand Pro Founding Beta is $15/month for the first 3 months, then $25/month afterward. Founding Lifetime is a
-        one-time $100 offer available only during Public Beta. Automated recurring billing is being finalized —
+        Brand Pro Founding Beta is {formatMinorUSD(pricing.brand_pro.beta_price_minor)}/month for the first {bpDur} month{bpDur === 1 ? '' : 's'}, then {bpRegDisplay}/month afterward. Founding
+        Lifetime is a one-time {lifetimeDisplay} offer available only during Public Beta. Automated recurring billing is being finalized —
         Founding Beta and Founding Lifetime spots are secured today through the WaveLead commercial team.
       </p>
 
-      {/* ============================================================
-          For Channel Owners — low-friction supply-side section.
-         ============================================================ */}
       <section className="mt-14 wh-card p-6 md:p-8" data-testid="channel-owner-pricing">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
@@ -250,7 +251,7 @@ export default function PricingClient() {
               <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Verified Owner Activation</div>
               <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-muted text-muted-foreground" data-testid="activation-rollout-pill">Rollout Coming Soon</span>
             </div>
-            <div className="mt-1 text-lg font-bold">$1 per channel</div>
+            <div className="mt-1 text-lg font-bold" data-testid="owner-activation-display-price">{ownerActivationPrice} per channel</div>
             <p className="mt-1 text-xs text-muted-foreground">One-time activation transaction — not a subscription. Ownership must be approved first; payment alone never proves ownership.</p>
           </div>
         </div>
@@ -264,11 +265,8 @@ export default function PricingClient() {
         </div>
       </section>
 
-      {/* Existing owner-facing Pro / Enterprise entitlements remain intact for
-          accounts that already have them; we simply no longer merchandise a
-          Channel Owner Pro plan on this page. Existing users see no regression. */}
       <p className="mt-6 text-xs text-muted-foreground">
-        Existing Channel Owner Pro accounts remain fully active. If you’re on Channel Owner Pro, nothing changes for
+        Existing Channel Owner Pro accounts remain fully active. If you&apos;re on Channel Owner Pro, nothing changes for
         you — Revenue Intelligence, Sponsorship Pipeline, and other Pro features continue to work.
       </p>
 
@@ -278,33 +276,19 @@ export default function PricingClient() {
   );
 }
 
-// ============================================================================
-// Brand Pro / Founding Lifetime waitlist — reuses existing pro-waitlist endpoint
-// with a `plan_focus` tag so operations can distinguish leads later.
-// ============================================================================
 function WaitlistDialog({ open, onOpenChange, me, focus }: { open: boolean; onOpenChange: (o: boolean) => void; me: PublicUser | null; focus: 'brand_pro' | 'brand_founding_lifetime' }) {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (open) {
-      setEmail(me?.email || '');
-      setName(me?.display_name || '');
-      setDone(false);
-      setError(null);
-    }
-  }, [open, me]);
-
+  useEffect(() => { if (open) { setEmail(me?.email || ''); setName(me?.display_name || ''); setDone(false); setError(null); } }, [open, me]);
   const isLifetime = focus === 'brand_founding_lifetime';
   const title = isLifetime ? 'Reserve Founding Lifetime access' : 'Join the Brand Pro Founding Beta';
   const description = isLifetime
     ? "A member of the WaveLead team will reach out to secure your Founding Lifetime spot. Public Beta offer — not a permanent price."
-    : 'Founding Beta pricing is $15/month for the first 3 months, then $25/month. No obligation to submit interest.';
+    : 'Founding Beta pricing is time-limited. No obligation to submit interest.';
   const submitLabel = isLifetime ? 'Reserve My Spot' : 'Join Founding Beta';
-
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (busy) return;
@@ -320,14 +304,10 @@ function WaitlistDialog({ open, onOpenChange, me, focus }: { open: boolean; onOp
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="waitlist-dialog">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
+        <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader>
         {done ? (
           <div className="py-6 text-center">
             <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" />
@@ -337,14 +317,8 @@ function WaitlistDialog({ open, onOpenChange, me, focus }: { open: boolean; onOp
           </div>
         ) : (
           <form onSubmit={submit} className="space-y-3">
-            <div>
-              <label className="block text-sm font-medium mb-1">Email</label>
-              <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} data-testid="pro-email" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Name <span className="text-xs text-muted-foreground">(optional)</span></label>
-              <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputCls} data-testid="pro-name" maxLength={120} />
-            </div>
+            <div><label className="block text-sm font-medium mb-1">Email</label><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} data-testid="pro-email" /></div>
+            <div><label className="block text-sm font-medium mb-1">Name <span className="text-xs text-muted-foreground">(optional)</span></label><input type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputCls} data-testid="pro-name" maxLength={120} /></div>
             {isLifetime && (
               <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 inline-flex items-start gap-2">
                 <Info className="h-4 w-4 shrink-0 mt-0.5" />
@@ -354,9 +328,7 @@ function WaitlistDialog({ open, onOpenChange, me, focus }: { open: boolean; onOp
             {error && <div className="text-sm text-rose-600 flex items-center gap-1"><AlertTriangle className="h-4 w-4" />{error}</div>}
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
-              <Button type="submit" disabled={busy} data-testid="pro-submit">
-                {busy ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Submitting…</> : submitLabel}
-              </Button>
+              <Button type="submit" disabled={busy} data-testid="pro-submit">{busy ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Submitting…</> : submitLabel}</Button>
             </div>
           </form>
         )}
@@ -377,25 +349,14 @@ function EnterpriseDialog({ open, onOpenChange, me }: { open: boolean; onOpenCha
       setInterests(new Set()); setDone(false); setError(null);
     }
   }, [open, me]);
-  function toggleInterest(v: string) {
-    setInterests((prev) => { const next = new Set(prev); if (next.has(v)) next.delete(v); else next.add(v); return next; });
-  }
+  function toggleInterest(v: string) { setInterests((prev) => { const next = new Set(prev); if (next.has(v)) next.delete(v); else next.add(v); return next; }); }
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (busy) return;
     setBusy(true); setError(null);
     try {
       if (interests.size === 0) throw new Error('Please select at least one area of interest.');
-      const payload = {
-        company_name: form.company_name.trim(),
-        contact_name: form.contact_name.trim(),
-        email: form.email.trim(),
-        company_type: form.company_type,
-        interest: Array.from(interests),
-        message: form.message.trim(),
-        ...(form.channel_count ? { channel_count: Number(form.channel_count) } : {}),
-        ...(form.country ? { country: form.country.toUpperCase() } : {}),
-      };
+      const payload = { company_name: form.company_name.trim(), contact_name: form.contact_name.trim(), email: form.email.trim(), company_type: form.company_type, interest: Array.from(interests), message: form.message.trim(), ...(form.channel_count ? { channel_count: Number(form.channel_count) } : {}), ...(form.country ? { country: form.country.toUpperCase() } : {}) };
       const r = await fetch('/api/commercial-leads/enterprise', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Submission failed');
@@ -406,10 +367,7 @@ function EnterpriseDialog({ open, onOpenChange, me }: { open: boolean; onOpenCha
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg" data-testid="enterprise-dialog">
-        <DialogHeader>
-          <DialogTitle>Contact WaveLead — Enterprise</DialogTitle>
-          <DialogDescription>Tell us about your needs. A WaveLead team member will get back to you within one business day.</DialogDescription>
-        </DialogHeader>
+        <DialogHeader><DialogTitle>Contact WaveLead — Enterprise</DialogTitle><DialogDescription>Tell us about your needs. A WaveLead team member will get back to you within one business day.</DialogDescription></DialogHeader>
         {done ? (
           <div className="py-6 text-center">
             <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" />

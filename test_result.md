@@ -402,6 +402,7 @@ frontend_m02:
 
 test_plan:
   current_focus:
+    - "M11-Batch5 — Admin-configurable commercial pricing (canonical config, admin CRUD, dynamic public rendering, no money-moving side effects)"
     - "M11-Batch4 — Pre-Public-Beta commercial repositioning (Brand-first pricing, footer redesign, homepage dual-audience emphasis, honest Founding Lifetime copy, activation coming-soon state)"
     - "M11-Batch2B RELEASE SAFETY — activation feature flag + refund credit reversal (net-zero, idempotent)"
     - "M11-Batch2B — Verified Owner Activation ($1 SANDBOX)"
@@ -410,6 +411,70 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+# ---------- M11 BATCH 5 — ADMIN-CONFIGURABLE COMMERCIAL PRICING ----------
+backend_m11_batch5:
+  - task: "M11-Batch5 Admin-configurable commercial pricing (canonical service, public+admin API, admin UI, dynamic homepage & pricing surfaces)"
+    implemented: true
+    working: true
+    file: "lib/services/pricingConfigService.ts, lib/services/pricingConfigTypes.ts, app/api/[[...path]]/route.ts, app/admin/pricing/page.tsx, app/admin/pricing/PricingConfigClient.tsx, app/pricing/PricingClient.tsx, app/pricing/page.tsx, components/home/LaunchSections.tsx, components/layout/AdminNav.tsx, tests/m11_batch5_admin_pricing.test.ts, tests/m11_batch4_repositioning.test.ts (SSR-comment tolerance)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Canonical pricing service (lib/services/pricingConfigService.ts) is the
+          single source of truth. Public GET /api/public/pricing-config returns a
+          projection that strips ALL audit metadata (updated_by_user_id,
+          updated_at, created_at). Admin GET/PUT /api/admin/pricing-config is
+          gated by ROLES.ADMIN — anonymous → 401, non-admin → 403.
+
+          Client-safe types + formatMinorUSD extracted into
+          lib/services/pricingConfigTypes.ts so React Client Components
+          (PricingClient, PricingConfigClient) can import them without pulling
+          mongodb into the browser bundle.
+
+          Zod-based server-side validation rejects negative / float / string /
+          absurdly-large / regular<beta / unknown-field payloads.
+
+          Read never mutates: if the DB row does not exist, defaults are
+          returned WITHOUT any write. Verified with a wipe→GET→re-read test.
+
+          Public surfaces (/pricing + homepage teaser via LaunchSections) both
+          consume the same PublicPricing shape — no hardcoded $15/$25/$100 left
+          in production display code.
+
+          The $25 → $29 proof passes: admin PUT changes regular_price_minor
+          2500 → 2900 with no code change, and /pricing HTML renders "$29 /
+          month" in the price-note testid. The reverse case (beta 1500 → 1700)
+          also flows through to the homepage.
+
+          Money-moving safety: ACTIVATION_AMOUNT_MINOR remains hardcoded at
+          100 minor and is decoupled from owner_activation.display_price_minor.
+          No brand-pro checkout endpoint is created by this batch. PayPal LIVE
+          activation stays disabled (CHANNEL_OWNER_ACTIVATION_REQUIRED=0).
+
+          Admin UI at /admin/pricing labels each tier clearly (Brand Free,
+          Brand Pro Beta/Regular/Duration, Founding Lifetime, Enterprise
+          Custom) and shows a display-only lock badge + warning banner for
+          Owner Activation — the field is EXCLUDED from the client PUT
+          payload to keep live billing server-authoritative.
+
+          Tests: tests/m11_batch5_admin_pricing.test.ts covers §1–§11 —
+          defaults, no-mutation reads, safe public projection, admin auth
+          boundary (401/403), admin read+update, server-side validation
+          (7 negative cases including strict-key), $25→$29 dynamic proof,
+          homepage BETA-price dynamic proof, activation-amount immutability,
+          absence of brand-pro checkout endpoint, and admin nav visibility.
+          21/21 passing.
+
+          Regression: tests/m11_batch4_repositioning.test.ts made SSR-comment
+          tolerant (React SSR inserts <!-- --> between adjacent JSX text and
+          {expression} nodes when values became dynamic). 9/9 passing.
+
+          Typecheck + build both clean.
 
 # ---------- M11 BATCH 4 — COMMERCIAL REPOSITIONING ----------
 frontend_m11_batch4:

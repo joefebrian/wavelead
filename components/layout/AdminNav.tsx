@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Inbox, KeyRound, ShieldAlert, LayoutList, Megaphone, DollarSign, Wallet, TrendingUp, Activity, Handshake, Users, Cog, Store, ImageIcon } from 'lucide-react';
+import { Inbox, KeyRound, ShieldAlert, LayoutList, Megaphone, DollarSign, Wallet, TrendingUp, Activity, Handshake, Users, Cog, Store, ImageIcon, Tag } from 'lucide-react';
 
 interface Item { href: string; label: string; icon: React.ReactNode; }
 
@@ -14,6 +14,7 @@ const ITEMS: Item[] = [
   { href: '/admin/sponsorship-leads', label: 'Sponsorship Leads', icon: <Handshake className="h-3.5 w-3.5" /> },
   { href: '/admin/marketplace', label: 'Marketplace', icon: <Store className="h-3.5 w-3.5" /> },
   { href: '/admin/commercial-leads', label: 'Commercial Leads', icon: <Handshake className="h-3.5 w-3.5" /> },
+  { href: '/admin/pricing', label: 'Pricing', icon: <Tag className="h-3.5 w-3.5" /> },
   { href: '/admin/payments', label: 'Payments', icon: <Wallet className="h-3.5 w-3.5" /> },
   { href: '/admin/ledger', label: 'Ledger', icon: <DollarSign className="h-3.5 w-3.5" /> },
   { href: '/admin/payment-health', label: 'Health', icon: <Activity className="h-3.5 w-3.5" /> },

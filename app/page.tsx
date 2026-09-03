@@ -32,6 +32,10 @@ export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
   const bundle = await discoveryService.getHomepageBundle();
+  // M11-Batch5 — Homepage pricing teaser reads the same admin-configurable
+  // pricing config as /pricing (no hardcoded amounts anywhere).
+  const { pricingConfigService } = await import('@/lib/services/pricingConfigService');
+  const pricing = await pricingConfigService.getPublicPricing();
   // M05.1: fetch a sponsored homepage candidate. Kept separate from organic.
   const { promotionDeliveryService } = await import('@/lib/services/promotion/deliveryService');
   const sponsored = await promotionDeliveryService.selectCandidates({
@@ -184,7 +188,7 @@ export default async function HomePage() {
           </div>
         </section>
 
-        <PricingTeaser />
+        <PricingTeaser pricing={pricing} />
         <OwnerGrowthCta />
         <FinalCta />
       </main>

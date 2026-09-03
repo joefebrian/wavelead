@@ -1336,6 +1336,24 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ lead }), request);
     }
 
+    // ---------- M11-Batch5 COMMERCIAL PRICING CONFIG ----------
+    if (route === '/public/pricing-config' && method === 'GET') {
+      const { pricingConfigService } = await import('@/lib/services/pricingConfigService');
+      return applyCors(ok(await pricingConfigService.getPublicPricing()), request);
+    }
+    if (route === '/admin/pricing-config' && method === 'GET') {
+      const { pricingConfigService } = await import('@/lib/services/pricingConfigService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      return applyCors(ok(await pricingConfigService.getAdminPricing()), request);
+    }
+    if (route === '/admin/pricing-config' && method === 'PUT') {
+      const { pricingConfigService } = await import('@/lib/services/pricingConfigService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      return applyCors(ok(await pricingConfigService.updatePricing(actor, body)), request);
+    }
+
     // ---------- M11-Batch2B VERIFIED OWNER ACTIVATION (SANDBOX) ----------
     if (path.length === 4 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'activation' && method === 'GET') {
       const { channelActivationService } = await import('@/lib/services/channelActivationService');

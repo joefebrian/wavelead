@@ -10,7 +10,11 @@ const PAGE = 'http://localhost:3000';
 
 async function pageGet(path: string): Promise<{ status: number; html: string }> {
   const r = await fetch(`${PAGE}${path}`);
-  return { status: r.status, html: await r.text() };
+  // Strip React SSR text-boundary comments (<!-- -->) that get inserted
+  // between adjacent JSX text/expression nodes. They make assertions on
+  // human-readable copy brittle without changing what the user sees.
+  const html = (await r.text()).replace(/<!--\s*-->/g, '');
+  return { status: r.status, html };
 }
 
 describe('M11-Batch4 — Brand-first pricing', () => {
