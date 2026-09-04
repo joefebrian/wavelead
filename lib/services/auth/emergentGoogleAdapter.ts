@@ -18,24 +18,53 @@
 // Fail-closed: any deviation raises and we do NOT mint wl_session.
 import { z } from 'zod';
 
+// Canonical PUBLIC managed-auth start host. Browser-facing; must always be a
+// publicly-reachable https host.
+const PUBLIC_START_URL = 'https://auth.emergentagent.com/';
+
+// Resolve the BROWSER-facing start base. EMERGENT_AUTH_START_URL may override it,
+// but we HARD-REFUSE any value that is not a public https host — the browser must
+// never be sent to an internal/service-discovery host (e.g. the 2026-09-03
+// incident where EMERGENT_AUTH_HOST=http://as.int.apis.emergentagent.com leaked
+// to the browser → ERR_ADDRESS_UNREACHABLE), http://, localhost, or a private host.
+function resolveBrowserStartBase(): string {
+  const override = (process.env.EMERGENT_AUTH_START_URL || '').trim();
+  if (!override) return PUBLIC_START_URL;
+  try {
+    const u = new URL(override);
+    const host = u.hostname.toLowerCase();
+    const unsafe =
+      u.protocol !== 'https:' ||
+      host === 'localhost' ||
+      host.startsWith('127.') ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal') ||
+      host.includes('.int.') ||               // *.int.apis.emergentagent.com and similar
+      host.endsWith('.svc.cluster.local');
+    return unsafe ? PUBLIC_START_URL : override;
+  } catch {
+    return PUBLIC_START_URL;
+  }
+}
+
 // -------- Contract knobs (env-driven so we never redeploy for a URL change) --------
 function cfg() {
   // EXCHANGE host: the backend API host the SERVER calls to redeem a session id
-  // for the Google identity (GET .../session-data with X-Session-ID). This is the
-  // demobackend API host and is NOT the browser entry point.
+  // for the Google identity (GET .../session-data with X-Session-ID). This is a
+  // SERVER-SIDE call only and MAY legitimately be an internal host — it is never
+  // exposed to the browser.
   const exchangeHost = (process.env.EMERGENT_AUTH_HOST || 'https://demobackend.emergentagent.com').replace(/\/+$/, '');
-  // START host: the MANAGED-AUTH entry point the BROWSER is redirected to. This is
-  // auth.emergentagent.com — it 302s to Google consent and, after consent, 302s
+  // START host: the MANAGED-AUTH entry point the BROWSER is redirected to. Always
+  // public https (guarded). auth.emergentagent.com 302s to Google consent, then
   // back to <callback>#session_id=... for one-time redemption.
   //
-  // INCIDENT FIX (2026-09-03): previously we sent the browser to the demobackend
-  // API host (/auth/v1/env/oauth). That path completes Google consent but returns
-  // to the callback WITHOUT a session_id on production/custom domains, producing
-  // "No session id was returned". The canonical browser start host is
-  // https://auth.emergentagent.com/?redirect=<callback>. Override via
-  // EMERGENT_AUTH_START_URL if Emergent changes it (no redeploy needed).
-  const startUrlOverride = process.env.EMERGENT_AUTH_START_URL || '';
-  const startUrl = (startUrlOverride || 'https://auth.emergentagent.com/').replace(/\/+$/, '');
+  // INCIDENT FIX (2026-09-03): the old code composed the browser start URL as
+  // EMERGENT_AUTH_HOST + '/auth/v1/env/oauth'. In production EMERGENT_AUTH_HOST is
+  // the INTERNAL host http://as.int.apis.emergentagent.com, so the browser was
+  // navigated to an unreachable internal http host BEFORE Google. The browser
+  // start URL is now decoupled from EMERGENT_AUTH_HOST and forced to a public
+  // https host (see resolveBrowserStartBase).
+  const startUrl = resolveBrowserStartBase().replace(/\/+$/, '');
   return {
     startUrl,
     exchangeHost,
