@@ -18,33 +18,23 @@
 // Fail-closed: any deviation raises and we do NOT mint wl_session.
 import { z } from 'zod';
 
-// Canonical PUBLIC managed-auth start host. Browser-facing; must always be a
-// publicly-reachable https host.
+// Canonical PUBLIC managed-auth start host. Browser-facing; always this exact
+// public https host.
 const PUBLIC_START_URL = 'https://auth.emergentagent.com/';
 
-// Resolve the BROWSER-facing start base. EMERGENT_AUTH_START_URL may override it,
-// but we HARD-REFUSE any value that is not a public https host — the browser must
-// never be sent to an internal/service-discovery host (e.g. the 2026-09-03
-// incident where EMERGENT_AUTH_HOST=http://as.int.apis.emergentagent.com leaked
-// to the browser → ERR_ADDRESS_UNREACHABLE), http://, localhost, or a private host.
+// Resolve the BROWSER-facing start base.
+//
+// HARD-PINNED (decision 2026-09-03): the browser start URL is ALWAYS the public
+// PUBLIC_START_URL and is NOT configurable via any env var. The production
+// incident was caused by EMERGENT_AUTH_START_URL carrying an INTERNAL host
+// (http://as.int.apis.emergentagent.com) — possibly platform-injected — which
+// leaked to the browser (ERR_CONNECTION_TIMED_OUT). By ignoring that env var
+// entirely for the browser redirect, no value (even a re-injected internal one)
+// can ever drive the browser to a non-public host. Changing the public start
+// host now requires a code change on purpose. The server-side exchange host
+// (EMERGENT_AUTH_HOST) is unaffected and may still be internal.
 function resolveBrowserStartBase(): string {
-  const override = (process.env.EMERGENT_AUTH_START_URL || '').trim();
-  if (!override) return PUBLIC_START_URL;
-  try {
-    const u = new URL(override);
-    const host = u.hostname.toLowerCase();
-    const unsafe =
-      u.protocol !== 'https:' ||
-      host === 'localhost' ||
-      host.startsWith('127.') ||
-      host.endsWith('.local') ||
-      host.endsWith('.internal') ||
-      host.includes('.int.') ||               // *.int.apis.emergentagent.com and similar
-      host.endsWith('.svc.cluster.local');
-    return unsafe ? PUBLIC_START_URL : override;
-  } catch {
-    return PUBLIC_START_URL;
-  }
+  return PUBLIC_START_URL;
 }
 
 // -------- Contract knobs (env-driven so we never redeploy for a URL change) --------

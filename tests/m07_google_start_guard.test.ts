@@ -43,10 +43,11 @@ describe('M07-google — browser start URL guard', () => {
     }
   });
 
-  it('honors a valid PUBLIC https override', () => {
-    process.env.EMERGENT_AUTH_START_URL = 'https://auth.emergentagent.com/';
+  it('IGNORES even a valid public https override (hard-pinned to auth.emergentagent.com)', () => {
+    process.env.EMERGENT_AUTH_START_URL = 'https://some-other-public-host.example.com/';
     const url = buildStartUrl(CALLBACK);
     expect(url.startsWith(PUBLIC)).toBe(true);
+    expect(url).not.toContain('some-other-public-host.example.com');
     expect(new URL(url).searchParams.get('redirect')).toBe(CALLBACK);
   });
 });
