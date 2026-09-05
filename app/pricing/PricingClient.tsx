@@ -72,8 +72,8 @@ function buildTiers(p: PublicPricing): Tier[] {
       name: 'Founding Lifetime',
       price: formatMinorUSD(p.brand_lifetime.price_minor),
       priceNote: p.brand_lifetime.availability === 'public_beta'
-        ? 'One-time. Public Beta offer only — not a permanent price.'
-        : 'One-time.',
+        ? `${formatMinorUSD(p.brand_lifetime.price_minor)} one-time · No subscription · No recurring charge · Public Beta offer only, not a permanent price.`
+        : `${formatMinorUSD(p.brand_lifetime.price_minor)} one-time · No subscription · No recurring charge.`,
       status: p.brand_lifetime.availability === 'public_beta' ? 'Public Beta Offer' : 'Available',
       blurb: 'Lifetime access to the Brand Pro features included in your Founding plan. Priority product support.',
       cta: 'Reserve Founding Lifetime',
