@@ -40,6 +40,7 @@ interface StateView {
   activation_status: ActivationStatus;
   environment: 'sandbox' | 'live';
   activation_required: boolean;
+  live_checkout_enabled: boolean;
   activation_amount_minor: number;
   currency: string;
   latest_payment: PaymentView | null;
@@ -128,12 +129,17 @@ export default function ChannelActivationCard({ channelId, returnActivationId, r
   if (!state) return null;
 
   // Release-safety visibility rule:
-  //   \u2022 Sandbox environment \u2192 show the CTA for previewing / QA.
-  //   \u2022 Live + flag ON \u2192 show the CTA (activation officially rolled out).
-  //   \u2022 Live + flag OFF \u2192 show a positioning-only tile ("Rollout Coming
-  //     Soon") so owners see $1 pricing but can never be routed into a live
-  //     503; the CTA is disabled with truthful copy.
-  const showActiveCta = state.environment === 'sandbox' || state.activation_required;
+  //   • Sandbox environment → show the CTA for previewing / QA.
+  //   • Live + LIVE checkout capability ON (CHANNEL_OWNER_ACTIVATION_LIVE_ENABLED)
+  //     → show the CTA (activation officially rolled out).
+  //   • Live + activation required ON → show the CTA.
+  //   • Live + both flags OFF → positioning-only tile ("Rollout Coming Soon")
+  //     so owners see $1 pricing but can never be routed into a live 503.
+  // NOTE: this only governs which SURFACE renders. Ownership + payment
+  // eligibility is still fully enforced server-side (start endpoint stays
+  // fail-closed) and gated below by `ownershipApproved`.
+  const isLive = state.environment === 'live';
+  const showActiveCta = state.environment === 'sandbox' || state.activation_required || state.live_checkout_enabled;
   const isActive = state.activation_status === 'active';
   const isPending = state.activation_status === 'pending' || state.latest_payment?.status === 'captured_pending_fee';
   const isRevoked = state.activation_status === 'revoked';
@@ -204,7 +210,11 @@ export default function ChannelActivationCard({ channelId, returnActivationId, r
         <div className="flex items-center gap-2">
           <ShieldCheck className="h-5 w-5 text-primary" />
           <h2 className="text-lg font-semibold">Verified Owner Activation</h2>
-          <span className="ml-1 rounded-full bg-amber-100 text-amber-800 px-2 py-0.5 text-[10px] uppercase tracking-wide" data-testid="activation-environment-pill">Sandbox</span>
+          {isLive ? (
+            <span className="ml-1 rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] uppercase tracking-wide" data-testid="activation-environment-pill">Live</span>
+          ) : (
+            <span className="ml-1 rounded-full bg-amber-100 text-amber-800 px-2 py-0.5 text-[10px] uppercase tracking-wide" data-testid="activation-environment-pill">Sandbox</span>
+          )}
         </div>
       </div>
 
@@ -235,7 +245,7 @@ export default function ChannelActivationCard({ channelId, returnActivationId, r
           <div className="mt-3 flex items-center gap-2 flex-wrap">
             <Button onClick={onStart} disabled={busy !== null || !ownershipApproved} data-testid="start-activation-btn" className="gap-1.5">
               {busy === 'start' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
-              Activate for $1
+              Activate Owner Verification — $1
             </Button>
             {state.latest_payment && state.latest_payment.status === 'captured_pending_fee' && (
               <Button variant="outline" onClick={onManualCapture} disabled={busy !== null} className="gap-1.5" data-testid="refresh-activation-btn">
@@ -243,7 +253,26 @@ export default function ChannelActivationCard({ channelId, returnActivationId, r
                 Refresh status
               </Button>
             )}
-            <span className="text-xs text-muted-foreground">Sandbox activation transaction — no real money is charged.</span>
+            {isLive ? (
+              <span className="text-xs text-muted-foreground">One-time $1.00 USD charge · processed securely via PayPal.</span>
+            ) : (
+              <span className="text-xs text-muted-foreground">Sandbox activation transaction — no real money is charged.</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!isActive && !ownershipApproved && (
+        <div className="mt-4 rounded-md bg-muted/40 border border-border p-4" data-testid="ownership-required-panel">
+          <div className="text-sm">
+            Complete ownership verification before activating this channel. Once an admin approves your ownership claim,
+            you&rsquo;ll be able to activate your verified owner profile here.
+          </div>
+          <div className="mt-3">
+            <Button disabled variant="secondary" className="gap-1.5" data-testid="ownership-pending-cta">
+              <ShieldCheck className="h-4 w-4" />
+              Complete Ownership Verification First
+            </Button>
           </div>
         </div>
       )}

@@ -226,6 +226,10 @@ export const channelActivationService = {
       activation_revoked_at: channel.activation_revoked_at || null,
       environment: await currentEnvironment(),
       activation_required: isActivationRequired(),
+      // CONCEPT A — live checkout capability. Surfaced so the owner dashboard
+      // can render the real CTA once LIVE is unlocked, without weakening any
+      // server-side ownership/payment guard (start endpoint remains fail-closed).
+      live_checkout_enabled: isActivationLiveCheckoutEnabled(),
       activation_amount_minor: ACTIVATION_AMOUNT_MINOR,
       currency: ACTIVATION_CURRENCY,
       latest_payment: latest ? toOwnerPaymentView(latest) : null,

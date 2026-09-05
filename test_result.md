@@ -6337,3 +6337,32 @@ agent_communication:
       
       NO ISSUES FOUND - READY FOR PRODUCTION
 
+
+  - agent: "main"
+    message: |
+      M11-Batch2B — VERIFIED OWNER ACTIVATION CTA RENDERING FIX (controlled LIVE $1 rollout)
+
+      ROOT CAUSE (production "Rollout Coming Soon" even with CHANNEL_OWNER_ACTIVATION_LIVE_ENABLED=true):
+      - Frontend ChannelActivationCard.tsx gated the CTA surface with:
+          showActiveCta = environment === 'sandbox' || activation_required
+        In production: environment='live', activation_required=false → CTA never rendered → positioning-only
+        "Rollout Coming Soon" tile always shown. The frontend never consulted CONCEPT A flag
+        (CHANNEL_OWNER_ACTIVATION_LIVE_ENABLED); backend never exposed it in the state payload.
+      - Backend /start endpoint was already correct: assertActivationCheckoutAllowed() permits LIVE only
+        when isActivationLiveCheckoutEnabled()===true, then enforces ownership approved + not-active + no-open-payment.
+
+      MINIMAL FIX (no weakening of ownership/payment validation):
+      1. channelActivationService.getStateForOwner now returns live_checkout_enabled: isActivationLiveCheckoutEnabled().
+      2. ChannelActivationCard.tsx:
+         - StateView gains live_checkout_enabled.
+         - showActiveCta = sandbox || activation_required || live_checkout_enabled.
+         - Ownership pending (not approved) → shows disabled "Complete Ownership Verification First" (no pay path).
+         - Ownership approved → pay CTA labeled "Activate Owner Verification — $1".
+         - Environment pill now reflects actual env (Live vs Sandbox) instead of hardcoded "Sandbox".
+         - Footnote is truthful in live ("One-time $1.00 USD charge · processed securely via PayPal")
+           instead of "no real money is charged".
+         - LIVE_ENABLED=false in live → still renders "Rollout Coming Soon" (unchanged safe posture).
+
+      STATUS: tsc --noEmit clean; local app healthy. NOT enabling CHANNEL_OWNER_ACTIVATION_REQUIRED.
+      Founding Lifetime untouched. Redeploying per operator instruction, then STOP before any $1 payment.
+      No automated payment-flow testing run intentionally (live PayPal risk); operator performs the single $1 smoke.
