@@ -12,27 +12,8 @@
 //   * Removed from the URL before any React renders complete
 //   * Never persisted to localStorage / sessionStorage
 //   * Never logged
-//
-// INCIDENT FIX (2026-09-05, ticket #246041) — every Google sign-in failed with
-// "No session id was returned from Google", even though the platform DID
-// deliver one:
-//   Next.js 15 patches window.history.replaceState (see
-//   next/dist/client/components/app-router.js). A userland call — one without
-//   the internal __NA / _N state markers, which replaceState({}, ...) is —
-//   dispatches ACTION_RESTORE into the router, which hands back a NEW
-//   ReadonlyURLSearchParams instance. This effect used to list
-//   useSearchParams() in its dependency array, so stripping the credential
-//   below re-fired the effect against the URL it had just emptied: sessionId
-//   became '' and it reported "No session id was returned from Google" —
-//   after having already read and exchanged a perfectly valid one.
-//   The old `cancelled` cleanup flag compounded it: the cleanup ran before the
-//   exchange resolved, so `if (cancelled) return;` discarded even a SUCCESSFUL
-//   exchange and the /dashboard redirect never fired.
-//   Fix: (1) run the effect exactly once via the `started` ref, (2) read the
-//   query string from window.location.search instead of useSearchParams() so
-//   no router update can re-trigger it, (3) drop the `cancelled` flag.
-import { Suspense, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function CallbackPage() {
   return (
@@ -44,27 +25,19 @@ export default function CallbackPage() {
 
 function CallbackInner() {
   const router = useRouter();
+  const search = useSearchParams();
   const [msg, setMsg] = useState('Signing you in…');
   const [error, setError] = useState<string | null>(null);
-  // Guards against a second invocation. Stripping the credential below updates
-  // the Next.js router, which re-renders this component; without this ref the
-  // effect would run again against an already-cleaned URL and overwrite a
-  // successful sign-in with a spurious "no session id" error.
-  const started = useRef(false);
 
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
+    let cancelled = false;
     (async () => {
       // 1. Extract session id from fragment first, then query string as fallback.
-      //    The query is read from window.location directly — useSearchParams()
-      //    would reintroduce the re-render dependency this fix removes.
       const fragmentRaw = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
       const fragment = new URLSearchParams(fragmentRaw);
-      const query = new URLSearchParams(window.location.search);
-      const sessionId = fragment.get('session_id') || query.get('session_id') || '';
+      const sessionId = fragment.get('session_id') || search.get('session_id') || '';
       // 2. Strip credential from URL immediately (before rendering / logging anywhere).
-      if (window.location.hash || query.get('session_id')) {
+      if (window.location.hash || search.get('session_id')) {
         window.history.replaceState({}, document.title, window.location.pathname);
       }
       if (!sessionId) {
@@ -89,6 +62,7 @@ function CallbackInner() {
         setError('Network error contacting sign-in service.');
         return;
       }
+      if (cancelled) return;
       if (res.status === 401) { setError('This Google sign-in link has expired. Please click "Continue with Google" again.'); return; }
       if (res.status === 403) { setError('This account is not eligible to sign in with Google.'); return; }
       if (!res.ok) { setError('Google sign-in failed. Please try again.'); return; }
@@ -96,7 +70,8 @@ function CallbackInner() {
       router.replace('/dashboard');
       router.refresh();
     })().catch(() => setError('Unexpected error during sign-in.'));
-  }, [router]);
+    return () => { cancelled = true; };
+  }, [router, search]);
 
   if (error) return <Fallback message={error} isError />;
   return <Fallback message={msg} />;

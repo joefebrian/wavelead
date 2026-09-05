@@ -114,6 +114,18 @@ user_problem_statement: |
   RBAC must resolve current DB role via resolveActor().
 
 backend:
+  - task: "P1 FIX (real root cause, by Emergent Support): Google callback lost session_id on Next.js 15"
+    implemented: true
+    working: "NA"
+    file: "app/auth/google/callback/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "TRUE root cause (ticket #246041): session_id WAS delivered. On Next.js 15, window.history.replaceState (used to strip the credential) is patched by the App Router → dispatches a router update → new useSearchParams() instance. The callback effect listed `search` in its dep array, so it RE-RAN against the just-cleaned URL → sessionId='' → false 'No session id was returned'. Compounding: the first run's cleanup set cancelled=true, so even a SUCCESSFUL exchange was discarded and /dashboard redirect never fired. Fix (callback/page.tsx only): (1) useRef `started` guard → effect body runs once; (2) removed useSearchParams from deps, read query via window.location.search; (3) dropped the `cancelled` early-return. My earlier hard-pin (public start URL) + guard remain correct and stay. Support confirmed: no per-domain allowlist needed; auth.emergentagent.com start URL correct (keep hard-pin); exchange host demobackend.../session-data correct & reachable from prod pod (Redis 5-min TTL, not single-use, 404=gone so fail-closed is right); EMERGENT_AUTH_START_URL is NOT platform-injected. Verified: tsc clean, 28/28 auth suites (m07_google_auth, m07_google_start_guard, m10_buyer_auth). Backup at .backups-246041/page.tsx.bak-246041. REMAINING: human real Google sign-in on wavelead.org to confirm /dashboard."
+
   - task: "P1 FIX: Google login 'No session id' — corrected Emergent managed-auth START URL"
     implemented: true
     working: "NA"
