@@ -306,9 +306,17 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
           <AlertTriangle className="h-4 w-4" />{lifetimeErr}
         </div>
       )}
-      {lifetimeCheckoutLive && lifetimeState?.environment === 'sandbox' && (
+      {/* M14.1 — Single source of truth: the sandbox notice must never disagree
+          with the CTA. The CTA gates on `lifetimeCheckoutLive` (derived from
+          `/api/brand/founding-lifetime/state.checkout_enabled` + pricing config
+          `enabled`). The notice previously gated on `environment === 'sandbox'`
+          alone, which produced a contradictory state where the LIVE CTA
+          rendered next to a sandbox warning. It now only renders when the
+          purchase CTA is NOT live and the resolved PayPal environment is
+          sandbox — i.e., a truthful preview/reservation state. */}
+      {!lifetimeCheckoutLive && !lifetimeAlreadyActive && lifetimeState?.environment === 'sandbox' && (
         <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block" data-testid="lifetime-sandbox-notice">
-          Founding Lifetime is currently running in <strong>PayPal Sandbox</strong>. LIVE checkout is not enabled yet.
+          Founding Lifetime checkout is currently running in <strong>PayPal Sandbox</strong>. LIVE checkout is not enabled yet — reserve your spot with the WaveLead team above.
         </p>
       )}
 
