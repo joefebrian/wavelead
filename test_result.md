@@ -6403,3 +6403,43 @@ agent_communication:
       Expected after user files claim + admin approves: owner_id preserved, verification_status='verified',
       activation_status='not_required' (REQUIRED=false), dashboard shows Ownership Approved + "Activate Owner Verification — $1".
       tsc clean. Redeploying. NO PayPal order. CHANNEL_OWNER_ACTIVATION_REQUIRED stays OFF. Founding Lifetime untouched.
+
+  - agent: "main"
+    message: |
+      M11 — SUPER ADMIN VERIFIED OWNER ACTIVATION REPORTING + STALE COPY FIX
+
+      SOURCE OF TRUTH (confirmed, read-only):
+      - Payments: channel_activation_payments (fields: id, channel_id, owner_user_id, purpose, provider,
+        provider_environment, currency, gross_amount_minor, amount_captured_minor, amount_refunded_minor,
+        provider_fee_minor, provider_net_minor, status, provider_order_id, provider_capture_id,
+        captured_at, finalized_at, refunded_at, created_at, updated_at). NOT mixed into marketplace_orders.
+      - Credit: wavelead_credit_events (source_id = activation payment id; amount_minor signed; idempotency_key
+        'activation_credit:{payment_id}'). Activation credit == provider net.
+
+      NEW (read-only, no mutation controls):
+      - Backend: channelActivationService.adminListActivations(actor) — admin-only; resolves channel + masked owner,
+        WaveLead credit issued (net via source_id), masked provider order/capture refs; returns items + summary
+        (total_payments, gross_captured, gateway_fees, provider_net, wavelead_credit_issued, active_activations,
+        refunded_or_reversed). Isolated from marketplace/promote.
+      - Route: GET /api/admin/activation-payments.
+      - UI: /admin/activation-payments (AdminNav tab "Owner Activation") — summary cards + read-only table
+        (Date, Channel, Owner(masked), Gross, Gateway Fee, Provider Net, WaveLead Credit, Payment status,
+        Activation status, Provider, masked Capture ID, Env).
+
+      STALE COPY FIX:
+      - app/admin/pricing/PricingConfigClient.tsx: Owner Activation card changed from amber "Display only — live
+        activation billing not enabled" to green "LIVE · $1.00 per channel · one-time · server-authoritative ·
+        ownership required before payment · payment never proves ownership", + link to the report. Footer note updated.
+        Price kept NON-editable.
+
+      LEDGER: /admin/ledger is the Promote/Marketplace double-entry model (campaign_id/funding_order_id/postings).
+      Activation payments do NOT map to it. Per instruction, kept ISOLATED — ACTIVATION LEDGER INTEGRATION: NOT CURRENTLY IMPLEMENTED.
+
+      VERIFICATION:
+      - tsc --noEmit clean.
+      - vitest tests/m11_admin_activation_report.test.ts: 2/2 PASS (RBAC anon/user rejected; admin summary aggregation
+        matches recomputed item totals; masking present; domain isolation — no campaign_id/funding_order_id/raw provider ids).
+      - Preview DB: 52 activation payments (all SANDBOX: 39 refunded, 13 checkout_created), 0 live. The real production
+        LIVE $1 record is production-only and will render in /admin/activation-payments after deploy.
+
+      UNCHANGED: Marketplace data, Promote data, Founding Lifetime. CHANNEL_OWNER_ACTIVATION_REQUIRED still OFF. No PayPal calls.

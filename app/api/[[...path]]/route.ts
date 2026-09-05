@@ -1436,6 +1436,13 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const payment = await channelActivationService.adminReconcileFeeFromProvider(actor, path[2]);
       return applyCors(ok({ payment }), request);
     }
+    // Super Admin — READ-ONLY Verified Owner Activation payments report.
+    if (route === '/admin/activation-payments' && method === 'GET') {
+      const { channelActivationService } = await import('@/lib/services/channelActivationService');
+      const actor = await resolveActor(request);
+      const report = await channelActivationService.adminListActivations(actor);
+      return applyCors(ok(report), request);
+    }
     // Owner-facing WaveLead Credit balance + append-only history.
     if (route === '/me/credit-balance' && method === 'GET') {
       const { waveLeadCreditService } = await import('@/lib/services/channelActivationService');

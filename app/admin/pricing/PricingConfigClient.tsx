@@ -1,6 +1,7 @@
 'use client';
 // M11-Batch5 — Admin pricing editor.
 import { useState } from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Loader2, CheckCircle2, AlertTriangle, Lock } from 'lucide-react';
 import type { CommercialPricingConfig } from '@/lib/services/pricingConfigTypes';
@@ -102,10 +103,14 @@ export default function PricingConfigClient({ initial }: Props) {
         <p className="mt-2 text-sm text-muted-foreground">Pricing type is fixed to <strong>Custom</strong>.</p>
       </section>
 
-      <section className="wh-card p-5 border-amber-300 bg-amber-50/40" data-testid="section-owner-activation">
-        <div className="flex items-center gap-2"><Lock className="h-4 w-4 text-amber-700" /><h2 className="font-semibold">Verified Owner Activation</h2><span className="ml-1 rounded bg-amber-200 text-amber-900 px-1.5 py-0.5 text-[10px] uppercase tracking-wider font-semibold">Display only</span></div>
-        <p className="mt-1 text-sm text-amber-900">Display only — live activation billing not enabled. The actual $1.00 activation charge is server-authoritative in <code className="text-xs">channelActivationService</code> and cannot be edited from here until LIVE activation is explicitly released.</p>
-        <div className="mt-3 text-sm">Currently displayed as: <strong>${(cfg.owner_activation.display_price_minor / 100).toFixed(2)} per channel</strong></div>
+      <section className="wh-card p-5 border-emerald-300 bg-emerald-50/40" data-testid="section-owner-activation">
+        <div className="flex items-center gap-2"><Lock className="h-4 w-4 text-emerald-700" /><h2 className="font-semibold">Verified Owner Activation</h2><span className="ml-1 rounded bg-emerald-200 text-emerald-900 px-1.5 py-0.5 text-[10px] uppercase tracking-wider font-semibold">Live</span></div>
+        <div className="mt-1 text-sm text-emerald-900">
+          <div className="text-base font-bold">$1.00 per channel</div>
+          <p className="mt-1">One-time activation charge — not a subscription. The $1.00 charge is server-authoritative in <code className="text-xs">channelActivationService</code> and is not editable from Admin.</p>
+          <p className="mt-1">Ownership approval is required before payment. Payment alone never proves ownership.</p>
+          <p className="mt-2 text-xs">Reporting: <Link href="/admin/activation-payments" className="underline font-medium">Owner Activation payments →</Link></p>
+        </div>
       </section>
 
       {ok && <div className="inline-flex items-center gap-1 text-sm text-emerald-700" data-testid="admin-pricing-ok"><CheckCircle2 className="h-4 w-4" />{ok}</div>}
@@ -119,7 +124,8 @@ export default function PricingConfigClient({ initial }: Props) {
 
       <p className="mt-4 text-xs text-muted-foreground">
         Note: This surface configures commercial <strong>display / plan positioning</strong>. Brand Pro recurring billing
-        and Founding Lifetime checkout are NOT wired to these values. Owner Activation live billing remains disabled.
+        and Founding Lifetime checkout are NOT wired to these values. Verified Owner Activation is <strong>LIVE</strong> at a
+        server-authoritative $1.00 per channel and is not editable here.
       </p>
     </div>
   );

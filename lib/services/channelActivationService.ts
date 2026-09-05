@@ -18,6 +18,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { HttpError, requireAuth, ROLES, rankOf } from '@/lib/auth/rbac';
 import { channelRepo } from '@/lib/repositories/channelRepo';
+import { userRepo } from '@/lib/repositories/userRepo';
 import { getCollection } from '@/lib/db/mongo';
 import { COLLECTIONS } from '@/lib/db/collections';
 import { getPaymentProvider } from '@/lib/services/payments/providerFactory';
@@ -36,6 +37,21 @@ import type {
 export const ACTIVATION_AMOUNT_MINOR = 100;   // $1.00 USD
 export const ACTIVATION_CURRENCY = 'USD' as const;
 export const ACTIVATION_PURPOSE = 'CHANNEL_OWNER_ACTIVATION' as const;
+
+// Sanitizers for the Super Admin reporting surface. Never expose full
+// provider references or full owner emails.
+function maskRef(v: string | null): string | null {
+  if (!v) return null;
+  if (v.length <= 6) return '••' + v.slice(-2);
+  return v.slice(0, 4) + '••••' + v.slice(-4);
+}
+function maskEmail(email: string | null | undefined): string | null {
+  if (!email) return null;
+  const [local, domain] = email.split('@');
+  if (!domain) return '•••';
+  const shown = local.slice(0, 1);
+  return `${shown}${'•'.repeat(Math.max(1, local.length - 1))}@${domain}`;
+}
 
 async function payCol() { return getCollection<ChannelActivationPayment>(COLLECTIONS.CHANNEL_ACTIVATION_PAYMENTS); }
 async function creditCol() { return getCollection<WaveLeadCreditEvent>(COLLECTIONS.WAVELEAD_CREDIT_EVENTS); }
@@ -413,6 +429,77 @@ export const channelActivationService = {
   async findByProviderOrderId(provider_order_id: string): Promise<ChannelActivationPayment | null> {
     const c = await payCol();
     return c.findOne({ provider_order_id });
+  },
+
+  // ── Super Admin reporting (READ-ONLY) ──────────────────────────────────
+  // Verified Owner Activation payments (source of truth: channel_activation_payments)
+  // with resolved channel + masked owner, WaveLead credit issued (net of reversals
+  // via wavelead_credit_events.source_id), and masked provider references. This
+  // surface is strictly isolated from marketplace_orders / promote funding orders
+  // and exposes no raw provider secrets. No mutation controls.
+  async adminListActivations(actor: Actor | null) {
+    requireAuth(actor);
+    if (rankOf(actor!.user.role) < rankOf(ROLES.ADMIN)) throw new HttpError(403, 'Admin privileges required');
+    const c = await payCol();
+    const credits = await creditCol();
+    const rows = await c.find({}).sort({ created_at: -1 }).limit(500).toArray();
+
+    let grossCaptured = 0, fees = 0, net = 0, creditIssued = 0, activeCount = 0, refundedCount = 0;
+    const items: Array<Record<string, unknown>> = [];
+
+    for (const p of rows) {
+      const ch = await channelRepo.findById(p.channel_id).catch(() => null);
+      const owner = await userRepo.findById(p.owner_user_id).catch(() => null);
+      const cev = await credits.find({ source_id: p.id }).toArray();
+      const creditForPayment = cev.reduce((s, e) => s + (e.amount_minor || 0), 0);
+
+      grossCaptured += p.amount_captured_minor || 0;
+      fees += p.provider_fee_minor || 0;
+      net += p.provider_net_minor || 0;
+      creditIssued += creditForPayment;
+      if (p.status === 'captured_finalized') activeCount += 1;
+      if (p.status === 'refunded' || p.status === 'partially_refunded' || (p.amount_refunded_minor || 0) > 0) refundedCount += 1;
+
+      items.push({
+        id: p.id,
+        created_at: p.created_at,
+        captured_at: p.captured_at,
+        finalized_at: p.finalized_at,
+        refunded_at: p.refunded_at,
+        channel_id: p.channel_id,
+        channel_name: ch?.name || p.channel_id,
+        channel_slug: ch?.slug || null,
+        owner_user_id: p.owner_user_id,
+        owner_masked: maskEmail(owner?.email),
+        provider: p.provider,
+        provider_environment: p.provider_environment,
+        provider_order_id_masked: maskRef(p.provider_order_id),
+        provider_capture_id_masked: maskRef(p.provider_capture_id),
+        currency: p.currency,
+        gross_amount_minor: p.gross_amount_minor,
+        amount_captured_minor: p.amount_captured_minor,
+        amount_refunded_minor: p.amount_refunded_minor,
+        provider_fee_minor: p.provider_fee_minor,
+        provider_net_minor: p.provider_net_minor,
+        wavelead_credit_minor: creditForPayment,
+        status: p.status,
+        activation_status: ch?.activation_status || null,
+      });
+    }
+
+    return {
+      items,
+      summary: {
+        total_payments: rows.length,
+        gross_captured_minor: grossCaptured,
+        gateway_fees_minor: fees,
+        provider_net_minor: net,
+        wavelead_credit_issued_minor: creditIssued,
+        active_activations: activeCount,
+        refunded_or_reversed: refundedCount,
+        currency: 'USD' as const,
+      },
+    };
   },
 };
 
