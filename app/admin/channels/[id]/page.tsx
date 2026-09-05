@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
 import { moderationService } from '@/lib/services/moderationService';
+import { combinedReviewService } from '@/lib/services/combinedReviewService';
 import { countryByCode } from '@/lib/constants/countries';
 import ChannelOwnerVerifyClient from './ChannelOwnerVerifyClient';
 import { userRepo } from '@/lib/repositories/userRepo';
@@ -59,6 +60,11 @@ export default async function ReviewChannelPage({ params }: { params: Promise<Pa
   const country = countryByCode(channel.country_code);
   const submitter = channel.owner_id ? await userRepo.findById(channel.owner_id) : null;
   const reviewer = channel.reviewed_by ? await userRepo.findById(channel.reviewed_by) : null;
+  // M12 — linked ownership claim (combined onboarding). Present only when the
+  // linked owner filed proof while the listing is still pending_review.
+  const ownershipClaim = channel.status === 'pending_review'
+    ? await combinedReviewService.getReviewableOwnershipClaim(channel.id)
+    : null;
 
   return (
     <>
@@ -164,10 +170,46 @@ export default async function ReviewChannelPage({ params }: { params: Promise<Pa
           </aside>
         </div>
 
+        {ownershipClaim && (
+          <div className="mt-8 wh-card p-5 border-primary/30 bg-primary/5" data-testid="moderation-ownership-claim">
+            <div className="flex items-center gap-2">
+              <span className="text-xs uppercase tracking-wider text-primary font-semibold">Ownership Claim (combined review)</span>
+              <Badge variant="outline">{ownershipClaim.status}</Badge>
+            </div>
+            <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+              <div><span className="text-muted-foreground">Claimant:</span> {ownershipClaim.claimant_email || (submitter ? submitter.email : ownershipClaim.claimant_user_id)}</div>
+              <div><span className="text-muted-foreground">Verification method:</span> {ownershipClaim.verification_method}</div>
+              {ownershipClaim.domain_match !== undefined && (
+                <div><span className="text-muted-foreground">Email/website domain match:</span> {ownershipClaim.domain_match ? 'Yes' : 'No'}</div>
+              )}
+              <div><span className="text-muted-foreground">Submitted:</span> {ownershipClaim.submitted_at ? new Date(ownershipClaim.submitted_at as unknown as string).toLocaleString() : '—'}</div>
+            </div>
+            {ownershipClaim.claimant_note && (
+              <div className="mt-3 text-sm"><span className="text-muted-foreground">Claimant note:</span> <span className="whitespace-pre-wrap">{ownershipClaim.claimant_note}</span></div>
+            )}
+            {Array.isArray(ownershipClaim.evidence_urls) && ownershipClaim.evidence_urls.length > 0 && (
+              <div className="mt-3">
+                <div className="text-xs uppercase tracking-wider text-muted-foreground">Evidence</div>
+                <ul className="mt-1 space-y-1">
+                  {ownershipClaim.evidence_urls.map((e, i) => (
+                    <li key={i} className="text-sm">
+                      <span className="text-muted-foreground">{e.evidence_type}:</span>{' '}
+                      <a href={e.evidence_url} target="_blank" rel="noopener noreferrer" className="text-primary break-all inline-flex items-center gap-1">{e.evidence_url} <ExternalLink className="h-3.5 w-3.5 shrink-0" /></a>
+                      {e.note && <span className="text-muted-foreground"> — {e.note}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <p className="mt-3 text-xs text-muted-foreground">Reviewing this claim together with the listing lets you approve both in one action below.</p>
+          </div>
+        )}
+
         <div className="mt-8">
           <ModerationActions
             channelId={channel.id}
             currentStatus={channel.status}
+            hasOwnershipClaim={!!ownershipClaim}
             currentValues={{
               name: channel.name,
               short_description: channel.short_description ?? '',

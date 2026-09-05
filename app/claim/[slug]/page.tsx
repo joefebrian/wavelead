@@ -5,6 +5,7 @@ import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import { Button } from '@/components/ui/button';
 import { channelService } from '@/lib/services/channelService';
+import { channelRepo } from '@/lib/repositories/channelRepo';
 import { claimService } from '@/lib/services/claimService';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import ClaimForm from './ClaimForm';
@@ -21,11 +22,19 @@ interface Params { slug: string; }
 
 export default async function ClaimPage({ params }: { params: Promise<Params> }) {
   const { slug } = await params;
-  const channel = await channelService.getPublicBySlug(slug);
-  if (!channel) notFound();
   const actor = await resolveActorFromCookies();
+  const publicChannel = await channelService.getPublicBySlug(slug);
+  // M12 combined onboarding: if the listing isn't public yet, still let the
+  // ORIGINAL submitter / linked owner reach the ownership-verification form
+  // while it's pending_review. Everyone else keeps getting a 404 (privacy).
+  const internal = publicChannel ? null : await channelRepo.findBySlug(slug);
+  const isPendingOwner = !!(internal && actor && internal.owner_id === actor.user.id && internal.status === 'pending_review');
+  if (!publicChannel && !isPendingOwner) notFound();
+  const src = publicChannel ?? internal!;
+  const channel = { id: src.id, slug: src.slug, name: src.name, website_url: src.website_url ?? null };
   const eligibility = await claimService.getEligibility(slug, actor);
   const ownerVerificationMode = (eligibility as { ownerVerificationMode?: boolean }).ownerVerificationMode === true;
+  const pendingListing = (eligibility as { pendingListing?: boolean }).pendingListing === true;
 
   return (
     <>
@@ -41,7 +50,9 @@ export default async function ClaimPage({ params }: { params: Promise<Params> })
             </div>
             <h1 className="text-2xl md:text-3xl font-bold">{channel.name}</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              {ownerVerificationMode
+              {pendingListing
+                ? 'Verify you own or manage this channel. Your channel listing and ownership evidence will be reviewed together.'
+                : ownerVerificationMode
                 ? 'This channel is already linked to your WaveLead account. Submit ownership evidence to complete verification so you can publish a sponsorship rate card.'
                 : 'Verify that you run this WhatsApp Channel to appear as its Verified Owner on WaveLead.'}
             </p>

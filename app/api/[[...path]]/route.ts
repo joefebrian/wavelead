@@ -413,6 +413,13 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const body = await safeJson(request);
       return applyCors(ok(await moderationService.reject(actor, path[2], body)), request);
     }
+    // M12 — combined "Approve Listing + Ownership" (one admin action, two canonical transitions).
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'channels' && path[3] === 'approve-listing-and-ownership' && method === 'POST') {
+      const { combinedReviewService } = await import('@/lib/services/combinedReviewService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      return applyCors(ok(await combinedReviewService.approveListingAndOwnership(actor, path[2], body)), request);
+    }
 
     // ---------- CURATION (M02) ----------
     if (route === '/admin/homepage/slots' && method === 'GET') {

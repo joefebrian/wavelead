@@ -6443,3 +6443,38 @@ agent_communication:
         LIVE $1 record is production-only and will render in /admin/activation-payments after deploy.
 
       UNCHANGED: Marketplace data, Promote data, Founding Lifetime. CHANNEL_OWNER_ACTIVATION_REQUIRED still OFF. No PayPal calls.
+
+  - agent: "main"
+    message: |
+      M12 — COMBINED LISTING + OWNERSHIP ONBOARDING (reuses existing claim + moderation systems)
+
+      BACKEND (no PayPal/activation-billing changes; no auto-approval; security preserved):
+      - claimService.getEligibility + submit: linked owner (channel.owner_id === actor) may file an ownership
+        claim while channel.status='pending_review'. Non-owners still blocked on unapproved channels. Filing a
+        claim NEVER verifies ownership. Returns ownerVerificationMode + pendingListing/underReview flags.
+      - NEW lib/services/combinedReviewService.ts → approveListingAndOwnership(): one admin action that REUSES
+        moderationService.approve (listing → ADMIN_APPROVE_CHANNEL audit) THEN claimModerationService.approve
+        (ownership → CLAIM_APPROVED + CHANNEL_OWNER_ASSIGNED audits, owner_id/verified/activation via existing helper).
+        Ordering required (claim approve needs status=approved). Mongo is STANDALONE (no txns) → compensating
+        rollback: if ownership step throws, channel reverts to pending_review (no partial commit).
+      - Route: POST /api/admin/channels/:id/approve-listing-and-ownership. Eligibility helper getReviewableOwnershipClaim().
+
+      FRONTEND:
+      - Submit form: "I own or manage this channel" checkbox → on submit redirect to /claim/[slug] (declaration != proof).
+      - /claim/[slug]: linked owner can reach it while pending_review (NO 404); non-owner unapproved still 404 (privacy).
+        Copy: "Verify you own or manage this channel … reviewed together."
+      - Owner dashboard manage page: ChannelActivationCard now shows "Under Review" (pending_review + claim filed),
+        else "Complete Ownership Verification First" → /claim/[slug], else the $1 CTA when verified.
+      - Moderation detail: shows linked Ownership Claim (claimant, method, evidence URLs, note, status) + primary
+        "Approve Listing + Ownership" button (with "Approve Listing Only", "Edit & Approve", "Reject" preserved).
+
+      ⚠️ ACTIVATION POLICY CONFLICT: YES (reported per instruction; NOT changed).
+      activationStateForNewlyVerified() returns 'pending' only if CHANNEL_OWNER_ACTIVATION_REQUIRED=true, else
+      'not_required'. Prod currently REQUIRED=false → newly ownership-approved owners get activation_status='not_required'
+      (not 'pending'). Per operator instruction, the helper/flags were NOT changed; flipping REQUIRED=true is a separate
+      controlled decision. Grandfathered owners remain not_required.
+
+      VERIFICATION: tsc clean. vitest tests/m12_combined_review.test.ts 9/9 PASS + tests/m03_ownership_verification.test.ts
+      23/23 PASS (no regressions). Covered: owner-can-claim-pending, non-owner-blocked, approved-unchanged, claim-does-not-verify,
+      combined approves both, separate audit events, activation from helper, NO PayPal order, NO WaveLead credit, missing-claim
+      guard, rollback on ownership failure, Approve-Listing-Only unchanged. Standalone Claims flow preserved.

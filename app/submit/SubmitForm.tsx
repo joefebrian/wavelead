@@ -66,6 +66,7 @@ export default function SubmitForm({ categories, countries }: Props) {
   const [lang, setLang] = useState('');
   const [website, setWebsite] = useState('');
   const [logo, setLogo] = useState('');
+  const [ownsChannel, setOwnsChannel] = useState(false);
   // Track which fields the user has edited so we can label them "Your edit".
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const setField = <K extends string>(key: K, v: string, setter: (s: string) => void) => { setter(v); setTouched((t) => ({ ...t, [key]: true })); };
@@ -141,7 +142,15 @@ export default function SubmitForm({ categories, countries }: Props) {
       });
       const j = await r.json();
       if (!r.ok || !j?.ok) { setSubmitError(j?.error || 'Something went wrong. Please try again.'); return; }
-      setSuccess({ slug: j.data?.channel?.slug, name: j.data?.channel?.name });
+      const newSlug = j.data?.channel?.slug as string | undefined;
+      // M12 combined onboarding: if the submitter declared ownership, take them
+      // straight to the existing /claim/[slug] proof form (works while the
+      // listing is still pending_review). Declaring ownership never proves it.
+      if (ownsChannel && newSlug) {
+        window.location.href = `/claim/${newSlug}`;
+        return;
+      }
+      setSuccess({ slug: newSlug as string, name: j.data?.channel?.name });
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch {
       setSubmitError('Could not reach the server. Please retry.');
@@ -283,10 +292,24 @@ export default function SubmitForm({ categories, countries }: Props) {
             </div>
           )}
 
+          <div className="wh-card p-4 flex items-start gap-3" data-testid="owns-channel-box">
+            <input
+              id="owns-channel" type="checkbox" checked={ownsChannel}
+              onChange={(e) => setOwnsChannel(e.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-input"
+            />
+            <label htmlFor="owns-channel" className="text-sm">
+              <span className="font-medium">I own or manage this channel</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                We&rsquo;ll take you to submit ownership proof right after this — your listing and ownership are reviewed together in one step. Checking this doesn&rsquo;t prove ownership on its own; a WaveLead admin still reviews it.
+              </span>
+            </label>
+          </div>
+
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <p className="text-xs text-muted-foreground">Submissions go to <span className="font-semibold">Pending Review</span>. They won&apos;t appear on WaveLead until a moderator approves them.</p>
             <Button type="submit" size="lg" disabled={!canSubmit}>
-              {submitting ? <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Submitting…</> : 'Submit for review'}
+              {submitting ? <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Submitting…</> : (ownsChannel ? 'Submit & verify ownership' : 'Submit for review')}
             </Button>
           </div>
         </>

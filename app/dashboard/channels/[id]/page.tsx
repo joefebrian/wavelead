@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { ownerService } from '@/lib/services/ownerService';
+import { claimService } from '@/lib/services/claimService';
 import { countryByCode } from '@/lib/constants/countries';
 import OwnerEditForm from './OwnerEditForm';
 import SensitiveChangeForm from './SensitiveChangeForm';
@@ -50,6 +51,17 @@ export default async function OwnerChannelPage({ params, searchParams }: { param
   const { channel, pending_change_request, category_name } = data;
   const country = countryByCode(channel.country_code);
   const categories = await categoryRepo.listActive();
+
+  // M12 — combined onboarding "Under Review" state: the linked owner has filed
+  // an ownership claim (pending/needs_information) but it hasn't been approved.
+  let ownershipUnderReview = false;
+  const ownershipVerified = channel.is_verified || channel.is_official;
+  if (!ownershipVerified) {
+    try {
+      const myClaims = await claimService.listMine(actor);
+      ownershipUnderReview = myClaims.some((c) => c.channel_id === channel.id && (c.status === 'pending' || c.status === 'needs_information'));
+    } catch { /* ignore */ }
+  }
 
   // Follower-evidence history for this owner+channel.
   let audienceHistory: Awaited<ReturnType<typeof audienceSnapshotService.listMine>>['items'] = [];
@@ -106,6 +118,7 @@ export default async function OwnerChannelPage({ params, searchParams }: { param
           <ChannelActivationCard
             channelId={channel.id}
             channelSlug={channel.slug}
+            ownershipUnderReview={ownershipUnderReview}
             returnActivationId={typeof sp.activation === 'string' ? sp.activation : null}
             returnStatus={typeof sp.status === 'string' ? sp.status : null}
           />

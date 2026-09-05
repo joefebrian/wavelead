@@ -12,6 +12,7 @@ interface Props {
   channelId: string;
   currentStatus: string;
   currentValues: { name: string; short_description: string; description: string };
+  hasOwnershipClaim?: boolean;
 }
 
 const REJECT_REASONS: { value: string; label: string }[] = [
@@ -25,9 +26,9 @@ const REJECT_REASONS: { value: string; label: string }[] = [
   { value: 'other', label: 'Other' },
 ];
 
-export default function ModerationActions({ channelId, currentStatus, currentValues }: Props) {
+export default function ModerationActions({ channelId, currentStatus, currentValues, hasOwnershipClaim = false }: Props) {
   const router = useRouter();
-  const [busy, setBusy] = useState<'approve' | 'reject' | null>(null);
+  const [busy, setBusy] = useState<'approve' | 'reject' | 'combined' | null>(null);
   const [pending, startTransition] = useTransition();
   const [showEdit, setShowEdit] = useState(false);
   const [showReject, setShowReject] = useState(false);
@@ -85,6 +86,23 @@ export default function ModerationActions({ channelId, currentStatus, currentVal
     finally { setBusy(null); }
   }
 
+  async function approveCombined() {
+    setError(null);
+    setBusy('combined');
+    try {
+      const r = await fetch(`/api/admin/channels/${channelId}/approve-listing-and-ownership`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const j = await r.json();
+      if (!r.ok || !j?.ok) { setError(j?.error || 'Combined approval failed'); return; }
+      startTransition(() => router.refresh());
+    } catch { setError('Network error.'); }
+    finally { setBusy(null); }
+  }
+
   const canAct = currentStatus === 'pending_review';
 
   return (
@@ -103,8 +121,13 @@ export default function ModerationActions({ channelId, currentStatus, currentVal
       )}
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button onClick={() => approve(false)} disabled={!canAct || busy !== null || pending}>
-          {busy === 'approve' ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <CheckCircle2 className="h-4 w-4 mr-1.5" />} Approve
+        {hasOwnershipClaim && (
+          <Button onClick={approveCombined} disabled={!canAct || busy !== null || pending} data-testid="approve-listing-ownership-btn">
+            {busy === 'combined' ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <CheckCircle2 className="h-4 w-4 mr-1.5" />} Approve Listing + Ownership
+          </Button>
+        )}
+        <Button variant={hasOwnershipClaim ? 'outline' : 'default'} onClick={() => approve(false)} disabled={!canAct || busy !== null || pending}>
+          {busy === 'approve' ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <CheckCircle2 className="h-4 w-4 mr-1.5" />} {hasOwnershipClaim ? 'Approve Listing Only' : 'Approve'}
         </Button>
         <Button variant="outline" onClick={() => setShowEdit((v) => !v)} disabled={!canAct || busy !== null || pending}>
           <PencilLine className="h-4 w-4 mr-1.5" /> Edit & Approve
@@ -113,6 +136,12 @@ export default function ModerationActions({ channelId, currentStatus, currentVal
           <XCircle className="h-4 w-4 mr-1.5" /> Reject
         </Button>
       </div>
+      {hasOwnershipClaim && canAct && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          This submitter declared ownership and provided evidence. &ldquo;Approve Listing + Ownership&rdquo; approves both in one step
+          (listing published + owner verified). &ldquo;Approve Listing Only&rdquo; publishes the listing without verifying ownership.
+        </p>
+      )}
 
       {showEdit && canAct && (
         <div className="mt-5 grid gap-3 border-t border-border/60 pt-5">

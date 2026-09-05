@@ -83,9 +83,10 @@ function fmtUSD(minor: number | null): string {
   return `$${(minor / 100).toFixed(2)}`;
 }
 
-export default function ChannelActivationCard({ channelId, channelSlug, returnActivationId, returnStatus }: {
+export default function ChannelActivationCard({ channelId, channelSlug, ownershipUnderReview = false, returnActivationId, returnStatus }: {
   channelId: string;
   channelSlug: string;
+  ownershipUnderReview?: boolean;
   returnActivationId: string | null;
   returnStatus: string | null;
 }) {
@@ -264,7 +265,17 @@ export default function ChannelActivationCard({ channelId, channelSlug, returnAc
         </div>
       )}
 
-      {!isActive && !ownershipApproved && (
+      {!isActive && !ownershipApproved && ownershipUnderReview && (
+        <div className="mt-4 rounded-md bg-primary/5 border border-primary/30 p-4" data-testid="ownership-under-review-panel">
+          <div className="text-sm font-semibold flex items-center gap-1.5"><ShieldCheck className="h-4 w-4 text-primary" /> Under Review</div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            WaveLead is reviewing your channel listing and ownership verification. You&rsquo;ll be able to activate your
+            verified owner profile once it&rsquo;s approved — no further action needed right now.
+          </div>
+        </div>
+      )}
+
+      {!isActive && !ownershipApproved && !ownershipUnderReview && (
         <div className="mt-4 rounded-md bg-muted/40 border border-border p-4" data-testid="ownership-required-panel">
           <div className="text-sm">
             Complete ownership verification before activating this channel. Submit an ownership claim and, once an admin

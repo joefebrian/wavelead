@@ -44,7 +44,29 @@ export const claimService = {
   async getEligibility(channelSlug: string, actor: Actor | null) {
     const channel = await channelRepo.findBySlug(channelSlug);
     if (!channel) throw new HttpError(404, 'Channel not found');
+    const isLinkedOwner = !!actor && channel.owner_id === actor.user.id;
     if (channel.status !== 'approved') {
+      // Combined onboarding (M12): the ORIGINAL submitter / linked owner may
+      // file ownership proof while the listing is still pending_review, so a
+      // single admin review can approve listing + ownership together. Filing
+      // this claim NEVER proves ownership by itself. Everyone else must wait
+      // until the listing is approved (privacy + no takeover of unapproved).
+      if (channel.status === 'pending_review' && isLinkedOwner) {
+        const active = await findActiveClaim(channel.id, actor!.user.id);
+        if (active) {
+          return {
+            canClaim: false,
+            ownerVerificationMode: true,
+            underReview: true,
+            existingClaim: {
+              id: active.id, status: active.status,
+              submitted_at: active.submitted_at,
+              request_more_info_message: active.request_more_info_message,
+            },
+          };
+        }
+        return { canClaim: true, ownerVerificationMode: true, pendingListing: true };
+      }
       return { canClaim: false, reason: 'Only approved channels can be claimed.' };
     }
     // If already verified (or official) with an owner, only support "report an issue" path.
@@ -109,7 +131,12 @@ export const claimService = {
 
     const channel = await channelRepo.findBySlug(channelSlug);
     if (!channel) throw new HttpError(404, 'Channel not found');
-    if (channel.status !== 'approved') throw new HttpError(400, 'Only approved channels can be claimed');
+    const isLinkedOwner = channel.owner_id === actor.user.id;
+    // M12 combined onboarding: allow the linked owner to file proof while the
+    // listing is pending_review; everyone else still needs an approved listing.
+    if (channel.status !== 'approved' && !(channel.status === 'pending_review' && isLinkedOwner)) {
+      throw new HttpError(400, 'Only approved channels can be claimed');
+    }
     if (channel.owner_id && (channel.verification_status === 'verified' || channel.verification_status === 'official')) {
       throw new HttpError(409, 'This channel already has a verified owner');
     }
