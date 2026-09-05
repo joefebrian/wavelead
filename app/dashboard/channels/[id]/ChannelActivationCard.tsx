@@ -146,6 +146,11 @@ export default function ChannelActivationCard({ channelId, channelSlug, ownershi
   const isActive = state.activation_status === 'active';
   const isPending = state.activation_status === 'pending' || state.latest_payment?.status === 'captured_pending_fee';
   const isRevoked = state.activation_status === 'revoked';
+  // M13.1 — grandfathered owners (activation_status='not_required') must never
+  // see the "$1 required" activation banner even after
+  // CHANNEL_OWNER_ACTIVATION_REQUIRED is flipped ON. They already carry public
+  // Owner Verified state via lib/utils/sanitize.ts.
+  const isNotRequired = state.activation_status === 'not_required';
   const ownershipApproved = state.ownership_status === 'approved';
 
   if (!showActiveCta) {
@@ -233,22 +238,25 @@ export default function ChannelActivationCard({ channelId, channelSlug, ownershi
           <div className="mt-1 inline-flex items-center gap-1.5 text-sm font-semibold" data-testid="activation-status">
             {isActive ? <><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Activation Active</> :
               isRevoked ? <>Revoked</> :
+              isNotRequired && ownershipApproved ? <><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Owner Verified</> :
               isPending ? <>Pending confirmation</> :
               <>Complete Verified Owner Activation</>}
           </div>
         </div>
       </div>
 
-      {!isActive && ownershipApproved && (
-        <div className="mt-4 rounded-md bg-primary/5 border border-primary/30 p-4">
-          <div className="text-sm">
-            Activate your verified owner profile for <span className="font-semibold">{fmtUSD(state.activation_amount_minor)}</span>. After
-            payment processing fees, the remaining amount is returned to your account as <span className="font-semibold">WaveLead Credit</span>.
+      {!isActive && !isNotRequired && ownershipApproved && (
+        <div className="mt-4 rounded-md bg-primary/5 border border-primary/30 p-4" data-testid="activation-approved-notice">
+          <div className="text-sm font-semibold flex items-center gap-1.5" data-testid="activation-approved-heading">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" /> Ownership Approved
           </div>
+          <p className="mt-1 text-sm">
+            Complete your one-time <span className="font-semibold">$1 activation</span> to unlock <span className="font-semibold">Owner Verified</span>.
+          </p>
           <div className="mt-3 flex items-center gap-2 flex-wrap">
             <Button onClick={onStart} disabled={busy !== null || !ownershipApproved} data-testid="start-activation-btn" className="gap-1.5">
               {busy === 'start' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
-              Activate Owner Verification — $1
+              Activate Owner Verified — $1
             </Button>
             {state.latest_payment && state.latest_payment.status === 'captured_pending_fee' && (
               <Button variant="outline" onClick={onManualCapture} disabled={busy !== null} className="gap-1.5" data-testid="refresh-activation-btn">
@@ -257,11 +265,21 @@ export default function ChannelActivationCard({ channelId, channelSlug, ownershi
               </Button>
             )}
             {isLive ? (
-              <span className="text-xs text-muted-foreground">One-time $1.00 USD charge · processed securely via PayPal.</span>
+              <span className="text-xs text-muted-foreground">One-time $1.00 USD charge · processed securely via PayPal · not a subscription.</span>
             ) : (
               <span className="text-xs text-muted-foreground">Sandbox activation transaction — no real money is charged.</span>
             )}
           </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            After PayPal processing fees, the remaining amount is returned to your account as WaveLead Credit.
+          </p>
+        </div>
+      )}
+
+      {!isActive && isNotRequired && ownershipApproved && (
+        <div className="mt-4 rounded-md border border-emerald-300 bg-emerald-50 p-4 text-emerald-900 text-sm" data-testid="activation-not-required-panel">
+          <div className="font-semibold flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4" /> Owner Verified — no activation required</div>
+          <div className="mt-1 text-xs">Your ownership is verified and your public Owner Verified badge is active. The $1 activation does not apply to your channel.</div>
         </div>
       )}
 
