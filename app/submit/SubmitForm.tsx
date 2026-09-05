@@ -166,6 +166,24 @@ export default function SubmitForm({ categories, countries }: Props) {
   }), [name, shortDesc, categorySlug, countryCode, lang, categories, countries]);
 
   if (success) {
+    function resetForNewSubmission() {
+      setUrl('');
+      setName('');
+      setShortDesc('');
+      setDesc('');
+      setCategorySlug('');
+      setCountryCode('');
+      setLang('');
+      setWebsite('');
+      setLogo('');
+      setOwnsChannel(false);
+      setTouched({});
+      setImp({ state: 'idle' });
+      setSubmitError(null);
+      setSubmitting(false);
+      setSuccess(null);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
     return (
       <div className="mt-8 wh-card p-8 text-center">
         <div className="mx-auto h-14 w-14 rounded-full bg-primary/10 text-primary grid place-items-center"><CheckCircle2 className="h-8 w-8" /></div>
@@ -173,8 +191,9 @@ export default function SubmitForm({ categories, countries }: Props) {
         <p className="mt-2 text-muted-foreground"><span className="font-semibold text-foreground">{success.name}</span> is now <span className="font-semibold">Pending Review</span>. A moderator will check the link and approve it if it meets our guidelines.</p>
         <p className="mt-1 text-xs text-muted-foreground">You&apos;ll be able to see it publicly after approval. This usually takes under 24 hours.</p>
         <div className="mt-6 flex gap-2 justify-center flex-wrap">
-          <Link href="/channels"><Button variant="outline">Back to Discover</Button></Link>
-          <Link href="/dashboard"><Button>Go to Dashboard</Button></Link>
+          <Button onClick={resetForNewSubmission} data-testid="submit-another-channel-btn">Submit Another Channel</Button>
+          <Link href="/dashboard"><Button variant="outline">Go to Dashboard</Button></Link>
+          <Link href="/channels"><Button variant="ghost">Back to Discover</Button></Link>
         </div>
       </div>
     );

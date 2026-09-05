@@ -11,9 +11,11 @@ import { claimService } from '@/lib/services/claimService';
 import { countryByCode } from '@/lib/constants/countries';
 import OwnerEditForm from './OwnerEditForm';
 import SensitiveChangeForm from './SensitiveChangeForm';
-import FollowerEvidenceCard from './FollowerEvidenceCard';
+// M14 — Follower Evidence submission UI removed from Owner Dashboard.
+// Follower count now flows from WhatsApp public metadata refresh.
+// Existing follower evidence records remain in the database for backwards
+// compatibility; no destructive migration was performed.
 import ChannelActivationCard from './ChannelActivationCard';
-import { audienceSnapshotService } from '@/lib/services/audienceSnapshotService';
 import { ArrowLeft, ShieldCheck } from 'lucide-react';
 import { categoryRepo } from '@/lib/repositories/categoryRepo';
 
@@ -63,12 +65,8 @@ export default async function OwnerChannelPage({ params, searchParams }: { param
     } catch { /* ignore */ }
   }
 
-  // Follower-evidence history for this owner+channel.
-  let audienceHistory: Awaited<ReturnType<typeof audienceSnapshotService.listMine>>['items'] = [];
-  try {
-    const r = await audienceSnapshotService.listMine(actor, channel.id);
-    audienceHistory = r.items;
-  } catch { /* if 403 (edge race) or 404, keep empty */ }
+  // Follower-evidence history preserved for backwards compatibility only
+  // (no UI). Not fetched.
 
   return (
     <>
@@ -132,23 +130,6 @@ export default async function OwnerChannelPage({ params, searchParams }: { param
               cover_url: channel.cover_url ?? '',
               primary_language: channel.primary_language ?? '',
             }}
-          />
-          <FollowerEvidenceCard
-            channelId={channel.id}
-            initialHistory={audienceHistory.map((s) => ({
-              id: s.id,
-              followers: s.followers,
-              status: s.status,
-              reported_at: (s.reported_at as unknown as Date).toISOString?.() ?? (s.reported_at as unknown as string),
-              evidence_date: s.evidence_date ? ((s.evidence_date as unknown as Date).toISOString?.() ?? (s.evidence_date as unknown as string)) : null,
-              verified_at: s.verified_at ? ((s.verified_at as unknown as Date).toISOString?.() ?? (s.verified_at as unknown as string)) : null,
-              rejection_reason: s.rejection_reason,
-              evidence_attachment: s.evidence_attachment as unknown as {
-                provider: 'uploadthing'; storage_key: string; url: string;
-                mime_type: 'image/jpeg' | 'image/png' | 'image/webp';
-                file_name_safe: string; size_bytes: number; uploaded_at: string;
-              },
-            }))}
           />
           <SensitiveChangeForm
             channelId={channel.id}

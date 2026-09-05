@@ -92,6 +92,17 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return clearSessionCookie(applyCors(ok({ loggedOut: true }), request));
     }
 
+    // ---------- CONTACT (M14) ----------
+    if (route === '/contact' && method === 'POST') {
+      const rl = rateLimit(clientKey(request, 'contact'), 5, 60_000);
+      if (!rl.allowed) return applyCors(fail(429, 'Too many contact attempts, please slow down', { retryAfter: rl.retryAfterSeconds }), request);
+      const { contactService } = await import('@/lib/services/contactService');
+      const body = await safeJson(request);
+      const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null;
+      const ua = request.headers.get('user-agent') || null;
+      return applyCors(ok(await contactService.submit(body, { ip, userAgent: ua })), request);
+    }
+
     // ---------- Emergent Managed Google Auth ----------
     // Public endpoints (no session required). The password-change gate whitelist
     // above already excludes /auth/* prefix — no additional gate change needed.
@@ -419,6 +430,28 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const actor = await resolveActor(request);
       const body = await safeJson(request);
       return applyCors(ok(await combinedReviewService.approveListingAndOwnership(actor, path[2], body)), request);
+    }
+    // M14 — admin manual WhatsApp metadata refresh (reuses SSRF-safe fetcher + parser).
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'channels' && path[3] === 'refresh-whatsapp' && method === 'POST') {
+      const { whatsappRefreshService } = await import('@/lib/services/whatsappRefreshService');
+      const actor = await resolveActor(request);
+      const result = await whatsappRefreshService.refreshOne(actor, path[2]);
+      return applyCors(ok(result), request);
+    }
+    // M14 — weekly auto-refresh entry point. Callable via platform scheduler.
+    // Guarded by a shared secret header so a public HTTP hit cannot trigger it.
+    if (route === '/cron/whatsapp-refresh' && method === 'POST') {
+      const secret = process.env.CRON_SECRET;
+      if (!secret) return applyCors(fail(503, 'Scheduler not configured'), request);
+      const provided = request.headers.get('x-cron-secret') || '';
+      if (provided !== secret) return applyCors(fail(401, 'Unauthorized'), request);
+      const { whatsappRefreshService } = await import('@/lib/services/whatsappRefreshService');
+      const body = await safeJson(request);
+      const summary = await whatsappRefreshService.refreshBatch({
+        limit: typeof body?.limit === 'number' ? body.limit : undefined,
+        delayMs: typeof body?.delayMs === 'number' ? body.delayMs : undefined,
+      });
+      return applyCors(ok({ processed: summary.processed, ok: summary.ok, skipped: summary.skipped, failed: summary.failed }), request);
     }
 
     // ---------- CURATION (M02) ----------

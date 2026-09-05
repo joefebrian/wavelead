@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, CheckCircle2, XCircle, PencilLine, AlertTriangle } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, PencilLine, AlertTriangle, RefreshCw } from 'lucide-react';
 
 interface Props {
   channelId: string;
@@ -28,11 +28,12 @@ const REJECT_REASONS: { value: string; label: string }[] = [
 
 export default function ModerationActions({ channelId, currentStatus, currentValues, hasOwnershipClaim = false }: Props) {
   const router = useRouter();
-  const [busy, setBusy] = useState<'approve' | 'reject' | 'combined' | null>(null);
+  const [busy, setBusy] = useState<'approve' | 'reject' | 'combined' | 'refresh' | null>(null);
   const [pending, startTransition] = useTransition();
   const [showEdit, setShowEdit] = useState(false);
   const [showReject, setShowReject] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshInfo, setRefreshInfo] = useState<string | null>(null);
 
   const [edits, setEdits] = useState({ ...currentValues });
   const [rejectReason, setRejectReason] = useState('spam');
@@ -103,6 +104,37 @@ export default function ModerationActions({ channelId, currentStatus, currentVal
     finally { setBusy(null); }
   }
 
+  async function refreshWhatsApp() {
+    setError(null);
+    setRefreshInfo(null);
+    setBusy('refresh');
+    try {
+      const r = await fetch(`/api/admin/channels/${channelId}/refresh-whatsapp`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const j = await r.json();
+      if (!r.ok || !j?.ok) {
+        setError(j?.error || 'WhatsApp refresh failed. Existing metadata was preserved.');
+        return;
+      }
+      const updated = (j.data?.updated_fields as string[] | undefined) || [];
+      const reason = j.data?.reason as string | undefined;
+      if (updated.length > 0) {
+        setRefreshInfo(`Updated: ${updated.join(', ')}.`);
+      } else if (reason === 'no_change') {
+        setRefreshInfo('Public metadata unchanged since last refresh.');
+      } else if (reason === 'fetch_failed') {
+        setError('Could not reach WhatsApp. Existing metadata preserved.');
+      } else {
+        setRefreshInfo('No changes applied.');
+      }
+      startTransition(() => router.refresh());
+    } catch { setError('Network error. Existing metadata preserved.'); }
+    finally { setBusy(null); }
+  }
+
   const canAct = currentStatus === 'pending_review';
 
   return (
@@ -135,7 +167,13 @@ export default function ModerationActions({ channelId, currentStatus, currentVal
         <Button variant="destructive" onClick={() => setShowReject((v) => !v)} disabled={!canAct || busy !== null || pending}>
           <XCircle className="h-4 w-4 mr-1.5" /> Reject
         </Button>
+        <Button variant="outline" onClick={refreshWhatsApp} disabled={busy !== null || pending} data-testid="refresh-whatsapp-btn" title="Fetch latest public WhatsApp metadata (logo, bio, follower count)">
+          {busy === 'refresh' ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <RefreshCw className="h-4 w-4 mr-1.5" />} Refresh WhatsApp Data
+        </Button>
       </div>
+      {refreshInfo && (
+        <div className="mt-3 text-xs text-muted-foreground" data-testid="refresh-whatsapp-info">{refreshInfo}</div>
+      )}
       {hasOwnershipClaim && canAct && (
         <p className="mt-2 text-xs text-muted-foreground">
           This submitter declared ownership and provided evidence. &ldquo;Approve Listing + Ownership&rdquo; approves both in one step

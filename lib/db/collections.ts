@@ -65,6 +65,9 @@ export const COLLECTIONS = {
   // M11-Batch6 — Founding Brand Pro Lifetime one-time PayPal orders. Isolated
   //              from Marketplace / Promote / Owner Activation domains.
   BRAND_FOUNDING_LIFETIME_ORDERS: 'brand_founding_lifetime_orders',
+  // M14 — Contact form submissions (persisted regardless of email delivery
+  //        availability; if mail transport is configured, a copy is sent).
+  CONTACT_SUBMISSIONS: 'contact_submissions',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

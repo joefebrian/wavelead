@@ -19,19 +19,20 @@ const DISCOVER = [
 const OWNERS = [
   { href: '/submit', label: 'Submit Channel' },
   { href: '/dashboard', label: 'Owner Dashboard' },
-  { href: '/dashboard/monetization', label: 'Monetization' },
+  { href: '/dashboard/earnings', label: 'Monetization' },
   { href: '/pricing', label: 'Pricing' },
 ];
 
 const BRANDS = [
-  { href: '/brand', label: 'For Brands' },
+  { href: '/for-brands', label: 'For Brands' },
   { href: '/channels', label: 'Discover Channels' },
   { href: '/pricing', label: 'Pricing' },
-  { href: '/login?next=/brand', label: 'Sign In' },
+  { href: '/login?next=/for-brands', label: 'Sign In' },
 ];
 
 const LEGAL = [
   { href: '/about', label: 'About' },
+  { href: '/faq', label: 'FAQ' },
   { href: '/privacy', label: 'Privacy' },
   { href: '/terms', label: 'Terms' },
   { href: '/cookies', label: 'Cookie Policy' },

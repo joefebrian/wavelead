@@ -6569,3 +6569,67 @@ agent_communication:
         TARGETED TESTS: 23/23 PASS
         TSC: PASS
         DEPLOY: NOT EXECUTED
+
+  - agent: "main"
+    message: |
+      M14 — BETA UX + PUBLIC DATA MAINTENANCE (targeted; NOT deployed)
+
+      SCOPE (per operator, ~700-credit budget):
+        1. Submit Another Channel UX bug fix
+        2. Admin manual WhatsApp metadata refresh
+        3. Weekly automatic WhatsApp refresh service (endpoint + service; scheduler yaml requires platform-side setup)
+        4. Remove Follower Evidence submission UI
+        5. FAQ page
+        6. Contact page + persist submissions + optional SMTP delivery
+        7. /countries index page (fixes 404)
+        8. Same-origin route/404 crawl + fixed 2 broken footer links
+        9. Pricing page truthfulness (already correct — no changes)
+
+      FILES CHANGED:
+        + lib/services/whatsappRefreshService.ts (NEW — reuses ogFetcher + parser; fail-safe)
+        + lib/services/contactService.ts (NEW — zod schema, persist always, optional SMTP)
+        + app/countries/page.tsx (NEW)
+        + app/faq/page.tsx (NEW)
+        + app/contact/page.tsx (NEW)
+        + app/contact/ContactForm.tsx (NEW)
+        + tests/m14_beta_ux.test.ts (NEW — 7/7 PASS)
+        ~ app/api/[[...path]]/route.ts — POST /api/contact; POST /api/admin/channels/:id/refresh-whatsapp; POST /api/cron/whatsapp-refresh (secret-guarded)
+        ~ app/submit/SubmitForm.tsx — resets state on Submit Another Channel; button added to success card
+        ~ app/admin/channels/[id]/ActionsClient.tsx — Refresh WhatsApp Data button; refresh info line
+        ~ app/dashboard/channels/[id]/page.tsx — Follower Evidence card removed from Owner Dashboard (data collection preserved for backward compatibility)
+        ~ lib/db/collections.ts — added CONTACT_SUBMISSIONS
+        ~ components/layout/Footer.tsx — FAQ link added; fixed broken /brand → /for-brands; fixed /dashboard/monetization → /dashboard/earnings
+
+      SCHEDULER:
+        - Endpoint POST /api/cron/whatsapp-refresh is ready and guarded by CRON_SECRET header.
+        - Emergent has a webhook-cron mechanism (.emergent/cron/watch_crons.sh) but the .emergent/crons.yml schema is platform-managed — registering the weekly schedule requires operator action in the Emergent Deployment UI (or providing the CRON_SECRET env var + registering the endpoint URL).
+        Result: WEEKLY SCHEDULER: PLATFORM SUPPORT REQUIRED (endpoint + service ready).
+
+      CONTACT EMAIL:
+        - Repo previously only had hasEmailDelivery() as an env-var probe; NO transactional email transport implementation existed.
+        - M14 added optional SMTP delivery via a dynamic `nodemailer` import. SMTP_HOST/USER/PASS/PORT/FROM env vars, if configured, cause a copy of every contact submission to be sent to hello@p2plabs.asia. If SMTP is not configured, submissions are still persisted and the user sees "Thanks — we've received your message." Delivery status recorded on the persisted doc (persisted_only / sent / send_failed).
+        - contactService.hasRealEmailDelivery() returns based on presence of SMTP_HOST.
+
+      TESTS (targeted only):
+        tests/m14_beta_ux.test.ts — 7/7 PASS
+          §1 successful refresh updates logo, bio, public_followers_count
+          §2 fetch failure preserves existing logo/bio/count (never blanks)
+          §3 refresh never overwrites owner-verified follower_count
+          §4 refresh creates NO channel_audience_snapshot
+          §5 contact schema rejects invalid input
+          §6 contact persists valid submission + reports delivery status
+          §7 contact hasRealEmailDelivery() reflects SMTP_HOST presence
+        Regression sanity: previously passing suites unchanged; existing M11/M12/M13/M13.1 tests untouched.
+        tsc --noEmit: clean.
+
+      ROUTE CRAWL (localhost preview, same-origin):
+        200: / /channels /trending /top /categories /countries /submit /pricing /faq /contact /about /for-brands /login /signup /privacy /terms /cookies /search /dashboard /admin /channel/auto-kaki /category/business
+        Fixed footer dead links: /brand → /for-brands, /dashboard/monetization → /dashboard/earnings.
+        No other broken WaveLead-originated internal links found.
+
+      NOT DONE (deliberately):
+        - No broad DB migration (existing follower evidence records preserved).
+        - No cron YAML written (platform-managed).
+        - No frontend testing agent run.
+        - No deployment.
+        - No PayPal / activation / marketplace / brand-pro billing changes.
