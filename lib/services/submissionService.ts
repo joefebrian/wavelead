@@ -76,6 +76,25 @@ export const submissionService = {
     const slug = await ensureUniqueSlug(slugify(data.name));
     const now = new Date();
 
+    // M13 — read the public/observed WhatsApp follower count from the most
+    // recent enrichment cache entry for this channel_id. Server-side lookup
+    // (not client-supplied) so users can't inject arbitrary counts.
+    let publicFollowersCount: number | null = null;
+    let publicFollowersSource: 'whatsapp_public_metadata' | null = null;
+    let publicFollowersObservedAt: Date | null = null;
+    if (whatsappChannelId) {
+      try {
+        const cacheColl = await getCollection<{ channel_id: string; result?: { public_followers_count?: number | null } }>(COLLECTIONS.ENRICHMENT_CACHE);
+        const cacheDoc = await cacheColl.findOne({ channel_id: whatsappChannelId });
+        const cached = cacheDoc?.result?.public_followers_count;
+        if (typeof cached === 'number' && cached >= 0) {
+          publicFollowersCount = cached;
+          publicFollowersSource = 'whatsapp_public_metadata';
+          publicFollowersObservedAt = now;
+        }
+      } catch { /* fail-open: never block submission on cache lookup */ }
+    }
+
     const channel: Channel = {
       id: uuidv4(),
       slug,
@@ -102,6 +121,9 @@ export const submissionService = {
       follower_count: 0,
       follower_count_source: 'submitter',
       follower_count_updated_at: null,
+      public_followers_count: publicFollowersCount,
+      public_followers_source: publicFollowersSource,
+      public_followers_observed_at: publicFollowersObservedAt,
       created_at: now,
       updated_at: now,
       published_at: null,

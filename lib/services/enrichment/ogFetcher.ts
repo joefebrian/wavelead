@@ -33,7 +33,18 @@ function extractMeta(html: string, prop: string): string | null {
 function decode(s: string): string {
   return s
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d)))
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#39;/g, "'")
+    // M13 — hex numeric entities (e.g. &#x2022; = •) also appear in the
+    // WhatsApp OG description prefix. Decode before decimal so we don't
+    // double-decode ambiguous prefixes.
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => {
+      const cp = parseInt(h, 16);
+      return Number.isFinite(cp) ? String.fromCodePoint(cp) : '';
+    })
+    .replace(/&#(\d+);/g, (_, d) => {
+      const cp = Number(d);
+      return Number.isFinite(cp) ? String.fromCodePoint(cp) : '';
+    })
     .trim();
 }
 

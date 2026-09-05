@@ -14,9 +14,14 @@ interface Props {
 
 function Avatar({ channel, size = 'h-12 w-12 text-lg' }: { channel: PublicChannel; size?: string }) {
   return (
-    <div className={`${size} shrink-0 rounded-xl bg-gradient-to-br from-primary/80 to-primary grid place-items-center text-primary-foreground font-bold`}
+    <div className={`${size} shrink-0 rounded-xl bg-gradient-to-br from-primary/80 to-primary grid place-items-center text-primary-foreground font-bold overflow-hidden`}
       aria-hidden>
-      {(channel.name || 'W').charAt(0).toUpperCase()}
+      {channel.logo_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={channel.logo_url} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+      ) : (
+        (channel.name || 'W').charAt(0).toUpperCase()
+      )}
     </div>
   );
 }
@@ -35,7 +40,14 @@ function Meta({ channel }: { channel: PublicChannel }) {
 
 export default function ChannelCard({ channel, variant = 'standard', rank, sponsored }: Props) {
   const href = `/channel/${channel.slug}`;
-  const followers = channel.follower_count > 0 ? `${Number(channel.follower_count).toLocaleString()} followers` : 'Followers not verified';
+  // M13 — verified > owner-submitted > WhatsApp public/observed. The public
+  // count is never labelled "Verified"; it's just an observed number that
+  // helps discovery.
+  const publicCount = typeof channel.public_followers_count === 'number' && channel.public_followers_count > 0
+    ? channel.public_followers_count
+    : 0;
+  const displayCount = channel.follower_count > 0 ? channel.follower_count : publicCount;
+  const followers = displayCount > 0 ? `${Number(displayCount).toLocaleString()} followers` : 'Followers not verified';
 
   if (variant === 'ranking') {
     return (

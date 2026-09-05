@@ -13,6 +13,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { normalizeChannelUrl } from './urlNormalizer';
 import type { NormalizedChannelUrl } from './urlNormalizer';
 import { fetchPublicChannelMetadata, type PublicChannelMetadata } from './ogFetcher';
+import { parseWhatsAppOgDescription } from './whatsappMetadataParser';
 import { GeminiFlashProvider } from './geminiProvider';
 import { applyThresholds, type MetadataInferenceProvider, type InferenceOutput } from './inferenceProvider';
 import { getCollection } from '@/lib/db/mongo';
@@ -55,6 +56,11 @@ export interface EnrichmentResult {
   refresh_available_at?: string;
   provider?: string;
   inference_version?: string;
+  // M13 — parsed from the leading WhatsApp OG description wrapper.
+  // NOT verified evidence: source = whatsapp_public_metadata.
+  public_followers_count?: number | null;
+  public_followers_source?: 'whatsapp_public_metadata' | null;
+  public_followers_observed_at?: string | null;
 }
 
 // In-memory rate limiter (per-process). For a single-container deploy this is
@@ -167,13 +173,20 @@ export async function enrich(actor: Actor | null, input: { channel_url: string; 
   const inference_available = !!inference && !!(inference.category.value || inference.language.value || inference.country.value);
   const status: EnrichmentStatus = metadata_available && inference_available ? 'success' : metadata_available ? 'partial' : 'unavailable';
 
-  const shortDesc = og?.description ? og.description.slice(0, 180) : null;
+  // M13 — parse the WhatsApp OG description wrapper for a public follower
+  // count and strip the "Channel • X followers • " prefix from the bio. The
+  // extracted count is PUBLIC/OBSERVED, never verified evidence.
+  const parsedWa = parseWhatsAppOgDescription(og?.description ?? null);
+  const cleanedDescription = parsedWa.bio ?? og?.description ?? null;
+  const publicFollowersCount = parsedWa.followers;
+
+  const shortDesc = cleanedDescription ? cleanedDescription.slice(0, 180) : null;
   const result: EnrichmentResult = {
     status,
     canonical: { channel_id: normalized.channel_id, canonical_url: normalized.canonical_url },
     fields: {
       channel_name:       { value: og?.title || null,       source: og?.title ? 'public_metadata' : null, confidence: og?.title ? 1 : 0, editable: true },
-      description:        { value: og?.description || null, source: og?.description ? 'public_metadata' : null, confidence: og?.description ? 1 : 0, editable: true },
+      description:        { value: cleanedDescription || null, source: cleanedDescription ? 'public_metadata' : null, confidence: cleanedDescription ? 1 : 0, editable: true },
       logo_url:           { value: og?.image_url || null,   source: og?.image_url ? 'public_metadata' : null, confidence: og?.image_url ? 1 : 0, editable: true },
       short_description:  { value: shortDesc || null,       source: shortDesc ? 'public_metadata' : null, confidence: shortDesc ? 1 : 0, editable: true },
       category_slug:      { value: inference?.category.value || null, source: inference?.category.value ? 'wavelead_inference' : null, confidence: inference?.category.confidence ?? 0, editable: true },
@@ -182,6 +195,9 @@ export async function enrich(actor: Actor | null, input: { channel_url: string; 
     },
     metadata_available, inference_available,
     cached: false, provider: provider.name, inference_version: provider.inference_version,
+    public_followers_count: publicFollowersCount,
+    public_followers_source: publicFollowersCount != null ? 'whatsapp_public_metadata' : null,
+    public_followers_observed_at: publicFollowersCount != null ? new Date().toISOString() : null,
   };
 
   const ttl = status === 'unavailable' ? NEGATIVE_TTL_MS : SUCCESS_TTL_MS;

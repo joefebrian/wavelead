@@ -79,6 +79,13 @@ export interface Channel {
   follower_count: number;
   follower_count_source: string;
   follower_count_updated_at: Date | null;
+  // M13 — WhatsApp public/observed follower count parsed from the channel's
+  // OG description ("Channel • 103K followers • ..."). Separate from
+  // owner-verified `follower_count` so it can never overwrite verified
+  // evidence.
+  public_followers_count?: number | null;
+  public_followers_source?: 'whatsapp_public_metadata' | null;
+  public_followers_observed_at?: Date | null;
   created_at: Date;
   updated_at: Date;
   published_at: Date | null;

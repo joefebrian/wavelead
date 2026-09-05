@@ -24,11 +24,14 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
   const { slug } = await params;
   const c = await channelService.getPublicBySlug(slug);
   if (!c) return { title: 'Channel not found' };
+  const { displayCleanWhatsAppDescription } = await import('@/lib/services/enrichment/whatsappMetadataParser');
+  const cleanedShort = displayCleanWhatsAppDescription(c.short_description) || c.short_description || '';
+  const cleanedFull = displayCleanWhatsAppDescription(c.description) || c.description || '';
   return {
     title: `${c.name} — WhatsApp Channel`,
-    description: c.short_description || c.description || `Discover the ${c.name} channel on WaveLead.`,
+    description: cleanedShort || cleanedFull || `Discover the ${c.name} channel on WaveLead.`,
     alternates: { canonical: `/channel/${c.slug}` },
-    openGraph: { title: c.name, description: c.short_description || c.description || '', type: 'website' },
+    openGraph: { title: c.name, description: cleanedShort || cleanedFull, type: 'website' },
   };
 }
 
@@ -68,10 +71,32 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
   // absolute date, with a qualifier once the evidence ages beyond 30 days.
   const { deriveAudienceFreshness } = await import('@/lib/utils/audienceFreshness');
   const verifiedFreshness = latestVerifiedSnap ? deriveAudienceFreshness(latestVerifiedSnap) : null;
+  // M13 precedence: verified evidence (canonical) > owner-verified
+  // channel.follower_count > WhatsApp public/observed count. We deliberately
+  // avoid labelling the public count as "Verified".
+  const publicFollowersCount = typeof channel.public_followers_count === 'number' && channel.public_followers_count > 0
+    ? channel.public_followers_count
+    : null;
   const followerCountText = latestVerifiedSnap
     ? `${Number(latestVerifiedSnap.followers).toLocaleString()} followers`
-    : (channel.follower_count > 0 ? `${Number(channel.follower_count).toLocaleString()} followers` : 'Followers not verified');
+    : (channel.follower_count > 0
+        ? `${Number(channel.follower_count).toLocaleString()} followers`
+        : (publicFollowersCount
+            ? `${Number(publicFollowersCount).toLocaleString()} followers`
+            : 'Followers not verified'));
   const followers = followerCountText;
+  const followersSubLabel = latestVerifiedSnap
+    ? (verifiedFreshness ? verifiedFreshness.label : null)
+    : (channel.follower_count > 0 ? null : (publicFollowersCount ? 'Public count observed on WhatsApp — not owner verified.' : 'Owner has not submitted follower evidence yet.'));
+  const followersSubTone: 'ok' | 'muted' | 'warn' = latestVerifiedSnap && verifiedFreshness
+    ? (verifiedFreshness.level === 'fresh' ? 'ok' : verifiedFreshness.level === 'aging' ? 'muted' : 'warn')
+    : 'muted';
+  // M13 — display-time cleanup for legacy bios stored before the parser
+  // shipped: safely decode entities and strip only the anchored WhatsApp
+  // wrapper. Idempotent on already-clean bios.
+  const { displayCleanWhatsAppDescription } = await import('@/lib/services/enrichment/whatsappMetadataParser');
+  const cleanedDescription = displayCleanWhatsAppDescription(channel.description) || channel.description;
+  const cleanedShortDescription = displayCleanWhatsAppDescription(channel.short_description) || channel.short_description;
   const isOwner = !!(actor && internal && internal.owner_id === actor.user.id);
   const hasVerifiedOwner = !!internal?.owner_id && channel.is_verified;
 
@@ -112,8 +137,19 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
         <section className="wh-gradient-hero border-b border-border/60">
           <div className="container py-10 md:py-14">
             <div className="flex flex-col md:flex-row md:items-center gap-6">
-              <div className="h-20 w-20 md:h-24 md:w-24 rounded-2xl bg-gradient-to-br from-primary/80 to-primary grid place-items-center text-primary-foreground text-4xl font-extrabold shrink-0" aria-hidden>
-                {(channel.name || 'W').charAt(0).toUpperCase()}
+              <div className="h-20 w-20 md:h-24 md:w-24 rounded-2xl bg-gradient-to-br from-primary/80 to-primary grid place-items-center text-primary-foreground text-4xl font-extrabold shrink-0 overflow-hidden" aria-hidden>
+                {channel.logo_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={channel.logo_url}
+                    alt=""
+                    className="h-full w-full object-cover"
+                    referrerPolicy="no-referrer"
+                    data-testid="channel-avatar-image"
+                  />
+                ) : (
+                  (channel.name || 'W').charAt(0).toUpperCase()
+                )}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -139,7 +175,7 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
                   {category && <span aria-hidden>·</span>}
                   {category && <Link href={`/category/${category.slug}`} className="hover:text-primary">{category.name}</Link>}
                 </div>
-                <p className="mt-3 text-base text-foreground max-w-2xl">{channel.description || channel.short_description}</p>
+                <p className="mt-3 text-base text-foreground max-w-2xl">{cleanedDescription || cleanedShortDescription}</p>
                 <div className="mt-5 flex flex-wrap gap-3">
                   <a href={`/go/${channel.slug}?source=channel_profile`} target="_blank" rel="noopener noreferrer">
                     <Button size="lg" className="gap-2">Follow on WhatsApp <ArrowUpRight className="h-4 w-4" /></Button>
@@ -175,8 +211,8 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
             label="Reach"
             value={followers}
             icon={<Users className="h-4 w-4" />}
-            sub={verifiedFreshness ? verifiedFreshness.label : (latestVerifiedSnap ? null : (channel.follower_count > 0 ? null : 'Owner has not submitted follower evidence yet.'))}
-            subTone={verifiedFreshness ? (verifiedFreshness.level === 'fresh' ? 'ok' : verifiedFreshness.level === 'aging' ? 'muted' : 'warn') : 'muted'}
+            sub={followersSubLabel}
+            subTone={followersSubTone}
             testId="reach-stat"
           />
           <Stat label="Country" value={country ? `${country.flag} ${country.name}` : channel.country_code || '\u2014'} icon={null} />

@@ -6478,3 +6478,94 @@ agent_communication:
       23/23 PASS (no regressions). Covered: owner-can-claim-pending, non-owner-blocked, approved-unchanged, claim-does-not-verify,
       combined approves both, separate audit events, activation from helper, NO PayPal order, NO WaveLead credit, missing-claim
       guard, rollback on ownership failure, Approve-Listing-Only unchanged. Standalone Claims flow preserved.
+
+  - agent: "main"
+    message: |
+      M13 — WHATSAPP PUBLIC METADATA ENRICHMENT FIX (targeted; NOT deployed)
+
+      SCOPE (per operator, ~700-credit budget):
+        1. Profile image (og:image → logo_url → hero/card render)
+        2. OG description cleanup (leading "Channel • X followers • " wrapper)
+        3. Public follower count parser (103 / 1.2K / 103K / 6.8M)
+        4. Public follower count visible on the public frontend
+        5. NOT verified evidence (never creates channel_audience_snapshot,
+           never overwrites owner-verified follower_count)
+
+      FILES CHANGED:
+        + lib/services/enrichment/whatsappMetadataParser.ts (NEW pure module)
+          - decodeHtmlEntities (adds &#x2022; hex numeric support)
+          - parseFollowerCount (103/1.2K/103K/6.8M, case-insensitive)
+          - parseWhatsAppOgDescription (anchored leading wrapper only)
+          - displayCleanWhatsAppDescription (idempotent legacy cleanup)
+        ~ lib/services/enrichment/ogFetcher.ts — decode() now handles hex
+          numeric entities (`&#x2022;`) alongside decimal.
+        ~ lib/services/enrichment/enrichmentService.ts — after OG fetch,
+          strip the wrapper, expose bio as description, add
+          public_followers_count/source/observed_at on EnrichmentResult
+          (cached alongside the existing enrichment cache doc).
+        ~ lib/types.ts — Channel gains optional public_followers_count,
+          public_followers_source, public_followers_observed_at. Verified
+          follower_count / follower_count_source untouched.
+        ~ lib/services/submissionService.ts — on submit, server-side lookup
+          of the enrichment_cache doc (keyed by whatsapp_channel_id) reads
+          the parsed public follower count and persists it. Client input is
+          NOT trusted. follower_count still starts at 0 with
+          source='submitter'. Fail-open on cache miss.
+        ~ app/channel/[slug]/page.tsx — hero avatar renders channel.logo_url
+          when present (fallback to gradient letter). Description passes
+          through displayCleanWhatsAppDescription for legacy bios. Reach
+          Stat precedence: verified snapshot > owner-verified follower_count
+          > WhatsApp public/observed count. Sub-label makes the "not owner
+          verified" nature explicit; badge/label copy avoids "Verified".
+        ~ components/discovery/ChannelCard.tsx — Avatar renders logo_url;
+          card follower text falls back to public_followers_count when the
+          verified count is 0.
+
+      IMAGE HOST STRATEGY:
+        - next.config.js already sets images.unoptimized = true. Both the
+          profile page and the ChannelCard render via plain <img> (with
+          referrerPolicy="no-referrer"), so no new arbitrary remote-image
+          allowlist is required. WhatsApp OG image host today is
+          static.whatsapp.net.
+
+      TESTS (targeted only):
+        + tests/m13_whatsapp_enrichment.test.ts — 23 PASS
+            entity decode (hex + decimal + named); parser: 103, 1.2K, 103K,
+            6.8M, singular/plural, plain integer path; wrapper stripped
+            only when anchored; legitimate bio with mid-string bullets
+            preserved; empty/null safety; idempotent display cleanup;
+            structural check that public_* fields are namespaced separately
+            from follower_count; sanity check: no verified snapshot record
+            has source='whatsapp_public_metadata'.
+        Regression sanity:
+        - tests/m05.test.ts (enrichment API): 13/13 PASS
+        - tests/foundation.test.ts: 13/13 PASS
+        tsc --noEmit: clean.
+
+      NOT DONE (deliberately):
+        - No broad DB migration of existing description strings.
+        - No cron / background refresh.
+        - No frontend testing agent run.
+        - No deployment.
+        - CHANNEL_OWNER_ACTIVATION_REQUIRED unchanged (still false).
+        - Combined Listing + Ownership feature also still undeployed
+          (waiting for a single combined deploy per operator).
+
+      RESULT:
+        PROFILE IMAGE: FIXED
+        OG IMAGE: FOUND (when OG returns a channel-specific image)
+        IMAGE PERSISTED: PASS
+        IMAGE FRONTEND: PASS
+        FOLLOWER PARSER: PASS
+        103K: 103000
+        6.8M: 6800000
+        FOLLOWER SOURCE: whatsapp_public_metadata
+        PUBLIC FOLLOWER FRONTEND: PASS
+        VERIFIED EVIDENCE CREATED: NO
+        VERIFIED FOLLOWER OVERWRITTEN: NO
+        DESCRIPTION ENTITY DECODE: PASS
+        METADATA PREFIX REMOVED: PASS
+        BIO PRESERVED: PASS
+        TARGETED TESTS: 23/23 PASS
+        TSC: PASS
+        DEPLOY: NOT EXECUTED
