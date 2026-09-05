@@ -77,21 +77,27 @@ async function trySendEmail(rec: ContactSubmissionRecord): Promise<{ status: Con
       secure: port === 465,
       auth: user && pass ? { user, pass } : undefined,
     });
-    const subject = `[WaveLead Contact — ${rec.topic}] ${rec.name}`;
+    const subject = `[WaveLead Contact] ${rec.topic} — ${rec.name}`;
     const text = [
-      `New WaveLead contact submission`,
       `Name: ${rec.name}`,
       `Email: ${rec.email}`,
-      rec.company ? `Company: ${rec.company}` : null,
+      `Company / Organization: ${rec.company || '-'}`,
       `Topic: ${rec.topic}`,
-      rec.page_context ? `Referrer: ${rec.page_context}` : null,
       '',
+      `Message:`,
       rec.message,
-    ].filter(Boolean).join('\n');
+      '',
+      `Submitted via: WaveLead Contact Form`,
+    ].join('\n');
     await transporter.sendMail({ from, to: CONTACT_DESTINATION, replyTo: rec.email, subject, text });
     return { status: 'sent' };
   } catch (e) {
-    return { status: 'send_failed', error: (e as Error).message.slice(0, 400) };
+    // Sanitize the stored error: keep only a short symbolic code so we never
+    // persist credentials, connection strings, or verbose stack traces.
+    const err = e as { code?: string; message?: string };
+    const code = typeof err.code === 'string' ? err.code : null;
+    const safeMsg = code || (err.message ? err.message.split('\n')[0].slice(0, 120) : 'send_error');
+    return { status: 'send_failed', error: safeMsg };
   }
 }
 
