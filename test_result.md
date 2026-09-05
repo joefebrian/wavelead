@@ -6366,3 +6366,40 @@ agent_communication:
       STATUS: tsc --noEmit clean; local app healthy. NOT enabling CHANNEL_OWNER_ACTIVATION_REQUIRED.
       Founding Lifetime untouched. Redeploying per operator instruction, then STOP before any $1 payment.
       No automated payment-flow testing run intentionally (live PayPal risk); operator performs the single $1 smoke.
+
+  - agent: "main"
+    message: |
+      M11 — OWNERSHIP CLAIM JOURNEY SURFACING FIX (P2P Labs blocked at ownership)
+
+      SHIPPING-CODE BEHAVIOR (verified, read-only):
+      - submissionService: on submit, channel is created with owner_id = submitter AND
+        verification_status = 'unclaimed' (M03.7 "assigned-but-not-verified" state).
+      - Moderation queue approval flips channel.status -> 'approved' ONLY; it does NOT prove ownership
+        (verification_status stays 'unclaimed'). Correct — moderation != ownership.
+      - Ownership is proven via channel_claims: claimService.submit (owner-verification mode supported for
+        the assigned-but-unverified owner) -> Admin Claims -> claimModerationService.approve sets
+        owner_id = claimant, verification_status = 'verified', activation_status = activationStateForNewlyVerified()
+        which is 'pending' ONLY if CHANNEL_OWNER_ACTIVATION_REQUIRED=true, else 'not_required'. (Currently REQUIRED=false
+        -> 'not_required', which still allows the OPTIONAL $1 CTA because the CTA is gated on ownershipApproved, not activation_status.)
+      - Claim is NOT auto-created on submission; the user must file it.
+
+      MISSING JOURNEY (root cause of "stuck at Ownership Pending"):
+      - Public profile: owner sees "Manage this channel" (isOwner=true), NOT "Claim this channel" (that CTA is only for non-owners).
+      - Dashboard activation card previously showed a DISABLED "Complete Ownership Verification First" — a dead end.
+      - The /claim/[slug] page DOES support owner-verification mode, but nothing linked the owner to it.
+
+      MINIMAL UX FIX (no new ownership system, no payment/activation change, no Mongo mutation, no auto-approve):
+      - ChannelActivationCard now takes channelSlug and renders "Complete Ownership Verification First" as a LINK to
+        /claim/{slug} (existing channel_claim workflow). dashboard/channels/[id]/page.tsx passes channel.slug.
+
+      P2P LABS (production data; not in preview DB — derived from shipping code + operator report):
+      - CHANNEL LISTING: approved
+      - OWNER_ID: PRESENT (submitter; set at submission)
+      - VERIFICATION_STATUS: 'unclaimed'
+      - CLAIM EXISTS: NO
+      - ACTIVATION_STATUS: not active (no activation possible while unverified)
+      - $1 activation correctly BLOCKED.
+
+      Expected after user files claim + admin approves: owner_id preserved, verification_status='verified',
+      activation_status='not_required' (REQUIRED=false), dashboard shows Ownership Approved + "Activate Owner Verification — $1".
+      tsc clean. Redeploying. NO PayPal order. CHANNEL_OWNER_ACTIVATION_REQUIRED stays OFF. Founding Lifetime untouched.

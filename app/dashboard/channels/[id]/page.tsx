@@ -105,6 +105,7 @@ export default async function OwnerChannelPage({ params, searchParams }: { param
         <div className="mt-6 grid gap-6">
           <ChannelActivationCard
             channelId={channel.id}
+            channelSlug={channel.slug}
             returnActivationId={typeof sp.activation === 'string' ? sp.activation : null}
             returnStatus={typeof sp.status === 'string' ? sp.status : null}
           />

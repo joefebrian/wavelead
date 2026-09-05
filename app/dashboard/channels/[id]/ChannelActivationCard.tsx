@@ -12,6 +12,7 @@
 //     payment.status transitions to captured_finalized before flipping the
 //     UI to "Activation Active".
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { CheckCircle2, ShieldCheck, CreditCard, Loader2, AlertTriangle, RotateCw } from 'lucide-react';
 
@@ -82,8 +83,9 @@ function fmtUSD(minor: number | null): string {
   return `$${(minor / 100).toFixed(2)}`;
 }
 
-export default function ChannelActivationCard({ channelId, returnActivationId, returnStatus }: {
+export default function ChannelActivationCard({ channelId, channelSlug, returnActivationId, returnStatus }: {
   channelId: string;
+  channelSlug: string;
   returnActivationId: string | null;
   returnStatus: string | null;
 }) {
@@ -265,14 +267,16 @@ export default function ChannelActivationCard({ channelId, returnActivationId, r
       {!isActive && !ownershipApproved && (
         <div className="mt-4 rounded-md bg-muted/40 border border-border p-4" data-testid="ownership-required-panel">
           <div className="text-sm">
-            Complete ownership verification before activating this channel. Once an admin approves your ownership claim,
-            you&rsquo;ll be able to activate your verified owner profile here.
+            Complete ownership verification before activating this channel. Submit an ownership claim and, once an admin
+            approves it, you&rsquo;ll be able to activate your verified owner profile here.
           </div>
           <div className="mt-3">
-            <Button disabled variant="secondary" className="gap-1.5" data-testid="ownership-pending-cta">
-              <ShieldCheck className="h-4 w-4" />
-              Complete Ownership Verification First
-            </Button>
+            <Link href={`/claim/${channelSlug}`}>
+              <Button className="gap-1.5" data-testid="ownership-pending-cta">
+                <ShieldCheck className="h-4 w-4" />
+                Complete Ownership Verification First
+              </Button>
+            </Link>
           </div>
         </div>
       )}
