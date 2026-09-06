@@ -109,9 +109,9 @@ export default function MarketplaceBookingForm({
             <p className="mt-2 text-xs text-muted-foreground">The owner has 7 days to accept or reject. You&apos;ll be notified either way.</p>
             <div className="mt-4 flex flex-wrap gap-2">
               {isAuthed ? (
-                <Link href="/dashboard/sponsorships"><Button>View My Sponsorships</Button></Link>
+                <Link href="/dashboard/sponsorships"><Button>View Active Sponsorships</Button></Link>
               ) : (
-                <Link href={`/login?next=${encodeURIComponent('/dashboard/sponsorships')}`}><Button>View My Sponsorships</Button></Link>
+                <Link href={`/login?next=${encodeURIComponent('/dashboard/sponsorships')}`}><Button>View Active Sponsorships</Button></Link>
               )}
               <Button variant="outline" onClick={() => router.push('/channels')}>Explore more channels</Button>
             </div>

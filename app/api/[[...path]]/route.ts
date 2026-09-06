@@ -1309,6 +1309,11 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const actor = await resolveActor(request);
       const body = await safeJson(request);
       const lead = await sponsorshipLeadService.create(actor, body);
+      // M16 — best-effort owner notification (never blocks / never rolls back).
+      try {
+        const { sponsorshipNotificationService } = await import('@/lib/services/sponsorshipNotificationService');
+        await sponsorshipNotificationService.notifyOwnerNewRequest(lead);
+      } catch { /* email is best-effort */ }
       return applyCors(ok({ lead: { id: lead.id, status: lead.status, created_at: lead.created_at, channel_slug_snapshot: lead.channel_slug_snapshot, channel_name_snapshot: lead.channel_name_snapshot } }, { status: 201 }), request);
     }
     if (route === '/me/sponsorship-leads' && method === 'GET') {
@@ -1344,6 +1349,24 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       if (!action) return applyCors(fail(400, 'action must be "accept" or "decline"'), request);
       const lead = await sponsorshipLeadService.respondAsOwner(actor!, path[2], action);
       return applyCors(ok({ lead }), request);
+    }
+    // M16 — sponsorship request conversation thread (brand ↔ channel owner).
+    if (path.length === 4 && path[0] === 'me' && path[1] === 'sponsorship-requests' && path[3] === 'messages' && method === 'GET') {
+      const { sponsorshipMessageService } = await import('@/lib/services/sponsorshipMessageService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.USER);
+      const { viewer, messages } = await sponsorshipMessageService.list(actor!, path[2]);
+      return applyCors(ok({ viewer, messages }), request);
+    }
+    if (path.length === 4 && path[0] === 'me' && path[1] === 'sponsorship-requests' && path[3] === 'messages' && method === 'POST') {
+      const rl = rateLimit(clientKey(request, 'sponsor-msg'), 30, 60_000);
+      if (!rl.allowed) return applyCors(fail(429, 'Too many messages. Please slow down.'), request);
+      const { sponsorshipMessageService } = await import('@/lib/services/sponsorshipMessageService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.USER);
+      const body = await safeJson(request);
+      const res = await sponsorshipMessageService.create(actor!, path[2], body);
+      return applyCors(ok({ message: res.message }, { status: 201 }), request);
     }
     if (route === '/admin/sponsorship-leads' && method === 'GET') {
       const { sponsorshipLeadService } = await import('@/lib/services/sponsorshipLeadService');

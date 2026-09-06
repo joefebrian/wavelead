@@ -6633,3 +6633,50 @@ agent_communication:
         - No frontend testing agent run.
         - No deployment.
         - No PayPal / activation / marketplace / brand-pro billing changes.
+
+  - task: "M16 — Sponsorship communication + UX consistency"
+    implemented: true
+    working: true
+    file: "lib/services/sponsorshipMessageService.ts, lib/services/sponsorshipNotificationService.ts, lib/services/mailer.ts, app/dashboard/*"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          M16 (narrow production usability scope, no payment/economics changes):
+          1. NAMING — owner surfaces = "Incoming Requests"; brand = "Sent Requests"
+             (new /dashboard/sent-requests); confirmed bookings = "Active Sponsorships".
+             DB collections untouched.
+          2. CHANNEL VISIBILITY — Monetization tabs are now Rate Card /
+             Incoming Requests (M15 sponsorship_leads for that channel_id via new
+             sponsorshipLeadService.listForChannel) / Active Sponsorships
+             (marketplace orders). Leads and bookings are never merged or duplicated.
+          3. REQUEST → PAYMENT — accepted requests now show
+             "Accepted — awaiting brand payment" (owner) / "Accepted by Channel Owner"
+             (brand). No new PayPal flow. There is NO canonical link between an M15
+             lead and a marketplace booking in the data model →
+             REQUEST → BOOKING LINK: NOT CURRENTLY WIRED (reported, not built).
+          4. CONVERSATION — new append-only collection sponsorship_request_messages
+             (id, lead_id, sender_user_id, sender_side, sender_display_name, message,
+             created_at). Plain text only, no uploads, no websockets.
+             GET/POST /api/me/sponsorship-requests/:id/messages.
+             Brand + target owner read/write; admin read-only oversight; others 403.
+          5. EMAIL — existing SMTP/nodemailer only, via new lib/services/mailer.ts.
+             New request → owner; new message → other participant; accept/decline →
+             brand. Best-effort: failures never roll back the commercial action; no
+             SMTP → 'smtp_not_configured'. Email addresses are never surfaced in UI
+             because of a notification.
+          6. DELIVERY EVIDENCE — broken UploadThing uploader removed from the owner
+             delivery happy path (component file and /api/uploadthing route kept;
+             historical evidence records untouched). Replaced with Published Content
+             URL(s) (required, https) → delivery_urls and optional Google Drive
+             Evidence link → proof_urls. No file bytes stored by WaveLead.
+          7. COPY — "escrow" claims replaced with Payment Protection wording on
+             sponsorship surfaces. 90/10 economics and PayPal untouched.
+          TESTS: tests/m16_sponsorship_comms.test.ts — 19/19 PASS.
+                 M15 suites re-run (3 files, 23/23 PASS). tsc --noEmit clean.
+                 yarn build clean (no Suspense/prerender bailouts).
+          NOT DONE deliberately: no deploy, no broad regression, no frontend testing
+          agent, no PayPal execution, no new payment architecture.

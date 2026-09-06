@@ -7,7 +7,9 @@ import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { sponsorshipLeadService } from '@/lib/services/sponsorshipLeadService';
 import { OBJECTIVE_LABEL, BUDGET_LABEL } from '@/lib/validation/sponsorshipSchemas';
 import { HttpError } from '@/lib/auth/rbac';
+import { sponsorshipMessageRepo } from '@/lib/repositories/sponsorshipMessageRepo';
 import RespondButtons from './RespondButtons';
+import ConversationThread from './ConversationThread';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 
 export const metadata: Metadata = { title: 'Sponsorship Request — WaveLead' };
@@ -31,30 +33,60 @@ export default async function OwnerSponsorshipRequestDetail({ params }: Props) {
   }
 
   const isOwner = viewer === 'owner';
+  const isRequester = viewer === 'requester';
   const canRespond = isOwner && lead.status === 'new';
+  const canPostMessage = isOwner || isRequester;
   const materialsUrl = lead.materials_url && /^https:\/\/(drive|docs)\.google\.com\//.test(lead.materials_url) ? lead.materials_url : null;
+  const messages = await sponsorshipMessageRepo.listByLead(lead.id).catch(() => []);
+  // M16 — canonical naming. Owner side = "Incoming Request".
+  // Brand side = "Sent Request". Confirmed bookings = "Active Sponsorships".
+  const backHref = isRequester ? '/dashboard/sent-requests' : '/dashboard/sponsorship-requests';
+  const backLabel = isRequester ? 'Back to Sent Requests' : 'Back to Incoming Requests';
+  const kicker = isRequester ? 'Sent Request' : isOwner ? 'Incoming Request' : 'Sponsorship Request (admin view)';
+  const statusLabel =
+    lead.status === 'new' ? (isOwner ? 'Awaiting your response' : 'Awaiting owner response')
+      : lead.status === 'accepted_by_owner' ? (isOwner ? 'Accepted — awaiting brand payment' : 'Accepted by Channel Owner')
+      : lead.status === 'declined_by_owner' ? (isOwner ? 'Declined by you' : 'Declined')
+      : lead.status === 'won' ? 'Booked'
+      : lead.status === 'lost' ? 'Closed'
+      : 'In discussion';
 
   return (
     <>
       <Header />
       <main>
         <section className="container py-8">
-          <Link href="/dashboard/sponsorship-requests" className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3.5 w-3.5" /> Back to requests</Link>
+          <Link href={backHref} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3.5 w-3.5" /> {backLabel}</Link>
           <div className="mt-3 flex flex-wrap gap-3 items-start justify-between">
             <div>
-              <div className="text-xs uppercase tracking-wide text-muted-foreground">Sponsorship Request</div>
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">{kicker}</div>
               <h1 className="mt-1 text-2xl md:text-3xl font-bold">{lead.company_name}</h1>
               <div className="mt-1 text-sm text-muted-foreground">
-                To your channel <Link href={`/channel/${lead.channel_slug_snapshot}`} className="text-primary hover:underline">{lead.channel_name_snapshot}</Link> · received {new Date(lead.created_at).toLocaleString()}
+                {isRequester ? 'Sent to ' : 'To your channel '}<Link href={`/channel/${lead.channel_slug_snapshot}`} className="text-primary hover:underline">{lead.channel_name_snapshot}</Link> · {isRequester ? 'sent' : 'received'} {new Date(lead.created_at).toLocaleString()}
               </div>
             </div>
             <span className="inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded bg-sky-100 text-sky-800" data-testid="request-status">
-              {lead.status === 'new' ? 'Awaiting your response' :
-                lead.status === 'accepted_by_owner' ? 'Accepted by you' :
-                lead.status === 'declined_by_owner' ? 'Declined by you' :
-                lead.status}
+              {statusLabel}
             </span>
           </div>
+
+          {lead.status === 'accepted_by_owner' && (
+            <div className="mt-4 rounded-md border border-emerald-300 bg-emerald-50 p-4" data-testid="accepted-next-step">
+              <div className="text-sm font-semibold text-emerald-900">
+                {isOwner ? 'Accepted — awaiting brand payment' : 'Accepted by Channel Owner'}
+              </div>
+              <p className="mt-1 text-xs text-emerald-900/80">
+                {isOwner
+                  ? 'The brand pays through WaveLead. WaveLead coordinates payment through Payment Protection and releases owner earnings after the applicable delivery and acceptance requirements are completed — you receive 90% of the applicable net, WaveLead retains 10%.'
+                  : 'Payment is completed through WaveLead only — never off-platform. WaveLead coordinates payment through Payment Protection and releases owner earnings after the applicable delivery and acceptance requirements are completed.'}
+              </p>
+              <p className="mt-2 text-xs text-emerald-900/70">
+                {isOwner
+                  ? 'Use the conversation below to confirm scope and timing with the brand.'
+                  : <>WaveLead will confirm the booking and payment step with you. Track confirmed bookings under <Link href="/dashboard/sponsorships" className="underline">Active Sponsorships</Link>.</>}
+              </p>
+            </div>
+          )}
 
           <div className="mt-6 grid gap-4 md:grid-cols-3">
             <div className="wh-card p-5 md:col-span-2">
@@ -72,7 +104,7 @@ export default async function OwnerSponsorshipRequestDetail({ params }: Props) {
               )}
 
               <div className="mt-4 pt-4 border-t border-border/60 text-xs text-muted-foreground">
-                WaveLead is the platform of record. If you accept, WaveLead coordinates the booking, escrows the payment, and processes payout — <span className="font-semibold">90% goes to you, 10% to WaveLead</span>. Payment Protection applies.
+                WaveLead is the platform of record. WaveLead coordinates payment through Payment Protection and releases owner earnings after the applicable delivery and acceptance requirements are completed — <span className="font-semibold">the channel owner receives 90% of the applicable net, WaveLead retains 10%</span>. Payments always stay on WaveLead.
               </div>
             </div>
 
@@ -106,6 +138,13 @@ export default async function OwnerSponsorshipRequestDetail({ params }: Props) {
           </div>
 
           {canRespond && <RespondButtons requestId={lead.id} />}
+
+          <ConversationThread
+            leadId={lead.id}
+            viewer={viewer}
+            canPost={canPostMessage}
+            initialMessages={messages}
+          />
         </section>
       </main>
       <Footer />

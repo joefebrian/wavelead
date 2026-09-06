@@ -68,6 +68,9 @@ export const COLLECTIONS = {
   // M14 — Contact form submissions (persisted regardless of email delivery
   //        availability; if mail transport is configured, a copy is sent).
   CONTACT_SUBMISSIONS: 'contact_submissions',
+  // M16 — Append-only brand ↔ channel-owner conversation messages attached to
+  //        a sponsorship request (sponsorship_leads.id). Plain text only.
+  SPONSORSHIP_REQUEST_MESSAGES: 'sponsorship_request_messages',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

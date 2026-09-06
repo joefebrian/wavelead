@@ -1,10 +1,10 @@
 'use client';
 import { useState } from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
-import type { ChannelRateCard, MarketplaceOrder, RateCardPackage, MarketplacePackageType } from '@/lib/types';
-import DeliveryScreenshotUpload, { type DeliveryAttachmentDraft } from './DeliveryScreenshotUpload';
+import type { ChannelRateCard, MarketplaceOrder, RateCardPackage, MarketplacePackageType, SponsorshipLead } from '@/lib/types';
 
 const PKG_TYPES: { value: MarketplacePackageType; label: string }[] = [
   { value: 'sponsored_post', label: 'Sponsored Post' },
@@ -16,15 +16,19 @@ const PKG_TYPES: { value: MarketplacePackageType; label: string }[] = [
 type DraftPackage = Omit<RateCardPackage, 'id' | 'created_at' | 'updated_at'>;
 
 export default function MonetizationClient({
-  channelId, channelName, channelSlug, isVerified, verificationStatus, initialCard, initialOrders,
-}: { channelId: string; channelName: string; channelSlug: string; isVerified: boolean; verificationStatus: string | null; initialCard: ChannelRateCard | null; initialOrders: MarketplaceOrder[] }) {
-  const [tab, setTab] = useState<'ratecard' | 'requests'>('ratecard');
+  channelId, channelName, channelSlug, isVerified, verificationStatus, initialCard, initialOrders, initialLeads = [],
+}: { channelId: string; channelName: string; channelSlug: string; isVerified: boolean; verificationStatus: string | null; initialCard: ChannelRateCard | null; initialOrders: MarketplaceOrder[]; initialLeads?: SponsorshipLead[] }) {
+  // M16 — three canonical surfaces. "Incoming Requests" = M15 sponsorship
+  // leads for this channel. "Active Sponsorships" = marketplace bookings in
+  // the WaveLead payment + delivery workflow. Never merged, never duplicated.
+  const [tab, setTab] = useState<'ratecard' | 'incoming' | 'active'>('ratecard');
   const [packages, setPackages] = useState<DraftPackage[]>(() =>
     (initialCard?.packages || []).map(({ id: _id, created_at: _ca, updated_at: _ua, ...rest }) => { void _id; void _ca; void _ua; return rest; }));
   const [orders, setOrders] = useState<MarketplaceOrder[]>(initialOrders);
+  const leads = initialLeads || [];
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<null | { ok: boolean; text: string }>(null);
-  const [deliveryDraft, setDeliveryDraft] = useState<Record<string, { notes: string; urls: string; attachments: DeliveryAttachmentDraft[] }>>({});
+  const [deliveryDraft, setDeliveryDraft] = useState<Record<string, { notes: string; urls: string; evidenceUrl: string }>>({});
 
   function addPkg() {
     setPackages((p) => [...p, { type: 'sponsored_post', name: '', description: '', price_minor: 25000, currency: 'USD', deliverables: [], estimated_delivery_days: null, is_active: true }]);
@@ -71,24 +75,33 @@ export default function MonetizationClient({
   }
 
   async function submitDelivery(orderId: string) {
-    const draft = deliveryDraft[orderId] || { notes: '', urls: '', attachments: [] };
+    // M16 — URL-based delivery evidence. WaveLead does NOT host evidence file
+    // bytes: owners paste published content URLs and (optionally) a Google
+    // Drive link for screenshots / supporting files.
+    const draft = deliveryDraft[orderId] || { notes: '', urls: '', evidenceUrl: '' };
     const notes = draft.notes?.trim();
-    const urlsRaw = (draft.urls || '').split('\n').map((s) => s.trim()).filter(Boolean);
-    const attachments = draft.attachments || [];
-    if (attachments.length === 0 && urlsRaw.length === 0) {
-      setMsg({ ok: false, text: 'Please upload at least one screenshot or add a delivery URL.' }); return;
+    const urlsRaw = (draft.urls || '').split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+    const evidenceUrl = (draft.evidenceUrl || '').trim();
+    if (urlsRaw.length === 0) {
+      setMsg({ ok: false, text: 'Please add at least one published content URL (https://…).' }); return;
     }
+    const bad = [...urlsRaw, ...(evidenceUrl ? [evidenceUrl] : [])].find((u) => !/^https:\/\/\S+$/i.test(u));
+    if (bad) { setMsg({ ok: false, text: `Links must start with https:// — check: ${bad.slice(0, 60)}` }); return; }
     setBusy(true); setMsg(null);
     try {
       const r = await fetch(`/api/marketplace/orders/${orderId}/submit-delivery`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ notes_to_brand: notes, delivery_urls: urlsRaw, proof_attachments: attachments }),
+        body: JSON.stringify({
+          notes_to_brand: notes,
+          delivery_urls: urlsRaw,
+          proof_urls: evidenceUrl ? [evidenceUrl] : [],
+        }),
       });
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Submission failed');
       setOrders((prev) => prev.map((o) => (o.id === orderId ? j.data.order as MarketplaceOrder : o)));
       setDeliveryDraft((d) => { const n = { ...d }; delete n[orderId]; return n; });
-      setMsg({ ok: true, text: 'Delivery submitted for buyer review. Your earnings are protected by WaveLead until the brand accepts or a WaveLead review completes.' });
+      setMsg({ ok: true, text: 'Delivery submitted for brand review. WaveLead coordinates payment through Payment Protection and releases owner earnings after the applicable delivery and acceptance requirements are completed.' });
     } catch (e) { setMsg({ ok: false, text: (e as Error).message }); }
     finally { setBusy(false); }
   }
@@ -134,15 +147,16 @@ export default function MonetizationClient({
 
   return (
     <div className="mt-6" data-testid="owner-monetization">
-      <div className="flex gap-2 border-b border-border pb-3">
-        <button className={tabClass(tab === 'ratecard')} onClick={() => setTab('ratecard')}>Rate Card</button>
-        <button className={tabClass(tab === 'requests')} onClick={() => setTab('requests')}>Sponsorship Requests ({orders.length})</button>
+      <div className="flex gap-2 border-b border-border pb-3 flex-wrap">
+        <button className={tabClass(tab === 'ratecard')} onClick={() => setTab('ratecard')} data-testid="tab-rate-card">Rate Card</button>
+        <button className={tabClass(tab === 'incoming')} onClick={() => setTab('incoming')} data-testid="tab-incoming-requests">Incoming Requests ({leads.length})</button>
+        <button className={tabClass(tab === 'active')} onClick={() => setTab('active')} data-testid="tab-active-sponsorships">Active Sponsorships ({orders.length})</button>
       </div>
 
       {tab === 'ratecard' && (
         <div className="mt-4 space-y-4">
           <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">Buyers pay WaveLead; you receive 90% of net (after gateway fee).</p>
+            <p className="text-sm text-muted-foreground">Brands pay WaveLead; you receive 90% of the applicable net (after gateway fee), WaveLead retains 10%.</p>
             <Button size="sm" onClick={addPkg}><Plus className="h-4 w-4 mr-1" />Add package</Button>
           </div>
           <div className="space-y-3">
@@ -176,9 +190,33 @@ export default function MonetizationClient({
         </div>
       )}
 
-      {tab === 'requests' && (
-        <div className="mt-4 space-y-3">
-          {orders.length === 0 && <div className="text-sm text-muted-foreground py-6 text-center">No sponsorship requests yet.</div>}
+      {tab === 'incoming' && (
+        <div className="mt-4 space-y-3" data-testid="channel-incoming-requests">
+          <p className="text-sm text-muted-foreground">
+            Sponsorship requests brands sent to this channel. These appear here immediately — before any payment or booking exists. Accept, decline or message the brand from the request page.
+          </p>
+          {leads.length === 0 && <div className="text-sm text-muted-foreground py-6 text-center" data-testid="channel-incoming-empty">No incoming requests for this channel yet.</div>}
+          {leads.map((l) => (
+            <Link key={l.id} href={`/dashboard/sponsorship-requests/${l.id}`} className="wh-card p-4 block hover:border-primary/50" data-testid={`channel-incoming-request-${l.id}`}>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="min-w-0">
+                  <div className="font-medium">{l.company_name}</div>
+                  <div className="text-xs text-muted-foreground">Received {new Date(l.created_at).toLocaleString()}</div>
+                </div>
+                <Badge className={leadStatusStyle(l.status)}>{leadStatusLabel(l.status)}</Badge>
+              </div>
+              <div className="mt-2 text-sm text-muted-foreground line-clamp-3">{l.brief}</div>
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {tab === 'active' && (
+        <div className="mt-4 space-y-3" data-testid="channel-active-sponsorships">
+          <p className="text-sm text-muted-foreground">
+            Confirmed sponsorship bookings in the WaveLead payment and delivery workflow. WaveLead coordinates payment through Payment Protection and releases owner earnings after the applicable delivery and acceptance requirements are completed — you receive 90% of the applicable net, WaveLead retains 10%.
+          </p>
+          {orders.length === 0 && <div className="text-sm text-muted-foreground py-6 text-center" data-testid="channel-active-empty">No active sponsorships for this channel yet.</div>}
           {orders.map((o) => (
             <div key={o.id} className="wh-card p-4">
               <div className="flex items-center justify-between flex-wrap gap-2">
@@ -230,28 +268,28 @@ export default function MonetizationClient({
                     {o.status === 'revision_requested' ? 'Submit Revised Delivery' : 'Submit Delivery'}
                   </div>
                   <div>
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-1">Evidence Screenshots <span className="text-rose-600">*</span></div>
-                    <div className="text-xs text-muted-foreground mb-2">Upload screenshots that prove the sponsored content was published (JPEG/PNG/WebP).</div>
-                    <DeliveryScreenshotUpload
-                      orderId={o.id}
-                      attachments={deliveryDraft[o.id]?.attachments || []}
-                      onChange={(atts) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: d[o.id]?.notes || '', urls: d[o.id]?.urls || '', attachments: atts } }))}
-                      disabled={busy}
-                    />
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-1">Published Content URL(s) <span className="text-rose-600">*</span></div>
+                    <div className="text-xs text-muted-foreground mb-2">Paste the public https:// link(s) where the sponsored content was published — WhatsApp Channel content, social post, or other public campaign result. One per line.</div>
+                    <textarea rows={3} placeholder={'https://whatsapp.com/channel/...\nhttps://...'} className={inputCls}
+                      data-testid={`published-content-urls-${o.id}`}
+                      value={deliveryDraft[o.id]?.urls || ''}
+                      onChange={(e) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: d[o.id]?.notes || '', urls: e.target.value, evidenceUrl: d[o.id]?.evidenceUrl || '' } }))} />
                   </div>
                   <div>
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-1">Post / Campaign URL <span className="text-muted-foreground/70">(optional)</span></div>
-                    <input placeholder="https://…  (one per line)" className={inputCls}
-                      value={deliveryDraft[o.id]?.urls || ''}
-                      onChange={(e) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: d[o.id]?.notes || '', urls: e.target.value, attachments: d[o.id]?.attachments || [] } }))} />
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-1">Evidence / Supporting Materials Link <span className="text-muted-foreground/70">(optional)</span></div>
+                    <div className="text-xs text-muted-foreground mb-2">Need to share screenshots or supporting files? Upload them to Google Drive and paste a shareable link here.</div>
+                    <input placeholder="https://drive.google.com/…" className={inputCls}
+                      data-testid={`evidence-url-${o.id}`}
+                      value={deliveryDraft[o.id]?.evidenceUrl || ''}
+                      onChange={(e) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: d[o.id]?.notes || '', urls: d[o.id]?.urls || '', evidenceUrl: e.target.value } }))} />
                   </div>
                   <div>
                     <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-1">Notes to brand <span className="text-muted-foreground/70">(optional)</span></div>
                     <textarea rows={3} placeholder="Anything the brand should know — when it ran, results if any." className={inputCls}
                       value={deliveryDraft[o.id]?.notes || ''}
-                      onChange={(e) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: e.target.value, urls: d[o.id]?.urls || '', attachments: d[o.id]?.attachments || [] } }))} />
+                      onChange={(e) => setDeliveryDraft((d) => ({ ...d, [o.id]: { notes: e.target.value, urls: d[o.id]?.urls || '', evidenceUrl: d[o.id]?.evidenceUrl || '' } }))} />
                   </div>
-                  <Button size="sm" onClick={() => submitDelivery(o.id)} disabled={busy || ((deliveryDraft[o.id]?.attachments?.length || 0) === 0 && !(deliveryDraft[o.id]?.urls || '').trim())}>
+                  <Button size="sm" onClick={() => submitDelivery(o.id)} disabled={busy || !(deliveryDraft[o.id]?.urls || '').trim()} data-testid={`submit-delivery-${o.id}`}>
                     {o.status === 'revision_requested' ? 'Submit Revision' : 'Submit delivery for review'}
                   </Button>
                 </div>
@@ -346,8 +384,25 @@ function isReviewOverdue(o: MarketplaceOrder): boolean {
   return (Date.now() - startedMs) >= REVIEW_SLA_HOURS_CLIENT * 3600 * 1000;
 }
 
-function statusStyle(s: string): string {
-  if (s === 'paid' || s === 'completed') return 'bg-emerald-100 text-emerald-800';
+// M16 — incoming request (M15 sponsorship lead) presentation helpers.
+function leadStatusLabel(s: SponsorshipLead['status']): string {
+  if (s === 'new') return 'Awaiting your response';
+  if (s === 'accepted_by_owner') return 'Accepted — awaiting brand payment';
+  if (s === 'declined_by_owner') return 'Declined';
+  if (s === 'won') return 'Booked';
+  if (s === 'lost') return 'Closed';
+  return 'In discussion';
+}
+
+function leadStatusStyle(s: SponsorshipLead['status']): string {
+  if (s === 'new') return 'bg-sky-100 text-sky-800';
+  if (s === 'accepted_by_owner' || s === 'won') return 'bg-emerald-100 text-emerald-800';
+  if (s === 'declined_by_owner') return 'bg-rose-100 text-rose-800';
+  if (s === 'lost') return 'bg-slate-200 text-slate-700';
+  return 'bg-amber-100 text-amber-800';
+}
+
+function statusStyle(s: string): string {  if (s === 'paid' || s === 'completed') return 'bg-emerald-100 text-emerald-800';
   if (s === 'awaiting_payment') return 'bg-amber-100 text-amber-800';
   if (s === 'owner_accepted') return 'bg-sky-100 text-sky-800';
   if (s === 'in_progress') return 'bg-indigo-100 text-indigo-800';

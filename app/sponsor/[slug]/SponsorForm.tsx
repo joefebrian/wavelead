@@ -76,7 +76,7 @@ export default function SponsorForm({ channelSlug, channelName, presetTargetCoun
           <CheckCircle2 className="h-6 w-6 text-emerald-600 mt-0.5" />
           <div>
             <h2 className="text-lg font-semibold">Request received</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Sent to <span className="font-medium text-foreground">{channelName}</span> — <span className="font-semibold">Awaiting Owner Response</span>. WaveLead handles the booking, escrow and payout when the owner accepts (Payment Protection applies). Reference: <span className="font-mono text-xs">{done.id.slice(0, 8)}</span>.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Sent to <span className="font-medium text-foreground">{channelName}</span> — <span className="font-semibold">Awaiting Owner Response</span>. If the owner accepts, WaveLead coordinates the booking and payment through Payment Protection and releases owner earnings after the applicable delivery and acceptance requirements are completed. Reference: <span className="font-mono text-xs">{done.id.slice(0, 8)}</span>.</p>
             <div className="mt-4 flex gap-2">
               <Button variant="outline" onClick={() => router.push('/channels')}>Explore more channels</Button>
               <Button onClick={() => { setDone(null); setForm((f) => ({ ...f, company_name: '', brief: '' })); }}>Submit another</Button>
@@ -140,7 +140,7 @@ export default function SponsorForm({ channelSlug, channelName, presetTargetCoun
       {error && <div className="text-sm text-rose-600">{error}</div>}
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={submitting} className="min-w-44">{submitting ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Submitting…</> : 'Send sponsorship request'}</Button>
-        <span className="text-xs text-muted-foreground">We won&apos;t charge you today. The channel owner will see this request immediately and can Accept or Decline. WaveLead handles booking, escrow and payout only after the owner accepts.</span>
+        <span className="text-xs text-muted-foreground">We won&apos;t charge you today. The channel owner will see this request immediately and can Accept or Decline. Payment always stays on WaveLead — WaveLead coordinates payment through Payment Protection and releases owner earnings after the applicable delivery and acceptance requirements are completed.</span>
       </div>
     </form>
   );

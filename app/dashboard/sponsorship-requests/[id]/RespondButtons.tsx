@@ -33,7 +33,7 @@ export default function RespondButtons({ requestId }: Props) {
     <div className="mt-6 wh-card p-5" data-testid="respond-panel">
       <div className="text-sm font-semibold">Respond to this request</div>
       <p className="mt-1 text-xs text-muted-foreground">
-        Accepting confirms interest. WaveLead will then coordinate the booking, escrow the payment, and manage delivery. You keep 90% of the applicable net; WaveLead retains 10%. You&apos;re not committed to a fixed price until the booking is confirmed.
+        Accepting confirms interest. WaveLead then coordinates the booking and payment. WaveLead coordinates payment through Payment Protection and releases owner earnings after the applicable delivery and acceptance requirements are completed. You keep 90% of the applicable net; WaveLead retains 10%. You&apos;re not committed to a fixed price until the booking is confirmed.
       </p>
       {error && (
         <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive flex items-start gap-2">

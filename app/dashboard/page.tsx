@@ -120,9 +120,9 @@ export default async function DashboardPage() {
                 <div className="mt-3 text-xs text-muted-foreground">Track claim submissions & moderator requests.</div>
               </Link>
               <Link href="/dashboard/sponsorship-requests" className="wh-card p-5 hover:border-primary/40 transition" data-testid="owner-card-sponsorship-requests">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> Sponsorship requests</div>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> Incoming Requests</div>
                 <div className="mt-2 text-3xl font-bold" data-testid="owner-sponsorship-request-count">{ownerRequests.length}</div>
-                <div className="mt-3 text-xs text-muted-foreground">Brands who&apos;ve reached out to your channels. Open to Accept or Decline.</div>
+                <div className="mt-3 text-xs text-muted-foreground">Brands who&apos;ve reached out to your channels. Open to Accept, Decline, or message the brand.</div>
               </Link>
               <Link href="/submit" className="wh-card p-5 hover:border-primary/40 transition" data-testid="owner-card-submit">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><Send className="h-4 w-4" /> Submit a channel</div>
@@ -139,33 +139,35 @@ export default async function DashboardPage() {
                 <div className="mt-3 text-xs text-muted-foreground">Browse WhatsApp Channels and their sponsorship packages.</div>
               </Link>
               <Link href="/dashboard/sponsorships" className="wh-card p-5 hover:border-primary/40 transition" data-testid="brand-card-sponsorships">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> My Sponsorships</div>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> Active Sponsorships</div>
                 <div className="mt-2 text-3xl font-bold">→</div>
-                <div className="mt-3 text-xs text-muted-foreground">Track your sponsorship bookings and deliveries.</div>
+                <div className="mt-3 text-xs text-muted-foreground">Confirmed sponsorship bookings in the WaveLead payment and delivery workflow.</div>
               </Link>
               <Link href="/dashboard/billing" className="wh-card p-5 hover:border-primary/40 transition" data-testid="brand-card-billing">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><Wallet className="h-4 w-4" /> Billing & Payments</div>
                 <div className="mt-2 text-3xl font-bold">→</div>
                 <div className="mt-3 text-xs text-muted-foreground">Payment history, receipts, and refunds.</div>
               </Link>
-              {myLeads.length > 0 && (
-                <Link href="/dashboard/sponsorships" className="wh-card p-5 hover:border-primary/40 transition" data-testid="brand-card-my-leads">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> My sponsorship requests</div>
-                  <div className="mt-2 text-3xl font-bold">{myLeads.length}</div>
+              <Link href="/dashboard/sent-requests" className="wh-card p-5 hover:border-primary/40 transition" data-testid="brand-card-my-leads">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> Sent Requests</div>
+                <div className="mt-2 text-3xl font-bold" data-testid="brand-sent-request-count">{myLeads.length}</div>
+                {myLeads.length === 0 ? (
+                  <div className="mt-3 text-xs text-muted-foreground">Sponsorship requests you send to channel owners appear here.</div>
+                ) : (
                   <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
                     {myLeads.slice(0, 3).map((l) => (
                       <li key={l.id}>
                         <span className="font-medium text-foreground">{l.channel_name_snapshot}</span> · <span className="uppercase tracking-wide">
                           {l.status === 'new' ? 'Awaiting owner response' :
-                            l.status === 'accepted_by_owner' ? 'Accepted' :
+                            l.status === 'accepted_by_owner' ? 'Accepted by channel owner' :
                             l.status === 'declined_by_owner' ? 'Declined' :
                             l.status}
                         </span>
                       </li>
                     ))}
                   </ul>
-                </Link>
-              )}
+                )}
+              </Link>
             </>
           );
 
@@ -211,7 +213,9 @@ export default async function DashboardPage() {
         <div className="mt-8 flex flex-wrap gap-2">
           <Link href="/dashboard/channels"><Button variant="outline">My channels</Button></Link>
           <Link href="/dashboard/promotions"><Button variant="outline">Campaigns</Button></Link>
-          <Link href="/dashboard/sponsorships"><Button variant="outline">My Sponsorships</Button></Link>
+          <Link href="/dashboard/sponsorships"><Button variant="outline">Active Sponsorships</Button></Link>
+          <Link href="/dashboard/sponsorship-requests"><Button variant="outline">Incoming Requests</Button></Link>
+          <Link href="/dashboard/sent-requests"><Button variant="outline">Sent Requests</Button></Link>
           <Link href="/dashboard/sponsorships/pipeline" data-testid="nav-pipeline-button">
             <Button variant="outline" className="gap-1.5">
               <Kanban className="h-4 w-4" />

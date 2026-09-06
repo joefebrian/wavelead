@@ -779,6 +779,24 @@ export interface SponsorshipLead {
 }
 
 // ============================================================
+// M16 — Sponsorship request conversation thread (append-only)
+// ============================================================
+// Minimal, plain-text, non-realtime message model keyed to a sponsorship
+// request (sponsorship_leads.id). No attachments — the request's
+// materials_url (Google Drive) remains the file mechanism.
+export interface SponsorshipRequestMessage {
+  id: string;
+  lead_id: string;
+  sender_user_id: string;
+  /** Which commercial side authored the message. */
+  sender_side: 'brand' | 'owner';
+  /** Safe display label — never an email address. */
+  sender_display_name: string;
+  message: string;
+  created_at: Date;
+}
+
+// ============================================================
 // M07-security — Integration credential vault (PayPal + future providers)
 // ============================================================
 export type IntegrationProvider = 'paypal';

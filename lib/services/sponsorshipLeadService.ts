@@ -73,7 +73,21 @@ export const sponsorshipLeadService = {
     };
     return sponsorshipLeadRepo.insert(lead);
   },
-
+  /**
+   * M16 — same as create(), plus a best-effort email notification to the
+   * target channel owner. The persisted request is ALWAYS the source of
+   * truth: a mail transport failure never rolls back the request.
+   */
+  async createAndNotify(actor: Actor | null, input: unknown): Promise<{ lead: SponsorshipLead; email_status: string }> {
+    const lead = await this.create(actor, input);
+    let email_status = 'skipped';
+    try {
+      const { sponsorshipNotificationService } = await import('./sponsorshipNotificationService');
+      const r = await sponsorshipNotificationService.notifyOwnerNewRequest(lead);
+      email_status = r.status;
+    } catch { email_status = 'send_failed'; }
+    return { lead, email_status };
+  },
   /** Own leads (for the requester_user_id owner of an authenticated submission). */
   async listMine(actor: Actor): Promise<SponsorshipLead[]> {
     return sponsorshipLeadRepo.list({ requester_user_id: actor.user.id });
@@ -85,6 +99,23 @@ export const sponsorshipLeadService = {
     const ids = owned.map((c) => c.id);
     if (ids.length === 0) return [];
     return sponsorshipLeadRepo.list({ channel_id: { $in: ids } }, { limit: 200 });
+  },
+
+  /**
+   * M16 — incoming sponsorship requests for ONE specific channel. Used by the
+   * channel Monetization → "Incoming Requests" tab. These are M15
+   * sponsorship_leads and are intentionally kept separate from marketplace
+   * bookings ("Active Sponsorships") — the two are never merged into one
+   * ambiguous list. Only the channel owner (or an admin) may read.
+   */
+  async listForChannel(actor: Actor, channelId: string): Promise<SponsorshipLead[]> {
+    const channel = await channelRepo.findById(channelId);
+    if (!channel) throw new HttpError(404, 'Channel not found');
+    const isAdmin = hasAtLeastRole(actor.user, ROLES.MODERATOR);
+    if (!isAdmin && channel.owner_id !== actor.user.id) {
+      throw new HttpError(403, 'Only the channel owner can view incoming requests for this channel');
+    }
+    return sponsorshipLeadRepo.list({ channel_id: channelId }, { limit: 200 });
   },
 
   /** Admin listing with optional filters. */
@@ -151,6 +182,12 @@ export const sponsorshipLeadService = {
     const nextStatus: SponsorshipLeadStatus = action === 'accept' ? 'accepted_by_owner' : 'declined_by_owner';
     const updated = await sponsorshipLeadRepo.setOwnerResponse(id, nextStatus, new Date());
     if (!updated) throw new HttpError(500, 'Failed to update request');
+    // M16 — best-effort brand notification. The state transition above is
+    // already committed; email delivery must never roll it back.
+    try {
+      const { sponsorshipNotificationService } = await import('./sponsorshipNotificationService');
+      await sponsorshipNotificationService.notifyRequesterOwnerResponse(updated, action);
+    } catch { /* email is best-effort only */ }
     return updated;
   },
 
