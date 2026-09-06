@@ -136,8 +136,17 @@ export const sponsorshipLeadService = {
     if (!lead) throw new HttpError(404, 'Sponsorship request not found');
     const channel = await channelRepo.findById(lead.channel_id);
     if (!channel || channel.owner_id !== actor.user.id) throw new HttpError(403, 'Only the target channel owner can respond to this request');
-    if (lead.status === 'accepted_by_owner' || lead.status === 'declined_by_owner') {
-      throw new HttpError(409, `Request already ${lead.status.replace('_by_owner', '')} by the owner`);
+    // M15 patch — historical terminal states must remain terminal. The owner
+    // may only Accept/Decline when the request is still logically pending an
+    // owner response. Legacy CRM outcomes `won` / `lost`, and the M15 owner
+    // terminals `accepted_by_owner` / `declined_by_owner`, are read-only.
+    const ACTIONABLE: SponsorshipLeadStatus[] = ['new', 'contacted', 'qualified'];
+    if (!ACTIONABLE.includes(lead.status)) {
+      if (lead.status === 'accepted_by_owner' || lead.status === 'declined_by_owner') {
+        throw new HttpError(409, `Request already ${lead.status.replace('_by_owner', '')} by the owner`);
+      }
+      // Legacy terminal (won/lost) — preserve historical state, no rewrite.
+      throw new HttpError(409, `Request is closed (${lead.status}) and can no longer be actioned by the owner`);
     }
     const nextStatus: SponsorshipLeadStatus = action === 'accept' ? 'accepted_by_owner' : 'declined_by_owner';
     const updated = await sponsorshipLeadRepo.setOwnerResponse(id, nextStatus, new Date());
