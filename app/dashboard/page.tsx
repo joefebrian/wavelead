@@ -22,11 +22,13 @@ export default async function DashboardPage() {
   const isBusiness = actor.user.role === 'business';
   const isSuperAdmin = actor.user.role === 'super_admin';
 
-  const [channels, claims, myLeads, personaState] = await Promise.all([
+  const [channels, claims, myLeads, ownerRequests, personaState] = await Promise.all([
     ownerService.listMine(actor),
     claimService.listMine(actor),
     // Cheap requester_user_id filter — safe for any authenticated persona.
     sponsorshipLeadService.listMine(actor).catch(() => []),
+    // M15 — sponsorship requests received on channels this user owns.
+    sponsorshipLeadService.listForOwnedChannels(actor).catch(() => []),
     personaService.getState(actor),
   ]);
   const activeClaims = claims.filter((c) => c.status === 'pending' || c.status === 'needs_information').length;
@@ -117,6 +119,11 @@ export default async function DashboardPage() {
                 <div className="mt-2 text-3xl font-bold">{activeClaims}</div>
                 <div className="mt-3 text-xs text-muted-foreground">Track claim submissions & moderator requests.</div>
               </Link>
+              <Link href="/dashboard/sponsorship-requests" className="wh-card p-5 hover:border-primary/40 transition" data-testid="owner-card-sponsorship-requests">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> Sponsorship requests</div>
+                <div className="mt-2 text-3xl font-bold" data-testid="owner-sponsorship-request-count">{ownerRequests.length}</div>
+                <div className="mt-3 text-xs text-muted-foreground">Brands who&apos;ve reached out to your channels. Open to Accept or Decline.</div>
+              </Link>
               <Link href="/submit" className="wh-card p-5 hover:border-primary/40 transition" data-testid="owner-card-submit">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><Send className="h-4 w-4" /> Submit a channel</div>
                 <div className="mt-2 text-3xl font-bold">+</div>
@@ -142,15 +149,22 @@ export default async function DashboardPage() {
                 <div className="mt-3 text-xs text-muted-foreground">Payment history, receipts, and refunds.</div>
               </Link>
               {myLeads.length > 0 && (
-                <div className="wh-card p-5" data-testid="brand-card-my-leads">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> Sponsorship requests</div>
+                <Link href="/dashboard/sponsorships" className="wh-card p-5 hover:border-primary/40 transition" data-testid="brand-card-my-leads">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground"><Handshake className="h-4 w-4" /> My sponsorship requests</div>
                   <div className="mt-2 text-3xl font-bold">{myLeads.length}</div>
                   <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
                     {myLeads.slice(0, 3).map((l) => (
-                      <li key={l.id}><span className="font-medium text-foreground">{l.channel_name_snapshot}</span> · <span className="uppercase tracking-wide">{l.status}</span></li>
+                      <li key={l.id}>
+                        <span className="font-medium text-foreground">{l.channel_name_snapshot}</span> · <span className="uppercase tracking-wide">
+                          {l.status === 'new' ? 'Awaiting owner response' :
+                            l.status === 'accepted_by_owner' ? 'Accepted' :
+                            l.status === 'declined_by_owner' ? 'Declined' :
+                            l.status}
+                        </span>
+                      </li>
                     ))}
                   </ul>
-                </div>
+                </Link>
               )}
             </>
           );

@@ -38,4 +38,9 @@ export const channelRepo = {
     const c = await coll();
     await c.updateOne({ id }, { $set: { ...patch, updated_at: new Date() } });
   },
+  // M15 — leads addressed to channels this user owns.
+  async listByOwner(ownerId: string): Promise<Channel[]> {
+    const c = await coll();
+    return stripIds(await c.find({ owner_id: ownerId }).toArray()) as Channel[];
+  },
 };

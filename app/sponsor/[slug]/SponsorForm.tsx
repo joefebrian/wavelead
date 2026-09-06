@@ -35,7 +35,7 @@ export default function SponsorForm({ channelSlug, channelName, presetTargetCoun
   const [form, setForm] = useState({
     company_name: '', contact_name: initialContactName, work_email: initialWorkEmail,
     objective: 'brand_awareness', budget_range: '1000_2500',
-    target_country: presetTargetCountry || '', desired_start_at: '', brief: '',
+    target_country: presetTargetCountry || '', desired_start_at: '', brief: '', materials_url: '',
   });
 
   function update<K extends keyof typeof form>(key: K, val: (typeof form)[K]) { setForm((f) => ({ ...f, [key]: val })); }
@@ -56,6 +56,7 @@ export default function SponsorForm({ channelSlug, channelName, presetTargetCoun
       };
       if (form.target_country.trim()) body.target_country = form.target_country.trim().toUpperCase();
       if (form.desired_start_at) body.desired_start_at = new Date(form.desired_start_at + 'T00:00:00Z').toISOString();
+      if (form.materials_url.trim()) body.materials_url = form.materials_url.trim();
       const res = await fetch('/api/sponsorship-leads', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify(body),
@@ -75,7 +76,7 @@ export default function SponsorForm({ channelSlug, channelName, presetTargetCoun
           <CheckCircle2 className="h-6 w-6 text-emerald-600 mt-0.5" />
           <div>
             <h2 className="text-lg font-semibold">Request received</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Thanks! We&apos;ll reach out shortly to coordinate a sponsorship with <span className="font-medium text-foreground">{channelName}</span>. Reference: <span className="font-mono text-xs">{done.id.slice(0, 8)}</span>.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Sent to <span className="font-medium text-foreground">{channelName}</span> — <span className="font-semibold">Awaiting Owner Response</span>. WaveLead handles the booking, escrow and payout when the owner accepts (Payment Protection applies). Reference: <span className="font-mono text-xs">{done.id.slice(0, 8)}</span>.</p>
             <div className="mt-4 flex gap-2">
               <Button variant="outline" onClick={() => router.push('/channels')}>Explore more channels</Button>
               <Button onClick={() => { setDone(null); setForm((f) => ({ ...f, company_name: '', brief: '' })); }}>Submit another</Button>
@@ -120,12 +121,26 @@ export default function SponsorForm({ channelSlug, channelName, presetTargetCoun
         </Field>
       </div>
       <Field label="Campaign brief" required>
-        <textarea required minLength={10} maxLength={4000} rows={5} value={form.brief} onChange={(e) => update('brief', e.target.value)} className={inputCls} placeholder="Tell us about your product, audience, and what a great partnership would look like." />
+        <textarea required minLength={10} maxLength={4000} rows={5} value={form.brief} onChange={(e) => update('brief', e.target.value)} className={inputCls} placeholder="Describe the campaign, deliverables and key requirements. If you need to share creative assets or supporting files, upload them to Google Drive and include a shareable link." />
+      </Field>
+      <Field label="Materials / Attachment link (optional)">
+        <input
+          type="url"
+          value={form.materials_url}
+          onChange={(e) => update('materials_url', e.target.value)}
+          className={inputCls}
+          placeholder="https://drive.google.com/..."
+          pattern="^https://(drive|docs)\.google\.com/.+"
+          data-testid="materials-url-input"
+        />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Need to share files? Upload them to Google Drive and paste a shareable link here. Please make sure the recipient has permission to view the files.
+        </p>
       </Field>
       {error && <div className="text-sm text-rose-600">{error}</div>}
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={submitting} className="min-w-44">{submitting ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Submitting…</> : 'Send sponsorship request'}</Button>
-        <span className="text-xs text-muted-foreground">We won&apos;t charge you today. WaveLead will contact you to coordinate.</span>
+        <span className="text-xs text-muted-foreground">We won&apos;t charge you today. The channel owner will see this request immediately and can Accept or Decline. WaveLead handles booking, escrow and payout only after the owner accepts.</span>
       </div>
     </form>
   );

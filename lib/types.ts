@@ -748,7 +748,7 @@ export interface PaymentRefund {
 // ============================================================
 // M07-Lite — Sponsorship Leads (sales-assisted commercial funnel)
 // ============================================================
-export type SponsorshipLeadStatus = 'new' | 'contacted' | 'qualified' | 'won' | 'lost';
+export type SponsorshipLeadStatus = 'new' | 'contacted' | 'qualified' | 'won' | 'lost' | 'accepted_by_owner' | 'declined_by_owner';
 export type SponsorshipObjective = 'brand_awareness' | 'traffic' | 'product_launch' | 'promotion' | 'other';
 export type SponsorshipBudgetRange = 'under_500' | '500_1000' | '1000_2500' | '2500_5000' | '5000_plus';
 
@@ -767,8 +767,13 @@ export interface SponsorshipLead {
   target_country: string | null;
   desired_start_at: Date | null;
   brief: string;
+  // M15 — optional Google Drive / Google Docs shareable link where the brand
+  // parks creative assets, briefs, decks, etc. WaveLead never hosts the
+  // bytes; only the URL is stored.
+  materials_url: string | null;
   status: SponsorshipLeadStatus;
   admin_notes: string | null;
+  owner_responded_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }

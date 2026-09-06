@@ -2,7 +2,7 @@
 // M11-Batch5 — Admin-configurable pricing. All dollar amounts come from
 // the server-side pricingConfigService. No hardcoded prices in this file.
 import { useState, useEffect, FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Check, Loader2, CheckCircle2, AlertTriangle, Sparkles, Info } from 'lucide-react';
@@ -124,6 +124,12 @@ const ENTERPRISE_INTERESTS = [
 
 export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // M15 — restore-intent after auth. When the sign-up return brought the
+  // user back with `?intent=founding-lifetime`, highlight the card and
+  // show a small confirmation banner. We NEVER auto-open PayPal — the user
+  // must explicitly click the purchase CTA again.
+  const intentIsFoundingLifetime = (searchParams?.get('intent') || '') === 'founding-lifetime';
   const [me, setMe] = useState<PublicUser | null>(null);
   const [meLoaded, setMeLoaded] = useState(false);
   const [waitlistOpen, setWaitlistOpen] = useState(false);
@@ -196,7 +202,10 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
     if (lifetimeBusy) return;
     setLifetimeBusy(true); setLifetimeErr(null);
     try {
-      if (!me) { router.push('/signup?next=/pricing'); return; }
+      // M15 — preserve intent through auth so users land back on the
+      // Founding Lifetime section and can explicitly click purchase again.
+      // No automatic PayPal order is created on return.
+      if (!me) { router.push('/signup?next=' + encodeURIComponent('/pricing?intent=founding-lifetime#founding-lifetime')); return; }
       const r = await fetch('/api/brand/founding-lifetime/checkout', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -228,12 +237,19 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
         <span className="text-xs text-muted-foreground">Campaign intelligence, sponsorship operations, and channel discovery.</span>
       </div>
 
+      {intentIsFoundingLifetime && me && lifetimeCheckoutLive && !lifetimeAlreadyActive && (
+        <div className="mt-6 rounded-md border border-emerald-300 bg-emerald-50 text-emerald-900 px-4 py-3 text-sm" data-testid="lifetime-intent-banner">
+          You&apos;re signed in. Continue with Founding Lifetime below — <span className="font-semibold">tap the &ldquo;Get Founding Lifetime — {lifetimeDisplay}&rdquo; button</span> when you&apos;re ready.
+        </div>
+      )}
+
       <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4" data-testid="pricing-grid">
         {tiers.filter((t) => t.enabled).map((tier) => (
           <div
             key={tier.kind}
+            id={tier.kind === 'brand_founding_lifetime' ? 'founding-lifetime' : undefined}
             data-testid={`pricing-card-${tier.kind}`}
-            className={`wh-card p-6 flex flex-col ${tier.highlight ? 'ring-2 ring-primary/60' : ''}`}
+            className={`wh-card p-6 flex flex-col ${tier.highlight ? 'ring-2 ring-primary/60' : ''} ${tier.kind === 'brand_founding_lifetime' && intentIsFoundingLifetime && me ? 'ring-2 ring-emerald-400' : ''}`}
           >
             <div className="flex items-center justify-between">
               <div className="text-lg font-semibold">{tier.name}</div>
@@ -343,12 +359,23 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
             <p className="mt-1 text-xs text-muted-foreground">Receive sponsorships, deliver campaigns, request external payout. 90% owner / 10% WaveLead on every sponsorship.</p>
           </div>
           <div className="rounded-md border border-border p-4" data-testid="owner-tile-activation">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Verified Owner Activation</div>
-              <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-muted text-muted-foreground" data-testid="activation-rollout-pill">Rollout Coming Soon</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300" data-testid="activation-rollout-pill">Available Now</span>
             </div>
             <div className="mt-1 text-lg font-bold" data-testid="owner-activation-display-price">{ownerActivationPrice} per channel</div>
-            <p className="mt-1 text-xs text-muted-foreground">One-time activation transaction — not a subscription. Ownership must be approved first; payment alone never proves ownership.</p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              One-time activation after ownership approval. The <span className="font-semibold">{ownerActivationPrice} activation</span> helps deter impersonation, spam and scam attempts while adding an additional accountability step for verified channel owners.
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Payment alone never proves ownership — <span className="font-semibold">WaveLead reviews ownership first</span>. Not a subscription.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <Link href={me ? '/dashboard' : '/login?next=%2Fsubmit'} className="rounded-md border border-input bg-background hover:bg-muted px-3 py-1.5 font-medium" data-testid="owner-activation-cta">
+                {me ? 'Go to Owner Dashboard' : 'Submit your channel'}
+              </Link>
+              <Link href="/faq#activation" className="text-muted-foreground hover:text-foreground px-1 py-1.5">Why {ownerActivationPrice}?</Link>
+            </div>
           </div>
         </div>
         <div className="mt-4 rounded-md border border-border p-4" data-testid="owner-tile-promote">

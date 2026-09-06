@@ -23,7 +23,7 @@ const FORCE_CHANGE_WHITELIST = new Set([
   '/auth/me', '/auth/logout', '/auth/login', '/auth/signup',
   '/me/password', '/health',
 ]);
-const FORCE_CHANGE_GATED_PREFIXES = ['/admin', '/owner', '/me', '/submit', '/dashboard', '/sponsorship-leads', '/dev'];
+const FORCE_CHANGE_GATED_PREFIXES = ['/admin', '/owner', '/me', '/submit', '/dashboard', '/sponsorship-leads', '/sponsorship-requests', '/dev'];
 async function passwordChangeGate(request: NextRequest, route: string): Promise<NextResponse | null> {
   if (FORCE_CHANGE_WHITELIST.has(route)) return null;
   const gated = FORCE_CHANGE_GATED_PREFIXES.some((p) => route === p || route.startsWith(`${p}/`));
@@ -1317,6 +1317,33 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       requireRole(actor, ROLES.USER);
       const items = await sponsorshipLeadService.listMine(actor!);
       return applyCors(ok({ items }), request);
+    }
+    // M15 — sponsorship requests received by channels this user owns.
+    if (route === '/me/sponsorship-requests' && method === 'GET') {
+      const { sponsorshipLeadService } = await import('@/lib/services/sponsorshipLeadService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.USER);
+      const items = await sponsorshipLeadService.listForOwnedChannels(actor!);
+      return applyCors(ok({ items }), request);
+    }
+    // M15 — unified detail (target channel owner OR requester OR admin).
+    if (path.length === 3 && path[0] === 'me' && path[1] === 'sponsorship-requests' && method === 'GET') {
+      const { sponsorshipLeadService } = await import('@/lib/services/sponsorshipLeadService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.USER);
+      const { lead, viewer } = await sponsorshipLeadService.getForViewer(actor!, path[2]);
+      return applyCors(ok({ lead, viewer }), request);
+    }
+    // M15 — target channel owner accepts / declines a sponsorship request.
+    if (path.length === 4 && path[0] === 'me' && path[1] === 'sponsorship-requests' && path[3] === 'respond' && method === 'POST') {
+      const { sponsorshipLeadService } = await import('@/lib/services/sponsorshipLeadService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.USER);
+      const body = await safeJson(request) as { action?: string } | null;
+      const action = body?.action === 'accept' ? 'accept' : body?.action === 'decline' ? 'decline' : null;
+      if (!action) return applyCors(fail(400, 'action must be "accept" or "decline"'), request);
+      const lead = await sponsorshipLeadService.respondAsOwner(actor!, path[2], action);
+      return applyCors(ok({ lead }), request);
     }
     if (route === '/admin/sponsorship-leads' && method === 'GET') {
       const { sponsorshipLeadService } = await import('@/lib/services/sponsorshipLeadService');

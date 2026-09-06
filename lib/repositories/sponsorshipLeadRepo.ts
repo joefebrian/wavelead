@@ -30,6 +30,13 @@ export const sponsorshipLeadRepo = {
     await c.updateOne({ id }, { $set: set });
     return this.findById(id);
   },
+  // M15 — dedicated setter for owner responses (Accept/Decline). Stamps
+  // owner_responded_at as an audit signal separate from admin edits.
+  async setOwnerResponse(id: string, status: SponsorshipLeadStatus, respondedAt: Date): Promise<SponsorshipLead | null> {
+    const c = await getCollection<SponsorshipLead>(COLLECTIONS.SPONSORSHIP_LEADS);
+    await c.updateOne({ id }, { $set: { status, owner_responded_at: respondedAt, updated_at: new Date() } });
+    return this.findById(id);
+  },
   async recentByEmailCount(email: string, sinceMs: number): Promise<number> {
     const c = await getCollection<SponsorshipLead>(COLLECTIONS.SPONSORSHIP_LEADS);
     return c.countDocuments({ work_email: email.toLowerCase(), created_at: { $gte: new Date(Date.now() - sinceMs) } });
@@ -37,7 +44,7 @@ export const sponsorshipLeadRepo = {
   async statusCounts(): Promise<Record<SponsorshipLeadStatus, number>> {
     const c = await getCollection<SponsorshipLead>(COLLECTIONS.SPONSORSHIP_LEADS);
     const rows = await c.aggregate<{ _id: SponsorshipLeadStatus; n: number }>([{ $group: { _id: '$status', n: { $sum: 1 } } }]).toArray();
-    const out: Record<SponsorshipLeadStatus, number> = { new: 0, contacted: 0, qualified: 0, won: 0, lost: 0 };
+    const out: Record<SponsorshipLeadStatus, number> = { new: 0, contacted: 0, qualified: 0, won: 0, lost: 0, accepted_by_owner: 0, declined_by_owner: 0 };
     for (const r of rows) if (r._id in out) out[r._id] = r.n;
     return out;
   },

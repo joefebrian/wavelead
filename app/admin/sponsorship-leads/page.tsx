@@ -19,6 +19,8 @@ const STATUS_BADGE: Record<SponsorshipLeadStatus, string> = {
   qualified: 'bg-primary/10 text-primary',
   won: 'bg-emerald-100 text-emerald-800',
   lost: 'bg-slate-100 text-slate-700',
+  accepted_by_owner: 'bg-emerald-100 text-emerald-800',
+  declined_by_owner: 'bg-rose-100 text-rose-800',
 };
 
 export default async function AdminSponsorshipLeadsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {

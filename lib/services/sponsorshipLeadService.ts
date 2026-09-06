@@ -1,13 +1,14 @@
 // M07-Lite Sponsorship Leads service.
 //
-// Sales-assisted commercial funnel:
-//   Brand → Discover Channel → Sponsor this Channel → SponsorshipLead
-//     → WaveLead Admin sales pipeline → manual close.
-//
-// This service does NOT touch payments, ledger, or campaign funding.
-// Leads are purely commercial intent records.
+// M15 update — direct brand ↔ channel-owner workflow:
+//   • Owner of the target channel can view + Accept/Decline a lead directly.
+//   • No admin approval step is required before the owner can see or act.
+//   • Admin retains view/patch capability for oversight and abuse handling.
+//   • WaveLead remains the platform of record; commercial/payment workflow
+//     (Marketplace) is unchanged.
 import { v4 as uuidv4 } from 'uuid';
 import { channelService } from './channelService';
+import { channelRepo } from '../repositories/channelRepo';
 import { sponsorshipLeadRepo } from '../repositories/sponsorshipLeadRepo';
 import { sponsorshipLeadCreateSchema, sponsorshipLeadPatchSchema } from '../validation/sponsorshipSchemas';
 import { HttpError, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
@@ -15,6 +16,14 @@ import type { Actor, SponsorshipLead, SponsorshipLeadStatus } from '@/lib/types'
 
 const DUP_WINDOW_MS = 60 * 60 * 1000; // 1h — max 5 leads per email
 const DUP_MAX = 5;
+
+async function assertCanView(actor: Actor, lead: SponsorshipLead): Promise<'owner' | 'requester' | 'admin'> {
+  if (hasAtLeastRole(actor.user, ROLES.MODERATOR)) return 'admin';
+  if (lead.requester_user_id && lead.requester_user_id === actor.user.id) return 'requester';
+  const channel = await channelRepo.findById(lead.channel_id);
+  if (channel && channel.owner_id && channel.owner_id === actor.user.id) return 'owner';
+  throw new HttpError(403, 'Not authorized to view this sponsorship request');
+}
 
 export const sponsorshipLeadService = {
   /**
@@ -52,8 +61,13 @@ export const sponsorshipLeadService = {
       target_country: data.target_country,
       desired_start_at: data.desired_start_at ? new Date(data.desired_start_at) : null,
       brief: data.brief,
+      materials_url: data.materials_url ?? null,
+      // M15 — no admin approval gate. Request is immediately visible to the
+      // target channel owner. Status remains 'new' which the brand-facing UI
+      // now labels "Awaiting Owner Response".
       status: 'new',
       admin_notes: null,
+      owner_responded_at: null,
       created_at: now,
       updated_at: now,
     };
@@ -63,6 +77,14 @@ export const sponsorshipLeadService = {
   /** Own leads (for the requester_user_id owner of an authenticated submission). */
   async listMine(actor: Actor): Promise<SponsorshipLead[]> {
     return sponsorshipLeadRepo.list({ requester_user_id: actor.user.id });
+  },
+
+  /** M15 — leads addressed to channels this user owns (target owner view). */
+  async listForOwnedChannels(actor: Actor): Promise<SponsorshipLead[]> {
+    const owned = await channelRepo.listByOwner(actor.user.id);
+    const ids = owned.map((c) => c.id);
+    if (ids.length === 0) return [];
+    return sponsorshipLeadRepo.list({ channel_id: { $in: ids } }, { limit: 200 });
   },
 
   /** Admin listing with optional filters. */
@@ -83,15 +105,47 @@ export const sponsorshipLeadService = {
     return lead;
   },
 
-  /** Owner (requester) detail — cross-user privacy enforced. */
+  /**
+   * M15 — unified detail authorization used by both brand (requester) and
+   * target channel owner. Admins are also authorized. Any other user →
+   * HttpError(403). Replaces the previous requester-only `getMine`.
+   */
+  async getForViewer(actor: Actor, id: string): Promise<{ lead: SponsorshipLead; viewer: 'owner' | 'requester' | 'admin' }> {
+    const lead = await sponsorshipLeadRepo.findById(id);
+    if (!lead) throw new HttpError(404, 'Sponsorship request not found');
+    const viewer = await assertCanView(actor, lead);
+    return { lead, viewer };
+  },
+
+  /** Back-compat shim — requester-only path preserved for old callers. */
   async getMine(actor: Actor, id: string): Promise<SponsorshipLead> {
     const lead = await sponsorshipLeadRepo.findById(id);
-    if (!lead) throw new HttpError(404, 'Sponsorship lead not found');
+    if (!lead) throw new HttpError(404, 'Sponsorship request not found');
     if (lead.requester_user_id !== actor.user.id) throw new HttpError(403, 'Not your sponsorship request');
     return lead;
   },
 
-  /** Admin status/notes update. */
+  /**
+   * M15 — owner responds to a sponsorship request (Accept / Decline). Only
+   * the target channel owner may call. WaveLead remains the system of record
+   * — this only records the response; commercial/booking/payment lifecycle
+   * (Marketplace) is untouched.
+   */
+  async respondAsOwner(actor: Actor, id: string, action: 'accept' | 'decline'): Promise<SponsorshipLead> {
+    const lead = await sponsorshipLeadRepo.findById(id);
+    if (!lead) throw new HttpError(404, 'Sponsorship request not found');
+    const channel = await channelRepo.findById(lead.channel_id);
+    if (!channel || channel.owner_id !== actor.user.id) throw new HttpError(403, 'Only the target channel owner can respond to this request');
+    if (lead.status === 'accepted_by_owner' || lead.status === 'declined_by_owner') {
+      throw new HttpError(409, `Request already ${lead.status.replace('_by_owner', '')} by the owner`);
+    }
+    const nextStatus: SponsorshipLeadStatus = action === 'accept' ? 'accepted_by_owner' : 'declined_by_owner';
+    const updated = await sponsorshipLeadRepo.setOwnerResponse(id, nextStatus, new Date());
+    if (!updated) throw new HttpError(500, 'Failed to update request');
+    return updated;
+  },
+
+  /** Admin status/notes update. Retained for oversight / abuse handling. */
   async patch(actor: Actor, id: string, input: unknown): Promise<SponsorshipLead> {
     if (!hasAtLeastRole(actor.user, ROLES.MODERATOR)) throw new HttpError(403, 'Admin privileges required');
     const parsed = sponsorshipLeadPatchSchema.safeParse(input);
