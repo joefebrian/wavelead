@@ -120,7 +120,7 @@ export const sponsorshipNotificationService = {
           ? [
               `${lead.channel_name_snapshot} accepted your sponsorship request.`,
               '',
-              'Next step: WaveLead coordinates the booking and payment. You will complete payment through WaveLead — never off-platform.',
+              'Next step: open the request on WaveLead and use "Continue to Booking" to choose the sponsorship package and complete payment. Payment always stays on WaveLead — never off-platform.',
               '',
               `View request: ${requestUrl(lead.id)}`,
               FOOTER,

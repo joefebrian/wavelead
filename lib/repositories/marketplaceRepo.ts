@@ -76,6 +76,24 @@ export const marketplaceOrderRepo = {
     const c = await getCollection<MarketplaceOrder>(COLLECTIONS.MARKETPLACE_ORDERS);
     return stripId(await c.findOne({ payment_method: payment_method as MarketplaceOrder['payment_method'], payment_reference_normalized })) as MarketplaceOrder | null;
   },
+  /**
+   * M16.1 — resolve the canonical booking created from a sponsorship request.
+   * "Active" = anything not terminated (owner_rejected / cancelled), so a
+   * repeated "Continue to Booking" resumes instead of duplicating.
+   */
+  async findActiveBySourceLead(source_sponsorship_lead_id: string): Promise<MarketplaceOrder | null> {
+    const c = await getCollection<MarketplaceOrder>(COLLECTIONS.MARKETPLACE_ORDERS);
+    const row = await c.find({
+      source_sponsorship_lead_id,
+      status: { $nin: ['owner_rejected', 'cancelled'] as unknown as MarketplaceOrderStatus[] },
+    }).sort({ created_at: -1 }).limit(1).toArray();
+    return row.length ? (stripId(row[0]) as MarketplaceOrder) : null;
+  },
+  /** M16.1 — every booking ever created from a sponsorship request. */
+  async listBySourceLead(source_sponsorship_lead_id: string): Promise<MarketplaceOrder[]> {
+    const c = await getCollection<MarketplaceOrder>(COLLECTIONS.MARKETPLACE_ORDERS);
+    return stripIds(await c.find({ source_sponsorship_lead_id }).sort({ created_at: -1 }).limit(50).toArray()) as MarketplaceOrder[];
+  },
 };
 
 export const marketplaceFinancialEventRepo = {

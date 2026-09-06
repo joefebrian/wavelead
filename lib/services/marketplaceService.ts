@@ -87,6 +87,10 @@ export const brandBookingSchema = z.object({
   target_end_date: z.string().datetime().optional().nullable(),
   product_url: z.string().trim().url().max(500).optional().nullable(),
   notes: z.string().trim().max(2_000).optional().nullable(),
+  // M16.1 — optional origin reference: the accepted sponsorship request the
+  // brand is continuing from. The server validates ownership + acceptance;
+  // the client can never use this to influence price, seller or commission.
+  source_sponsorship_lead_id: z.string().trim().min(1).max(64).optional().nullable(),
 });
 
 export const ownerRejectSchema = z.object({
@@ -492,11 +496,34 @@ export const marketplaceService = {
       throw new HttpError(400, 'custom_quote packages must use the sales-assisted sponsorship-lead flow, not marketplace booking');
     }
 
+    // ── M16.1 — optional continuation from an ACCEPTED sponsorship request ──
+    // The lead is the origin record only. It never sets price, seller or
+    // commission (all still derived from the rate-card package above).
+    let sourceLeadId: string | null = null;
+    if (d.source_sponsorship_lead_id) {
+      const { sponsorshipLeadRepo } = await import('../repositories/sponsorshipLeadRepo');
+      const lead = await sponsorshipLeadRepo.findById(d.source_sponsorship_lead_id);
+      if (!lead) throw new HttpError(404, 'Sponsorship request not found');
+      if (!lead.requester_user_id || lead.requester_user_id !== actor.user.id) {
+        throw new HttpError(403, 'Only the brand that sent this sponsorship request can continue to booking');
+      }
+      if (lead.channel_id !== channel.id) throw new HttpError(400, 'This sponsorship request belongs to a different channel');
+      if (lead.status !== 'accepted_by_owner') {
+        throw new HttpError(409, 'This sponsorship request has not been accepted by the channel owner');
+      }
+      // Duplicate protection — repeated continuation must resume the existing
+      // booking instead of creating a second active order for the same request.
+      const existing = await marketplaceOrderRepo.findActiveBySourceLead(lead.id);
+      if (existing) return existing;
+      sourceLeadId = lead.id;
+    }
+
     const now = new Date();
     const order: MarketplaceOrder = {
       id: uuidv4(),
       status: 'requested',
       economics_status: 'pre_acceptance',
+      source_sponsorship_lead_id: sourceLeadId,
       buyer_user_id: actor.user.id,   // server-derived; never trusted from payload
       brief: {
         company_name: d.company_name,

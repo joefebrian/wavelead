@@ -24,6 +24,14 @@ interface Props {
   initialContactName: string;
   initialWorkEmail: string;
   isAuthed: boolean;
+  // M16.1 — continuation from an ACCEPTED sponsorship request. Carries the
+  // origin reference + safe prefill only. Price/seller/commission are always
+  // server-derived from package_id.
+  sourceLeadId?: string | null;
+  initialCompanyName?: string;
+  initialObjective?: string;
+  initialBrief?: string;
+  initialNotes?: string;
 }
 
 /**
@@ -33,21 +41,22 @@ interface Props {
  */
 export default function MarketplaceBookingForm({
   channelId, channelName, channelSlug, pkg, initialContactName, initialWorkEmail, isAuthed,
+  sourceLeadId = null, initialCompanyName = '', initialObjective = '', initialBrief = '', initialNotes = '',
 }: Props) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState<{ id: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
-    company_name: '',
+    company_name: initialCompanyName,
     contact_name: initialContactName,
     contact_email: initialWorkEmail,
-    campaign_objective: '',
-    brief: '',
+    campaign_objective: initialObjective,
+    brief: initialBrief,
     target_start_date: '',
     target_end_date: '',
     product_url: '',
-    notes: '',
+    notes: initialNotes,
   });
 
   function update<K extends keyof typeof form>(key: K, val: (typeof form)[K]) {
@@ -74,6 +83,9 @@ export default function MarketplaceBookingForm({
       if (form.target_end_date) body.target_end_date = new Date(form.target_end_date + 'T00:00:00Z').toISOString();
       if (form.product_url.trim()) body.product_url = form.product_url.trim();
       if (form.notes.trim()) body.notes = form.notes.trim();
+      // M16.1 — origin reference only. Repeated submits resolve to the same
+      // existing booking server-side (no duplicate active order).
+      if (sourceLeadId) body.source_sponsorship_lead_id = sourceLeadId;
 
       const res = await fetch('/api/marketplace/orders', {
         method: 'POST',
@@ -92,7 +104,7 @@ export default function MarketplaceBookingForm({
   }
 
   const priceUsd = `$${(pkg.price_minor / 100).toFixed(2)}`;
-  const nextForAuth = `/sponsor/${channelSlug}?package=${encodeURIComponent(pkg.id)}`;
+  const nextForAuth = `/sponsor/${channelSlug}?package=${encodeURIComponent(pkg.id)}${sourceLeadId ? `&lead=${encodeURIComponent(sourceLeadId)}` : ''}`;
 
   if (done) {
     return (
@@ -147,6 +159,14 @@ export default function MarketplaceBookingForm({
         </div>
       ) : (
       <form onSubmit={onSubmit} className="wh-card p-5 md:p-6 space-y-5">
+        {sourceLeadId && (
+          <div className="rounded-md border border-emerald-300 bg-emerald-50 p-3" data-testid="continuing-from-request">
+            <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Continuing from your accepted request</div>
+            <p className="mt-0.5 text-xs text-emerald-900/80">
+              Your brief carried over. Confirm the details and book — WaveLead coordinates payment through Payment Protection and releases owner earnings after the applicable delivery and acceptance requirements are completed.
+            </p>
+          </div>
+        )}
         <div>
           <h2 className="text-lg font-semibold">Sponsor {channelName}</h2>
           <p className="mt-1 text-xs text-muted-foreground">

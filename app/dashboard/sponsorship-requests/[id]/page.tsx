@@ -10,7 +10,11 @@ import { HttpError } from '@/lib/auth/rbac';
 import { sponsorshipMessageRepo } from '@/lib/repositories/sponsorshipMessageRepo';
 import RespondButtons from './RespondButtons';
 import ConversationThread from './ConversationThread';
-import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { ArrowLeft, ArrowRight, ExternalLink } from 'lucide-react';
+
+// M16.1 — existing marketplace statuses only. No new payment states.
+const ORDER_PAID_STATUSES = ['paid', 'in_progress', 'revision_requested', 'submitted_for_review', 'completed'];
 
 export const metadata: Metadata = { title: 'Sponsorship Request — WaveLead' };
 export const dynamic = 'force-dynamic';
@@ -23,9 +27,10 @@ export default async function OwnerSponsorshipRequestDetail({ params }: Props) {
   if (!actor) redirect(`/login?next=/dashboard/sponsorship-requests/${id}`);
   let lead;
   let viewer;
+  let linkedOrder = null;
   try {
-    const r = await sponsorshipLeadService.getForViewer(actor, id);
-    lead = r.lead; viewer = r.viewer;
+    const r = await sponsorshipLeadService.getBookingLink(actor, id);
+    lead = r.lead; viewer = r.viewer; linkedOrder = r.order;
   } catch (e) {
     if (e instanceof HttpError && e.status === 404) return notFound();
     if (e instanceof HttpError && e.status === 403) redirect('/dashboard');
@@ -73,18 +78,51 @@ export default async function OwnerSponsorshipRequestDetail({ params }: Props) {
           {lead.status === 'accepted_by_owner' && (
             <div className="mt-4 rounded-md border border-emerald-300 bg-emerald-50 p-4" data-testid="accepted-next-step">
               <div className="text-sm font-semibold text-emerald-900">
-                {isOwner ? 'Accepted — awaiting brand payment' : 'Accepted by Channel Owner'}
+                {isOwner
+                  ? (linkedOrder
+                      ? (ORDER_PAID_STATUSES.includes(linkedOrder.status) ? 'Booked — sponsorship is active' : 'Accepted — awaiting brand payment')
+                      : 'Accepted — awaiting brand booking/payment')
+                  : 'Accepted by Channel Owner'}
               </div>
               <p className="mt-1 text-xs text-emerald-900/80">
                 {isOwner
-                  ? 'The brand pays through WaveLead. WaveLead coordinates payment through Payment Protection and releases owner earnings after the applicable delivery and acceptance requirements are completed — you receive 90% of the applicable net, WaveLead retains 10%.'
-                  : 'Payment is completed through WaveLead only — never off-platform. WaveLead coordinates payment through Payment Protection and releases owner earnings after the applicable delivery and acceptance requirements are completed.'}
+                  ? 'The brand books and pays through WaveLead. WaveLead coordinates payment through Payment Protection and releases owner earnings after the applicable delivery and acceptance requirements are completed — you receive 90% of the applicable net, WaveLead retains 10%. Delivery stays in your existing sponsorship workflow.'
+                  : 'Continue on WaveLead to complete the booking and payment — never off-platform. WaveLead coordinates payment through Payment Protection and releases owner earnings after the applicable delivery and acceptance requirements are completed.'}
               </p>
-              <p className="mt-2 text-xs text-emerald-900/70">
-                {isOwner
-                  ? 'Use the conversation below to confirm scope and timing with the brand.'
-                  : <>WaveLead will confirm the booking and payment step with you. Track confirmed bookings under <Link href="/dashboard/sponsorships" className="underline">Active Sponsorships</Link>.</>}
-              </p>
+              {isRequester && (
+                <div className="mt-3">
+                  {!linkedOrder ? (
+                    <Link href={`/sponsor/${lead.channel_slug_snapshot}?lead=${encodeURIComponent(lead.id)}`} data-testid="continue-to-booking-cta">
+                      <Button size="sm" className="gap-1.5">Continue to Booking <ArrowRight className="h-4 w-4" /></Button>
+                    </Link>
+                  ) : (
+                    <Link href="/dashboard/sponsorships" data-testid="continue-booking-cta">
+                      <Button size="sm" className="gap-1.5">
+                        {linkedOrder.status === 'completed'
+                          ? 'View Sponsorship'
+                          : ORDER_PAID_STATUSES.includes(linkedOrder.status)
+                            ? 'View Active Sponsorship'
+                            : linkedOrder.status === 'requested'
+                              ? 'View Booking'
+                              : 'Continue Payment'}
+                        <ArrowRight className="h-4 w-4" />
+                      </Button>
+                    </Link>
+                  )}
+                  <p className="mt-2 text-xs text-emerald-900/70">
+                    {linkedOrder
+                      ? 'You already have a booking for this request — this opens the existing booking. No duplicate order is created.'
+                      : 'You choose the sponsorship package on the next step. No payment is taken until you confirm.'}
+                  </p>
+                </div>
+              )}
+              {isOwner && (
+                <p className="mt-2 text-xs text-emerald-900/70">
+                  {linkedOrder
+                    ? <>The brand has started the booking. Manage delivery under <Link href={`/dashboard/channels/${lead.channel_id}/monetization`} className="underline">Active Sponsorships</Link>.</>
+                    : 'Use the conversation below to confirm scope and timing with the brand.'}
+                </p>
+              )}
             </div>
           )}
 

@@ -191,8 +191,41 @@ export const sponsorshipLeadService = {
     return updated;
   },
 
-  /** Admin status/notes update. Retained for oversight / abuse handling. */
-  async patch(actor: Actor, id: string, input: unknown): Promise<SponsorshipLead> {
+  /**
+   * M16.1 — resolve the canonical marketplace booking (if any) that this
+   * sponsorship request was continued into. Read-only projection over the
+   * EXISTING marketplace order model — no second booking/payment domain.
+   */
+  async getBookingLink(actor: Actor, id: string): Promise<{
+    lead: SponsorshipLead;
+    viewer: 'owner' | 'requester' | 'admin';
+    order: import('@/lib/types').MarketplaceOrder | null;
+  }> {
+    const { lead, viewer } = await this.getForViewer(actor, id);
+    const { marketplaceOrderRepo } = await import('../repositories/marketplaceRepo');
+    const order = await marketplaceOrderRepo.findActiveBySourceLead(lead.id).catch(() => null);
+    return { lead, viewer, order };
+  },
+
+  /**
+   * M16.1 — gate for "Continue to Booking". Only the requesting brand may
+   * continue, only once the owner has accepted, and only into the SAME
+   * channel. Never creates or mutates any payment object.
+   */
+  async getForBookingContinuation(actor: Actor, id: string, channelId: string): Promise<SponsorshipLead> {
+    const lead = await sponsorshipLeadRepo.findById(id);
+    if (!lead) throw new HttpError(404, 'Sponsorship request not found');
+    if (!lead.requester_user_id || lead.requester_user_id !== actor.user.id) {
+      throw new HttpError(403, 'Only the brand that sent this sponsorship request can continue to booking');
+    }
+    if (lead.channel_id !== channelId) throw new HttpError(400, 'This sponsorship request belongs to a different channel');
+    if (lead.status !== 'accepted_by_owner') {
+      throw new HttpError(409, 'This sponsorship request has not been accepted by the channel owner');
+    }
+    return lead;
+  },
+
+  /** Admin status/notes update. Retained for oversight / abuse handling. */  async patch(actor: Actor, id: string, input: unknown): Promise<SponsorshipLead> {
     if (!hasAtLeastRole(actor.user, ROLES.MODERATOR)) throw new HttpError(403, 'Admin privileges required');
     const parsed = sponsorshipLeadPatchSchema.safeParse(input);
     if (!parsed.success) throw new HttpError(400, `Invalid patch: ${parsed.error.issues[0]?.message || 'invalid'}`);

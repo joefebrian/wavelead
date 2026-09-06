@@ -987,6 +987,12 @@ export interface MarketplaceOrder {
   status: MarketplaceOrderStatus;
   economics_status: OrderEconomicsStatus;
 
+  // M16.1 — optional back-reference to the M15/M16 sponsorship request
+  // (sponsorship_leads.id) this booking originated from. Present ONLY when
+  // the brand explicitly continued from an accepted request. The lead is
+  // never duplicated — this is the single canonical association.
+  source_sponsorship_lead_id?: string | null;
+
   // Buyer side
   buyer_user_id: string | null;      // authenticated brand user (if any)
   brief: MarketplaceOrderBrief;

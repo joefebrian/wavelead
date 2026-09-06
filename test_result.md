@@ -6680,3 +6680,44 @@ agent_communication:
                  yarn build clean (no Suspense/prerender bailouts).
           NOT DONE deliberately: no deploy, no broad regression, no frontend testing
           agent, no PayPal execution, no new payment architecture.
+
+  - task: "M16.1 — Accepted request → existing marketplace booking/payment loop"
+    implemented: true
+    working: true
+    file: "lib/services/marketplaceService.ts, lib/repositories/marketplaceRepo.ts, lib/services/sponsorshipLeadService.ts, app/sponsor/[slug]/*, app/dashboard/sponsorship-requests/[id]/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Closes the M16 P0 gap (REQUEST → BOOKING LINK: NOT WIRED) by REUSING the
+          existing marketplace domain only. No new payment domain, no new PayPal flow.
+          • Canonical link: optional MarketplaceOrder.source_sponsorship_lead_id
+            (single field on the existing order record; lead never duplicated).
+            New repo helpers findActiveBySourceLead / listBySourceLead.
+          • marketplaceService.submitBooking now accepts optional
+            source_sponsorship_lead_id: validates lead exists, requester == buyer,
+            same channel, status == accepted_by_owner; returns the EXISTING active
+            order when one already exists (duplicate-click protection). Price,
+            seller and commission remain 100% server-derived from package_id.
+          • Brand CTA on accepted request: "Continue to Booking" →
+            /sponsor/{slug}?lead={leadId} which shows the EXISTING package
+            selection step (no price inferred from budget range or conversation),
+            prefilled with company/contact/objective/brief/materials link only.
+            Once a booking exists the CTA resumes it: View Booking /
+            Continue Payment / View Active Sponsorship / View Sponsorship
+            (existing marketplace statuses only).
+          • Owner: "Accepted — awaiting brand booking/payment", then links to the
+            existing Active Sponsorships surface. No second delivery workflow.
+          • Owner acceptance of a REQUEST creates zero orders and zero payment
+            objects — the brand must explicitly continue.
+          • M16 conversation + email notifications preserved; messages cannot
+            mutate price/state/commission.
+          TESTS: tests/m16_1_request_booking_link.test.ts — 6/6 PASS
+                 Re-ran m16_sponsorship_comms (19), m15_direct_sponsorship_flow (13),
+                 m08b1_marketplace + m08b2_delivery_payout → 110/110 PASS total.
+                 tsc --noEmit clean; yarn build clean.
+          NOT DONE deliberately: no deploy, no broad regression, no frontend agent,
+          no PayPal execution, no commission/Payment-Protection change.
