@@ -296,11 +296,11 @@ export default function ChannelActivationCard({ channelId, channelSlug, ownershi
       {!isActive && !ownershipApproved && !ownershipUnderReview && (
         <div className="mt-4 rounded-md bg-muted/40 border border-border p-4" data-testid="ownership-required-panel">
           <div className="text-sm">
-            Complete ownership verification before activating this channel. Submit an ownership claim and, once an admin
-            approves it, you&rsquo;ll be able to activate your verified owner profile here.
+            Complete ownership verification before activating this channel. Choose Fast Verification ($1, no second manual
+            review) or free Manual Verification with ownership evidence.
           </div>
           <div className="mt-3">
-            <Link href={`/claim/${channelSlug}`}>
+            <Link href={`/dashboard/channels/${channelId}/verify`}>
               <Button className="gap-1.5" data-testid="ownership-pending-cta">
                 <ShieldCheck className="h-4 w-4" />
                 Complete Ownership Verification First

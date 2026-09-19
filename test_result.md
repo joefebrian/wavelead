@@ -6763,3 +6763,70 @@ agent_communication:
           NOT DONE deliberately: no deploy, no frontend testing agent (user
           verifies UI manually), no PayPal execution, no production SMTP
           credentials, no recurring billing.
+
+  - task: "M17.1 — Verification landing (Fast $1 / Manual free), purchase-path corrections (Founding Lifetime + Brand Pro), searchable country combobox"
+    implemented: true
+    working: true
+    file: "app/dashboard/channels/[id]/verify/{page.tsx,VerifyClient.tsx,FastVerificationForm.tsx,ManualVerificationForm.tsx}, components/forms/CountryCombobox.tsx, components/commerce/BrandProReturn.tsx, app/pricing/PricingClient.tsx, app/submit/SubmitForm.tsx, lib/utils/commercialIntent.ts, lib/services/brandFoundingLifetimeService.ts, app/dashboard/billing/page.tsx, app/dashboard/channels/[id]/ChannelActivationCard.tsx, app/dashboard/channels/[id]/monetization/MonetizationClient.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          UX/flow corrections found in the user's manual preview smoke of M17.
+          1. VERIFICATION LANDING — "Submit & verify ownership" now redirects to
+             /dashboard/channels/{id}/verify, which renders a two-option choice
+             screen (Fast $1 / Manual Free) instead of the legacy three-method
+             claim selector. Legacy /claim/[slug] + claim backend untouched and
+             still linked for disputes / reclaims.
+          2. FAST PATH — single form: identity (name, searchable country, city,
+             email, mobile, role, optional company) + PayPal payout email +
+             declaration → "Continue to $1 Payment" → existing
+             CHANNEL_OWNER_ACTIVATION PayPal checkout. No website/social
+             evidence, no second admin approval. Browser return stays
+             non-authoritative; verification still needs identity + declaration
+             + payout + finalized $1 capture.
+          3. MANUAL PATH — ONE form: identity + Website/Instagram/Facebook/
+             TikTok/Threads/Other evidence URLs + reviewer message, posted to
+             the EXISTING claim service (verification_method 'manual'). Free,
+             human review preserved, works while the listing is pending.
+          4. FOUNDING LIFETIME — waitlist/reservation dialog REMOVED from the
+             page. CTA is always the real checkout ("Get Founding Lifetime —
+             $100"). Logged-out click stores intent → /signup?next= → on return
+             the checkout resumes automatically to PayPal approval.
+          5. BRAND PRO — same auth→checkout resume; the missing browser-return
+             handler was added (components/commerce/BrandProReturn.tsx on
+             /dashboard/billing) so a paid term actually finalizes. $15 / 30
+             days / manual renewal unchanged.
+          6. INTENT HANDOFF — consumeIntentResumeOnce() (sessionStorage) makes
+             the resume one-shot per product per session; the services already
+             reuse any open order. No auto-capture anywhere.
+          7. COUNTRY UX — new components/forms/CountryCombobox.tsx: suggested
+             set before typing (never the 200+ dump), filters by name and ISO
+             code, full keyboard nav, canonical alpha-2 value. Used by /submit
+             and both verification forms. Canonical dataset unchanged.
+          TESTS: tests/m17_1.test.ts — 10/10 PASS (covers the 27 requested
+                 checks). Re-ran m17 (18), m17_smtp_env_load (10),
+                 m11_batch6_brand_founding_lifetime (19), m142 live guard (6),
+                 m141 pricing UI (6), m03_ownership_verification (23),
+                 m12_combined_review (9), m09/m10 pricing+homepage → all PASS.
+                 tsc --noEmit clean; yarn build clean.
+          BROWSER-VERIFIED (preview, PayPal SANDBOX, nothing captured):
+                 choice screen renders; manual form + country search "saudi" →
+                 Saudi Arabia; fast form → redirect to
+                 sandbox.paypal.com/checkoutnow ($1); logged-out Founding
+                 Lifetime CTA → /signup?next=/pricing?intent=founding-lifetime;
+                 logged-in /pricing?intent=brand-pro → auto-resumed to
+                 sandbox.paypal.com/checkoutnow ($15). All probe fixtures
+                 deleted afterwards.
+          KNOWN PRE-EXISTING (unchanged by M17.1): pricing_conversion 2 +
+                 m11_batch1 1 failures assert superseded legacy pricing copy /
+                 test ids; identical at the deployed M16 commit.
+          BLOCKER FOR PREVIEW SMOKE: Founding Lifetime needs env
+                 BRAND_FOUNDING_LIFETIME_CHECKOUT_ENABLED=1 in preview (it is 0).
+                 Proven in-process with the flag forced ON: $100 sandbox order +
+                 PayPal approve_url. NOT changed — awaiting user authorization.
+          NOT DONE deliberately: no deploy, no frontend testing agent, no
+                 real-money capture, no recurring billing, no reminder UI.

@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { paymentFundingOrderRepo } from '@/lib/repositories/paymentRepo';
 import { promotionCampaignRepo } from '@/lib/repositories/promotionRepo';
+import BrandProReturn from '@/components/commerce/BrandProReturn';
 
 export const metadata: Metadata = { title: 'Billing · WaveLead' };
 export const dynamic = 'force-dynamic';
@@ -35,6 +36,8 @@ export default async function OwnerBillingPage() {
       <main className="container mx-auto px-4 py-6 max-w-4xl flex-1">
         <h1 className="text-2xl font-bold mb-1">Billing</h1>
         <p className="text-sm text-muted-foreground mb-6">Your campaign payments &amp; refunds.</p>
+        {/* M17.1 — Brand Pro PayPal return lands here; capture is server-authoritative. */}
+        <BrandProReturn />
         {items.length === 0 && <div className="wh-card p-6 text-center text-muted-foreground">No payments yet.</div>}
         <div className="space-y-3 md:hidden" data-testid="billing-cards">
           {items.map(({ r, campaign_name }) => (

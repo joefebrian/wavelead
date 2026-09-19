@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Sparkles, Info, ArrowLeft, ShieldAlert, Wand2 } from 'lucide-react';
+import CountryCombobox from '@/components/forms/CountryCombobox';
 
 interface CategoryOpt { id: string; slug: string; name: string; }
 interface CountryOpt { code: string; name: string; flag: string; }
@@ -143,9 +144,14 @@ export default function SubmitForm({ categories, countries }: Props) {
       const j = await r.json();
       if (!r.ok || !j?.ok) { setSubmitError(j?.error || 'Something went wrong. Please try again.'); return; }
       const newSlug = j.data?.channel?.slug as string | undefined;
-      // M12 combined onboarding: if the submitter declared ownership, take them
-      // straight to the existing /claim/[slug] proof form (works while the
-      // listing is still pending_review). Declaring ownership never proves it.
+      const newId = j.data?.channel?.id as string | undefined;
+      // M17.1 combined onboarding: a submitter who declared ownership now lands
+      // on the OWNERSHIP VERIFICATION choice screen (Fast $1 vs Manual free) —
+      // no longer straight into the legacy three-method claim form.
+      if (ownsChannel && newId) {
+        window.location.href = `/dashboard/channels/${newId}/verify`;
+        return;
+      }
       if (ownsChannel && newSlug) {
         window.location.href = `/claim/${newSlug}`;
         return;
@@ -430,10 +436,9 @@ function Classification({ categories, countries, categorySlug, countryCode, lang
         <Label htmlFor="country" className="flex items-center">Country <span className="text-destructive ml-1">*</span>
           {resp?.fields?.country_code.source && <ProvenanceBadge source={resp.fields.country_code.source} confidence={resp.fields.country_code.confidence} touched={!!touched.countryCode} />}
         </Label>
-        <select id="country" required value={countryCode} onChange={(e) => onCountry(e.target.value)} className="mt-1.5 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm">
-          <option value="">Select a country</option>
-          {countries.map((c) => <option key={c.code} value={c.code}>{c.flag} {c.name}</option>)}
-        </select>
+        {/* M17.1 — searchable combobox. The 200+ ISO dataset is never dumped
+            into an open list; the user types to filter by name or ISO code. */}
+        <CountryCombobox value={countryCode} onChange={onCountry} id="country" testId="submit-country" className="mt-1.5" />
       </div>
       <div>
         <Label htmlFor="lang" className="flex items-center">Primary language <span className="text-destructive ml-1">*</span>

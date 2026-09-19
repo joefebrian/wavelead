@@ -110,7 +110,9 @@ describe('M17 §1 countries', () => {
   });
 
   it('3b & 7-8. ONE shared source — no duplicated hard-coded lists on country surfaces', () => {
-    for (const f of ['app/submit/page.tsx', 'app/country/[slug]/page.tsx', 'app/dashboard/channels/[id]/verify/VerifyClient.tsx']) {
+    // M17.1 — the owner-facing country control moved into the shared
+    // searchable combobox, which itself resolves the canonical dataset.
+    for (const f of ['app/submit/page.tsx', 'app/country/[slug]/page.tsx', 'components/forms/CountryCombobox.tsx']) {
       expect(src(f)).toContain('@/lib/constants/countries');
     }
     expect(src('app/countries/page.tsx')).toContain('getCountryCounts');

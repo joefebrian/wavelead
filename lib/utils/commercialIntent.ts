@@ -57,3 +57,30 @@ export function clearCommercialIntent(): void {
   if (typeof window === 'undefined') return;
   try { window.localStorage.removeItem(KEY); } catch { /* ignore */ }
 }
+
+// M17.1 — one-shot guard for the auth → checkout handoff.
+//
+// A click on a paid CTA is explicit purchase intent, so after authentication we
+// may resume the checkout automatically. But a page refresh, a browser "back",
+// or a replayed URL must NOT start a second PayPal order. This returns true at
+// most ONCE per browser session per product. (The server independently reuses
+// any open order, so this is belt-and-braces, not the only protection.)
+const RESUME_KEY_PREFIX = 'wl_intent_resumed_';
+
+export function consumeIntentResumeOnce(intent: CommercialIntent): boolean {
+  if (typeof window === 'undefined') return false;
+  const key = `${RESUME_KEY_PREFIX}${intent}`;
+  try {
+    if (window.sessionStorage.getItem(key)) return false;
+    window.sessionStorage.setItem(key, String(Date.now()));
+    return true;
+  } catch {
+    return false;   // storage disabled → never auto-resume, user clicks again
+  }
+}
+
+/** Test/utility helper — forget the one-shot resume marker. */
+export function resetIntentResume(intent: CommercialIntent): void {
+  if (typeof window === 'undefined') return;
+  try { window.sessionStorage.removeItem(`${RESUME_KEY_PREFIX}${intent}`); } catch { /* ignore */ }
+}

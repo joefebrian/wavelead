@@ -136,11 +136,11 @@ export default function MonetizationClient({
           Your channel is linked to your WaveLead account, but ownership has not yet been verified. Complete verification to unlock the sponsorship marketplace.
         </p>
         <div className="mt-4">
-          <a href={`/claim/${channelSlug}`} className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90" data-testid="complete-verification-cta">
+          <a href={`/dashboard/channels/${channelId}/verify`} className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90" data-testid="complete-verification-cta">
             Complete verification
           </a>
         </div>
-        <p className="mt-3 text-xs text-muted-foreground">A moderator reviews your evidence before verification is granted.</p>
+        <p className="mt-3 text-xs text-muted-foreground">Choose Fast Verification ($1, no second manual review) or free Manual Verification reviewed by a moderator.</p>
       </div>
     );
   }

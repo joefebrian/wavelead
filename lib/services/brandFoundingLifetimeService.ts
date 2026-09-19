@@ -83,7 +83,7 @@ async function assertLifetimeCheckoutAllowed(): Promise<'sandbox' | 'live'> {
     throw new HttpError(503, 'LIVE Founding Lifetime checkout requires a production runtime.');
   }
   if (!isLifetimeCheckoutEnabled()) {
-    throw new HttpError(503, 'Founding Lifetime LIVE checkout is not enabled yet. Reserve your spot with the WaveLead team.');
+    throw new HttpError(503, 'Founding Lifetime checkout is not enabled for this environment yet. Please try again shortly.');
   }
   return env;
 }
@@ -202,7 +202,7 @@ export const brandFoundingLifetimeService = {
   async startCheckout(actor: Actor | null, requestOrigin?: string) {
     requireAuth(actor);
     if (!isLifetimeCheckoutEnabled()) {
-      throw new HttpError(503, 'Brand Founding Lifetime checkout is not enabled yet. Reserve your spot with the WaveLead commercial team.');
+      throw new HttpError(503, 'Founding Lifetime checkout is not enabled for this environment yet. Please try again shortly.');
     }
     const env = await assertLifetimeCheckoutAllowed();
 

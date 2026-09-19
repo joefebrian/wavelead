@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/button';
 import { Check, Loader2, CheckCircle2, AlertTriangle, Sparkles, Info } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import type { PublicUser } from '@/lib/types';
-import { rememberCommercialIntent, clearCommercialIntent } from '@/lib/utils/commercialIntent';
+import { rememberCommercialIntent, clearCommercialIntent, readCommercialIntent, consumeIntentResumeOnce, INTENT_DESTINATION, type CommercialIntent } from '@/lib/utils/commercialIntent';
+import { ga4Track } from '@/components/analytics/GoogleAnalytics';
 import type { PublicPricing } from '@/lib/services/pricingConfigTypes';
 import { formatMinorUSD } from '@/lib/services/pricingConfigTypes';
 
@@ -79,7 +80,9 @@ function buildTiers(p: PublicPricing): Tier[] {
         : `${formatMinorUSD(p.brand_lifetime.price_minor)} one-time · No subscription · No recurring charge.`,
       status: p.brand_lifetime.availability === 'public_beta' ? 'Public Beta Offer' : 'Available',
       blurb: 'Lifetime access to the Brand Pro features included in your Founding plan. Priority product support.',
-      cta: 'Reserve Founding Lifetime',
+      // M17.1 — Founding Lifetime is a REAL PayPal product. No waitlist,
+      // no reservation form in the purchase path. Price stays admin-driven.
+      cta: `Get Founding Lifetime — ${formatMinorUSD(p.brand_lifetime.price_minor)}`,
       enabled: p.brand_lifetime.enabled,
       features: [
         { label: 'Lifetime access to the Brand Pro features included in your Founding plan' },
@@ -135,8 +138,6 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
   const intentIsFoundingLifetime = (searchParams?.get('intent') || '') === 'founding-lifetime';
   const [me, setMe] = useState<PublicUser | null>(null);
   const [meLoaded, setMeLoaded] = useState(false);
-  const [waitlistOpen, setWaitlistOpen] = useState(false);
-  const [waitlistFocus, setWaitlistFocus] = useState<'brand_pro' | 'brand_founding_lifetime'>('brand_pro');
   const [entOpen, setEntOpen] = useState(false);
   // M11-Batch6 — live Founding Lifetime buyer state. checkout_enabled reflects
   // the server-side BRAND_FOUNDING_LIFETIME_CHECKOUT_ENABLED flag AND the
@@ -200,15 +201,21 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
     if (me) router.push('/dashboard');
     else router.push('/signup?next=/dashboard');
   }
-  function openWaitlist(focus: 'brand_pro' | 'brand_founding_lifetime') { setWaitlistFocus(focus); setWaitlistOpen(true); }
 
-  // M17 — Brand Pro Founding Beta term checkout ($15 / 30 days, manual renewal).
-  // Server owns price/currency/term/purpose; creating the order grants nothing.
+  // M17.1 — Brand Pro Founding Beta term checkout ($15 / 30 days, manual renewal).
+  // Server owns price/currency/term/purpose; creating the order grants nothing
+  // and never captures. Logged-out users keep their explicit purchase intent
+  // through auth and the checkout resumes automatically on return.
   async function startBrandProCheckout() {
     if (brandProBusy) return;
     setBrandProBusy(true); setBrandProErr(null);
     try {
-      if (!me) { router.push('/signup?next=' + encodeURIComponent('/pricing?intent=brand-pro#brand-pro')); return; }
+      if (!me) {
+        rememberCommercialIntent('brand_pro');
+        router.push('/signup?next=' + encodeURIComponent(INTENT_DESTINATION.brand_pro));
+        return;
+      }
+      ga4Track('brand_pro_checkout_started');
       const r = await fetch('/api/brand-pro/checkout', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
@@ -218,6 +225,8 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
         const msg = typeof j.error === 'string' ? j.error : (j.error?.message || 'Checkout failed');
         throw new Error(msg);
       }
+      clearCommercialIntent();
+      // PayPal approval — the user authorizes the payment there. Never captured here.
       window.location.href = j.data.order.approve_url;
     } catch (e) {
       setBrandProErr((e as Error).message);
@@ -229,16 +238,14 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
     if (lifetimeBusy) return;
     setLifetimeBusy(true); setLifetimeErr(null);
     try {
-      // M15 — preserve intent through auth so users land back on the
-      // Founding Lifetime section and can explicitly click purchase again.
-      // No automatic PayPal order is created on return.
       if (!me) {
-        // M17 — persist the commercial intent so a platform-forced landing on
-        // /dashboard can still surface an explicit "Continue to Payment" CTA.
+        // M17.1 — explicit purchase intent survives the auth round-trip and
+        // the checkout resumes automatically once the user is authenticated.
         rememberCommercialIntent('founding_lifetime');
-        router.push('/signup?next=' + encodeURIComponent('/pricing?intent=founding-lifetime#founding-lifetime'));
+        router.push('/signup?next=' + encodeURIComponent(INTENT_DESTINATION.founding_lifetime));
         return;
       }
+      ga4Track('founding_lifetime_checkout_started');
       const r = await fetch('/api/brand/founding-lifetime/checkout', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -249,6 +256,7 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
         const msg = typeof j.error === 'string' ? j.error : (j.error?.message || 'Checkout failed');
         throw new Error(msg);
       }
+      clearCommercialIntent();
       // Server-hosted PayPal checkout — browser return will hit /pricing with
       // ?founding_lifetime=<id>&status=paid and the capture endpoint fires.
       window.location.href = j.data.order.approve_url;
@@ -262,6 +270,30 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
   const lifetimeAlreadyActive = !!lifetimeState?.already_active;
   useEffect(() => { if (lifetimeAlreadyActive) clearCommercialIntent(); }, [lifetimeAlreadyActive]);
 
+  // M17.1 — AUTH → CHECKOUT HANDOFF.
+  // The user already clicked an explicit purchase CTA (that is what wrote the
+  // intent), so after a successful authentication we resume the checkout and
+  // send them to PayPal approval instead of dropping them on a dead page.
+  //   • resumes ONCE per browser session per product (no duplicate orders on
+  //     refresh / back / replay) — the server additionally reuses any open order;
+  //   • never captures a payment: PayPal approval is still required;
+  //   • never runs for a logged-out visitor or an already-active buyer.
+  useEffect(() => {
+    if (!meLoaded || !me) return;
+    const param = (searchParams?.get('intent') || '').trim();
+    const intent: CommercialIntent | null =
+      param === 'founding-lifetime' ? 'founding_lifetime'
+        : param === 'brand-pro' ? 'brand_pro'
+          : readCommercialIntent();
+    if (!intent) return;
+    if (intent === 'founding_lifetime' && (lifetimeAlreadyActive || !lifetimeState)) return;
+    if (!consumeIntentResumeOnce(intent)) return;    // one attempt per session
+    clearCommercialIntent();
+    if (intent === 'founding_lifetime') void startFoundingLifetimeCheckout();
+    else void startBrandProCheckout();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meLoaded, me, lifetimeState, lifetimeAlreadyActive, searchParams]);
+
   return (
     <>
       <div className="mt-6 flex items-center gap-2 flex-wrap">
@@ -271,9 +303,10 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
         <span className="text-xs text-muted-foreground">Campaign intelligence, sponsorship operations, and channel discovery.</span>
       </div>
 
-      {intentIsFoundingLifetime && me && lifetimeCheckoutLive && !lifetimeAlreadyActive && (
+      {intentIsFoundingLifetime && me && !lifetimeAlreadyActive && (
         <div className="mt-6 rounded-md border border-emerald-300 bg-emerald-50 text-emerald-900 px-4 py-3 text-sm" data-testid="lifetime-intent-banner">
-          You&apos;re signed in. Continue with Founding Lifetime below — <span className="font-semibold">tap the &ldquo;Get Founding Lifetime — {lifetimeDisplay}&rdquo; button</span> when you&apos;re ready.
+          You&apos;re signed in — continuing your Founding Lifetime purchase ({lifetimeDisplay} one-time). If PayPal doesn&apos;t open automatically,
+          <span className="font-semibold"> tap &ldquo;Get Founding Lifetime — {lifetimeDisplay}&rdquo;</span> below.
         </div>
       )}
 
@@ -338,12 +371,15 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
               {tier.kind === 'brand_founding_lifetime' && (
                 lifetimeAlreadyActive ? (
                   <Button className="w-full" variant="outline" disabled data-testid="cta-brand-founding-lifetime-active">Founding Lifetime active</Button>
-                ) : lifetimeCheckoutLive ? (
-                  <Button className="w-full" onClick={startFoundingLifetimeCheckout} disabled={lifetimeBusy || !meLoaded} data-testid="cta-brand-founding-lifetime-checkout">
-                    {lifetimeBusy ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Opening PayPal…</> : `Get Founding Lifetime — ${lifetimeDisplay}`}
-                  </Button>
                 ) : (
-                  <Button className="w-full" variant="outline" onClick={() => openWaitlist('brand_founding_lifetime')} data-testid="cta-brand-founding-lifetime">{tier.cta}</Button>
+                  /* M17.1 — ALWAYS the real purchase CTA. No reservation form,
+                     no waitlist, no name/email lead capture in the purchase
+                     path. If the server refuses (checkout not enabled for the
+                     current environment) we surface that truthfully instead of
+                     silently swapping in a lead form. */
+                  <Button className="w-full" onClick={startFoundingLifetimeCheckout} disabled={lifetimeBusy || !meLoaded} data-testid="cta-brand-founding-lifetime-checkout">
+                    {lifetimeBusy ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Opening PayPal…</> : tier.cta}
+                  </Button>
                 )
               )}
               {tier.kind === 'enterprise' && (
@@ -367,17 +403,15 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
           <AlertTriangle className="h-4 w-4" />{lifetimeErr}
         </div>
       )}
-      {/* M14.1 — Single source of truth: the sandbox notice must never disagree
-          with the CTA. The CTA gates on `lifetimeCheckoutLive` (derived from
-          `/api/brand/founding-lifetime/state.checkout_enabled` + pricing config
-          `enabled`). The notice previously gated on `environment === 'sandbox'`
-          alone, which produced a contradictory state where the LIVE CTA
-          rendered next to a sandbox warning. It now only renders when the
-          purchase CTA is NOT live and the resolved PayPal environment is
-          sandbox — i.e., a truthful preview/reservation state. */}
-      {!lifetimeCheckoutLive && !lifetimeAlreadyActive && lifetimeState?.environment === 'sandbox' && (
+      {/* M17.1 — truthful environment notice. The purchase CTA is always the
+          real checkout; this only tells the operator/tester which PayPal
+          environment the current deployment resolves to, and whether the
+          Founding Lifetime capability flag is still off. No waitlist copy. */}
+      {!lifetimeCheckoutLive && !lifetimeAlreadyActive && (
         <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block" data-testid="lifetime-sandbox-notice">
-          Founding Lifetime checkout is currently running in <strong>PayPal Sandbox</strong>. LIVE checkout is not enabled yet — reserve your spot with the WaveLead team above.
+          Founding Lifetime checkout is not enabled for this environment yet
+          {lifetimeState?.environment === 'sandbox' ? <> (resolved PayPal environment: <strong>sandbox</strong>)</> : null}.
+          Starting checkout will report that until the capability is switched on.
         </p>
       )}
 
@@ -438,72 +472,11 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
         you — Revenue Intelligence, Sponsorship Pipeline, and other Pro features continue to work.
       </p>
 
-      <WaitlistDialog open={waitlistOpen} onOpenChange={setWaitlistOpen} me={me} focus={waitlistFocus} />
       <EnterpriseDialog open={entOpen} onOpenChange={setEntOpen} me={me} />
     </>
   );
 }
 
-function WaitlistDialog({ open, onOpenChange, me, focus }: { open: boolean; onOpenChange: (o: boolean) => void; me: PublicUser | null; focus: 'brand_pro' | 'brand_founding_lifetime' }) {
-  const [email, setEmail] = useState('');
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => { if (open) { setEmail(me?.email || ''); setName(me?.display_name || ''); setDone(false); setError(null); } }, [open, me]);
-  const isLifetime = focus === 'brand_founding_lifetime';
-  const title = isLifetime ? 'Reserve Founding Lifetime access' : 'Join the Brand Pro Founding Beta';
-  const description = isLifetime
-    ? "A member of the WaveLead team will reach out to secure your Founding Lifetime spot. Public Beta offer — not a permanent price."
-    : 'Founding Beta pricing is time-limited. No obligation to submit interest.';
-  const submitLabel = isLifetime ? 'Reserve My Spot' : 'Join Founding Beta';
-  async function submit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (busy) return;
-    setBusy(true); setError(null);
-    try {
-      const r = await fetch('/api/commercial-leads/pro-waitlist', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ email, ...(name ? { name } : {}), plan_focus: focus }),
-      });
-      const j = await r.json();
-      if (!r.ok || !j.ok) throw new Error(j?.error || 'Submission failed');
-      setDone(true);
-    } catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
-  }
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="waitlist-dialog">
-        <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader>
-        {done ? (
-          <div className="py-6 text-center">
-            <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" />
-            <div className="mt-3 font-semibold">You&apos;re on the list.</div>
-            <p className="mt-1 text-sm text-muted-foreground">A WaveLead team member will follow up shortly.</p>
-            <Button className="mt-4" onClick={() => onOpenChange(false)}>Close</Button>
-          </div>
-        ) : (
-          <form onSubmit={submit} className="space-y-3">
-            <div><label className="block text-sm font-medium mb-1">Email</label><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} data-testid="pro-email" /></div>
-            <div><label className="block text-sm font-medium mb-1">Name <span className="text-xs text-muted-foreground">(optional)</span></label><input type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputCls} data-testid="pro-name" maxLength={120} /></div>
-            {isLifetime && (
-              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 inline-flex items-start gap-2">
-                <Info className="h-4 w-4 shrink-0 mt-0.5" />
-                <span>Founding Lifetime includes the Brand Pro features listed in the Founding plan and priority product support. It does <strong>not</strong> promise unlimited future Enterprise, API, or high-volume AI capabilities.</span>
-              </div>
-            )}
-            {error && <div className="text-sm text-rose-600 flex items-center gap-1"><AlertTriangle className="h-4 w-4" />{error}</div>}
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
-              <Button type="submit" disabled={busy} data-testid="pro-submit">{busy ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Submitting…</> : submitLabel}</Button>
-            </div>
-          </form>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 function EnterpriseDialog({ open, onOpenChange, me }: { open: boolean; onOpenChange: (o: boolean) => void; me: PublicUser | null }) {
   const [form, setForm] = useState({ company_name: '', contact_name: '', email: '', company_type: 'brand' as string, channel_count: '' as string, country: '' as string, message: '' });
