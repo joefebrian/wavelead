@@ -210,6 +210,14 @@ async function tryFinalize(paymentId: string): Promise<ChannelActivationPayment 
   if (credit === 'blocked_no_fee') return p;
   // Flip payment to captured_finalized (idempotent under the transition guard).
   const finalized = await transition(paymentId, ['captured_pending_fee'], 'captured_finalized', { finalized_at: new Date() });
+  // M17 — Fast Verification rows must NOT auto-activate on capture. Payment
+  // alone never makes an account Owner Verified; ownerVerificationService
+  // .finalizeIfComplete() owns that decision once identity + declaration +
+  // payout are all in place. Legacy rows have no `verification_flow` field
+  // and keep the original behaviour exactly.
+  if ((p as unknown as { verification_flow?: string }).verification_flow === 'fast') {
+    return finalized || (await c.findOne({ id: paymentId }));
+  }
   // Flip the channel to activation_status='active' (idempotent).
   await channelRepo.update(p.channel_id, {
     activation_status: 'active',

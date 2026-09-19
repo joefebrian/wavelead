@@ -4,7 +4,7 @@ import { z } from 'zod';
 const httpsUrl = z.string().url().refine((u) => /^https?:\/\//i.test(u), 'URL must be http(s)');
 
 export const evidenceItemSchema = z.object({
-  evidence_type: z.enum(['website', 'youtube', 'instagram', 'tiktok', 'x', 'facebook', 'other']),
+  evidence_type: z.enum(['website', 'youtube', 'instagram', 'tiktok', 'threads', 'x', 'facebook', 'other']),
   evidence_url: httpsUrl,
   note: z.string().max(500).optional().nullable(),
 });

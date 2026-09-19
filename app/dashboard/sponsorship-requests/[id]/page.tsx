@@ -16,7 +16,8 @@ import { ArrowLeft, ArrowRight, ExternalLink } from 'lucide-react';
 // M16.1 — existing marketplace statuses only. No new payment states.
 const ORDER_PAID_STATUSES = ['paid', 'in_progress', 'revision_requested', 'submitted_for_review', 'completed'];
 
-export const metadata: Metadata = { title: 'Sponsorship Request — WaveLead' };
+// M17 — private owner surface: never indexed by search engines or AI crawlers.
+export const metadata: Metadata = { title: 'Sponsorship Request — WaveLead', robots: { index: false, follow: false } };
 export const dynamic = 'force-dynamic';
 
 interface Props { params: Promise<{ id: string }>; }

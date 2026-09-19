@@ -7,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 
-type EType = 'website' | 'youtube' | 'instagram' | 'tiktok' | 'x' | 'facebook' | 'other';
+type EType = 'website' | 'youtube' | 'instagram' | 'tiktok' | 'threads' | 'x' | 'facebook' | 'other';
 interface EvidenceItem { evidence_type: EType; evidence_url: string; note: string | null; }
 
 interface Props {
@@ -71,6 +71,7 @@ export default function ClaimResubmitClient({ claimId, initialNote, initialMetho
                   <option value="youtube">YouTube</option>
                   <option value="instagram">Instagram</option>
                   <option value="tiktok">TikTok</option>
+                  <option value="threads">Threads</option>
                   <option value="x">X</option>
                   <option value="facebook">Facebook</option>
                   <option value="other">Other</option>

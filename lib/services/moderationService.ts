@@ -94,6 +94,38 @@ export const moderationService = {
       after_data: { status: 'approved', ...patch },
       created_at: now,
     });
+    // M17 — notify the submitter that the LISTING is approved and owner
+    // verification is now open. Best-effort: an email failure must NEVER roll
+    // back the moderation decision.
+    try {
+      const submitterId = (channel as unknown as { submitted_by?: string | null }).submitted_by || channel.owner_id || null;
+      if (submitterId) {
+        const { userRepo } = await import('@/lib/repositories/userRepo');
+        const { sendMailBestEffort, hasSmtpTransport, appOrigin } = await import('./mailer');
+        if (hasSmtpTransport()) {
+          const u = await userRepo.findById(submitterId);
+          if (u?.email) {
+            const base = appOrigin();
+            await sendMailBestEffort({
+              to: u.email,
+              subject: 'Your WaveLead channel is approved',
+              text: [
+                `Your channel listing for ${channel.name} has been approved.`,
+                '',
+                'Complete owner verification to start managing monetization and payouts.',
+                '',
+                'Fast Verification — $1 one-time',
+                'Manual Verification — Free',
+                '',
+                `Verify Channel Ownership: ${base}/dashboard/channels/${channelId}/verify`,
+                '',
+                '— WaveLead',
+              ].join('\n'),
+            });
+          }
+        }
+      }
+    } catch { /* email is best-effort */ }
     return { ok: true };
   },
 

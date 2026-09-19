@@ -71,6 +71,12 @@ export const COLLECTIONS = {
   // M16 — Append-only brand ↔ channel-owner conversation messages attached to
   //        a sponsorship request (sponsorship_leads.id). Plain text only.
   SPONSORSHIP_REQUEST_MESSAGES: 'sponsorship_request_messages',
+  // M17 — Brand Pro Founding Beta ($15 / 30 days, manual renewal). Isolated
+  //        from Owner Activation / Founding Lifetime / Marketplace domains.
+  BRAND_PRO_TERM_ORDERS: 'brand_pro_term_orders',
+  BRAND_PRO_MEMBERSHIPS: 'brand_pro_memberships',
+  // M17 — PRIVATE Owner Identity Profile (Fast Verification). Never public.
+  OWNER_IDENTITY_PROFILES: 'owner_identity_profiles',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

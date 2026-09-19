@@ -1493,6 +1493,96 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
     }
 
     // ---------- M11-Batch2B VERIFIED OWNER ACTIVATION (SANDBOX) ----------
+    // ---------- M17 FAST OWNER VERIFICATION ($1) + OWNER IDENTITY ----------
+    if (path.length === 5 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'verification' && path[4] === 'state' && method === 'GET') {
+      const { ownerVerificationService } = await import('@/lib/services/ownerVerificationService');
+      const actor = await resolveActor(request);
+      return applyCors(ok(await ownerVerificationService.getState(actor, path[2])), request);
+    }
+    if (path.length === 5 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'verification' && path[4] === 'start-fast' && method === 'POST') {
+      const { ownerVerificationService } = await import('@/lib/services/ownerVerificationService');
+      const actor = await resolveActor(request);
+      const origin = request.headers.get('origin') || undefined;
+      const payment = await ownerVerificationService.startFastVerification(actor, path[2], origin);
+      return applyCors(ok({ payment }, { status: 201 }), request);
+    }
+    if (path.length === 5 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'verification' && path[4] === 'capture' && method === 'POST') {
+      // Browser-return capture. NON-AUTHORITATIVE for Owner Verified — the
+      // service only verifies when identity + declaration + payout are done.
+      const { ownerVerificationService } = await import('@/lib/services/ownerVerificationService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.USER);
+      const body = await safeJson(request) as { payment_id?: string } | null;
+      if (!body?.payment_id) return applyCors(fail(400, 'payment_id required'), request);
+      const p = await ownerVerificationService.captureFastPayment(body.payment_id);
+      const state = await ownerVerificationService.getState(actor, path[2]);
+      return applyCors(ok({ payment_status: p?.status || null, state }), request);
+    }
+    if (path.length === 5 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'verification' && path[4] === 'identity' && method === 'POST') {
+      const { ownerVerificationService } = await import('@/lib/services/ownerVerificationService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.USER);
+      const body = await safeJson(request);
+      const res = await ownerVerificationService.submitIdentity(actor, path[2], body);
+      return applyCors(ok(res, { status: 201 }), request);
+    }
+    if (path.length === 5 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'verification' && path[4] === 'identity' && method === 'GET') {
+      const { ownerVerificationService } = await import('@/lib/services/ownerVerificationService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.USER);
+      return applyCors(ok({ identity: await ownerVerificationService.getIdentity(actor, path[2]) }), request);
+    }
+
+    // ---------- M17 BRAND PRO FOUNDING BETA ($15 / 30 days, manual renewal) ----------
+    if (route === '/brand-pro/state' && method === 'GET') {
+      const { brandProService } = await import('@/lib/services/brandProService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.USER);
+      return applyCors(ok(await brandProService.getStateForActor(actor)), request);
+    }
+    if (route === '/brand-pro/checkout' && method === 'POST') {
+      const { brandProService } = await import('@/lib/services/brandProService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.USER);
+      const origin = request.headers.get('origin') || undefined;
+      const order = await brandProService.startCheckout(actor, origin);
+      return applyCors(ok({ order }, { status: 201 }), request);
+    }
+    if (route === '/brand-pro/capture' && method === 'POST') {
+      // Browser-return capture. Grants access ONLY via the authoritative
+      // finalized capture inside the service.
+      const { brandProService } = await import('@/lib/services/brandProService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.USER);
+      const body = await safeJson(request) as { order_id?: string } | null;
+      if (!body?.order_id) return applyCors(fail(400, 'order_id required'), request);
+      const o = await brandProService.captureAndGrant(body.order_id);
+      return applyCors(ok({ status: o?.status || null, state: await brandProService.getStateForActor(actor) }), request);
+    }
+    if (route === '/admin/categories/ensure-affiliate' && method === 'POST') {
+      const { affiliateCategoryService } = await import('@/lib/services/affiliateCategoryService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      const body = await safeJson(request) as { dry_run?: boolean } | null;
+      return applyCors(ok(await affiliateCategoryService.ensureAsAdmin(actor, !!body?.dry_run)), request);
+    }
+    if (route === '/admin/brand-pro/report' && method === 'GET') {
+      const { brandProService } = await import('@/lib/services/brandProService');
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.ADMIN);
+      return applyCors(ok(await brandProService.adminReport(actor)), request);
+    }
+    if (route === '/cron/brand-pro-maintenance' && method === 'POST') {
+      const secret = process.env.CRON_SECRET;
+      if (!secret) return applyCors(fail(503, 'Scheduler not configured'), request);
+      if ((request.headers.get('x-cron-secret') || '') !== secret) return applyCors(fail(401, 'Unauthorized'), request);
+      const { brandProService } = await import('@/lib/services/brandProService');
+      const expired = await brandProService.expireOverdue();
+      const reminders = await brandProService.sendExpiryReminders();
+      return applyCors(ok({ expired, reminders }), request);
+    }
+
+
     if (path.length === 4 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'activation' && method === 'GET') {
       const { channelActivationService } = await import('@/lib/services/channelActivationService');
       const actor = await resolveActor(request);

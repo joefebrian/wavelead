@@ -5,6 +5,8 @@ import { Toaster } from 'sonner';
 import type { ReactNode } from 'react';
 import ConsentBanner from '@/components/consent/ConsentBanner';
 import AnalyticsAutoPageView from '@/components/consent/AnalyticsAutoPageView';
+import GoogleAnalytics from '@/components/analytics/GoogleAnalytics';
+import { JsonLd, organizationSchema, webSiteSchema } from '@/lib/seo/structuredData';
 
 export const metadata: Metadata = {
   title: {
@@ -35,10 +37,15 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
       </head>
       <body className="min-h-screen bg-background text-foreground overflow-x-hidden">
+        {/* M17 — AEO/GEO entity graph. Server-rendered from our own data only. */}
+        <JsonLd id="ld-organization" data={organizationSchema()} />
+        <JsonLd id="ld-website" data={webSiteSchema()} />
         <Providers>
           {children}
           <ConsentBanner />
           <AnalyticsAutoPageView />
+          {/* M17 — GA4, mounted but inert until analytics consent is granted. */}
+          <GoogleAnalytics />
           <Toaster richColors position="top-right" />
         </Providers>
       </body>

@@ -6721,3 +6721,45 @@ agent_communication:
                  tsc --noEmit clean; yarn build clean.
           NOT DONE deliberately: no deploy, no broad regression, no frontend agent,
           no PayPal execution, no commission/Payment-Protection change.
+
+  - task: "M17 — Global countries, Fast $1 Owner Verification, free Manual Verification, Brand Pro Founding Beta, Founding-Lifetime intent, GA4, SEO/AEO/GEO, affiliate categories"
+    implemented: true
+    working: true
+    file: "lib/constants/countries.ts, lib/services/ownerVerificationService.ts, lib/services/brandProService.ts, lib/services/affiliateCategoryService.ts, lib/utils/commercialIntent.ts, components/commerce/PendingIntentCard.tsx, components/analytics/GoogleAnalytics.tsx, app/sitemap.ts, app/robots.txt/route.ts, lib/seo/structuredData.tsx, app/dashboard/channels/[id]/verify/*, app/pricing/PricingClient.tsx, lib/services/smtpConfig.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          M17 closed out. Final turn fixed the last 2 failing assertions and the
+          SMTP env-loading blocker:
+          • app/dashboard/sponsorship-requests/[id]/page.tsx — added
+            robots: { index: false, follow: false } (private surface noindex).
+          • components/commerce/PendingIntentCard.tsx — reworded comment; the
+            card links to /pricing only and can never create a payment/order.
+          • NEW lib/services/smtpConfig.ts — single normalized SMTP env resolver
+            (trim, strip wrapping quotes, blank => unset, safe port parse with
+            587 fallback, app-password whitespace stripped, from fallback chain,
+            redacted diagnostics). mailer.ts / contactService.ts /
+            marketplaceService.hasEmailDelivery() now all read through it.
+            NO credentials configured, nothing hardcoded, no email sent,
+            Nodemailer architecture unchanged.
+          • app/pricing/PricingClient.tsx — legacy billing note replaced; it had
+            contradicted the M17 "$15 per 30-day term, manual renewal" model.
+          TESTS: tests/m17.test.ts 18/18 PASS; tests/m17_smtp_env_load.test.ts
+                 10/10 PASS; re-ran m16_sponsorship_comms (19),
+                 m16_1_request_booking_link (6), m14_beta_ux (7),
+                 m08b32c_gate_c_safety (6) => 66/66 PASS.
+                 tsc --noEmit clean; yarn build clean (1 build).
+          REGRESSION BASELINE: full `vitest run` = 32 failed / 893 passed. A
+          git-worktree run of the SAME 10 files at the deployed M16 commit
+          (bf34a9a) reproduced 30 of those failures identically => pre-existing
+          (env kill-switches + legacy $/month pricing copy assertions). The 2
+          extra were ECONNRESET/ECONNREFUSED from the dev server dropping under
+          full-suite load; tests/m07_lite_sponsorship.test.ts re-ran 11/11 PASS.
+          Net new regressions from M17: 0.
+          NOT DONE deliberately: no deploy, no frontend testing agent (user
+          verifies UI manually), no PayPal execution, no production SMTP
+          credentials, no recurring billing.

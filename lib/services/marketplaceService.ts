@@ -13,6 +13,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { createHmac, randomInt } from 'crypto';
 import { z } from 'zod';
+import { isSmtpConfigured } from './smtpConfig';
 import { HttpError, hasAtLeastRole, ROLES } from '../auth/rbac';
 import { channelRepo } from '../repositories/channelRepo';
 import {
@@ -193,7 +194,7 @@ export function hasEmailDelivery(): boolean {
     process.env.POSTMARK_API_TOKEN ||
     process.env.MAILGUN_API_KEY ||
     process.env.AWS_SES_REGION ||
-    process.env.SMTP_HOST
+    isSmtpConfigured()
   );
 }
 

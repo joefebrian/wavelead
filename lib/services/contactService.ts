@@ -15,6 +15,7 @@ import { getCollection } from '@/lib/db/mongo';
 import { COLLECTIONS } from '@/lib/db/collections';
 import { HttpError } from '@/lib/auth/rbac';
 import { hasEmailDelivery } from '@/lib/services/marketplaceService';
+import { resolveSmtpConfig, isSmtpConfigured, smtpTransportOptions } from '@/lib/services/smtpConfig';
 
 const CONTACT_TOPICS = ['general', 'support', 'partnership', 'enterprise', 'press', 'other'] as const;
 export type ContactTopic = typeof CONTACT_TOPICS[number];
@@ -57,12 +58,8 @@ async function trySendEmail(rec: ContactSubmissionRecord): Promise<{ status: Con
   // Only SMTP is considered a real transport here. Provider SDKs (SendGrid,
   // Resend, Postmark, Mailgun, SES) are intentionally NOT hooked up in this
   // task per the operator's instruction to reuse existing infrastructure only.
-  const host = process.env.SMTP_HOST;
-  const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM || 'no-reply@wavelead.dev';
-  if (!host) return { status: 'persisted_only' };
+  const cfg = resolveSmtpConfig();
+  if (!cfg.configured) return { status: 'persisted_only' };
   try {
     // Dynamic import so environments without nodemailer installed don't crash
     // at module load. We suppress TS's module-not-found because nodemailer is
@@ -72,11 +69,7 @@ async function trySendEmail(rec: ContactSubmissionRecord): Promise<{ status: Con
     const mod: unknown = await import('nodemailer').catch(() => null);
     const nodemailer = (mod as { createTransport?: (o: unknown) => { sendMail: (m: unknown) => Promise<unknown> } } | null);
     if (!nodemailer?.createTransport) return { status: 'persisted_only' };
-    const transporter = nodemailer.createTransport({
-      host, port,
-      secure: port === 465,
-      auth: user && pass ? { user, pass } : undefined,
-    });
+    const transporter = nodemailer.createTransport(smtpTransportOptions(cfg));
     const subject = `[WaveLead Contact] ${rec.topic} — ${rec.name}`;
     const text = [
       `Name: ${rec.name}`,
@@ -89,7 +82,7 @@ async function trySendEmail(rec: ContactSubmissionRecord): Promise<{ status: Con
       '',
       `Submitted via: WaveLead Contact Form`,
     ].join('\n');
-    await transporter.sendMail({ from, to: CONTACT_DESTINATION, replyTo: rec.email, subject, text });
+    await transporter.sendMail({ from: cfg.from, to: CONTACT_DESTINATION, replyTo: rec.email, subject, text });
     return { status: 'sent' };
   } catch (e) {
     // Sanitize the stored error: keep only a short symbolic code so we never
@@ -109,7 +102,7 @@ export const contactService = {
     // "Real" transport for the Contact form = SMTP config. The generic
     // hasEmailDelivery() probe includes provider env vars that WaveLead does
     // not currently wire up for outbound sending.
-    return !!process.env.SMTP_HOST;
+    return isSmtpConfigured();
   },
 
   hasAnyEmailDeliveryProbe(): boolean { return hasEmailDelivery(); },

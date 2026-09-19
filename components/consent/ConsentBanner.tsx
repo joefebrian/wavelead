@@ -62,6 +62,8 @@ export default function ConsentBanner() {
     setBusy(true);
     try {
       const next = await saveConsent(analytics);
+      // M17 — let GA4 (consent-gated) react immediately to the decision.
+      try { window.dispatchEvent(new Event('wl-consent-changed')); } catch { /* noop */ }
       if (next) setState(next);
       setManagerOpen(false);
     } finally { setBusy(false); }

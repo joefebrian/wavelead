@@ -10,6 +10,7 @@ import { claimService } from '@/lib/services/claimService';
 import { sponsorshipLeadService } from '@/lib/services/sponsorshipLeadService';
 import { personaService } from '@/lib/services/personaService';
 import PersonaOnboarding from './PersonaOnboarding';
+import PendingIntentCard from '@/components/commerce/PendingIntentCard';
 import { KeyRound, ShieldCheck, Send, Megaphone, Wallet, Handshake, Compass, Shield, Users, Cog, Activity, Kanban, BarChart3 } from 'lucide-react';
 
 export const metadata: Metadata = { title: 'Dashboard', robots: { index: false, follow: false } };
@@ -81,6 +82,9 @@ export default async function DashboardPage() {
             </div>
           </section>
         )}
+
+        {/* M17 — fallback for a paid intent started while logged out. Never creates a payment. */}
+        <PendingIntentCard />
 
         <PersonaOnboarding initial={personaState} />
 

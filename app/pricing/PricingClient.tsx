@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Check, Loader2, CheckCircle2, AlertTriangle, Sparkles, Info } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import type { PublicUser } from '@/lib/types';
+import { rememberCommercialIntent, clearCommercialIntent } from '@/lib/utils/commercialIntent';
 import type { PublicPricing } from '@/lib/services/pricingConfigTypes';
 import { formatMinorUSD } from '@/lib/services/pricingConfigTypes';
 
@@ -49,13 +50,15 @@ function buildTiers(p: PublicPricing): Tier[] {
     {
       kind: 'brand_pro',
       name: 'Brand Pro',
-      price: `${bpBeta} / month`,
-      priceNote: `Founding Beta price for the first ${bpDur} month${bpDur === 1 ? '' : 's'}, then ${bpReg} / month.`,
+      // M17 — Brand Pro Founding Beta is a $15 / 30-day MANUAL-renewal term.
+      // Never described as an automatically recurring subscription.
+      price: '$15 / 30 days',
+      priceNote: 'Manual renewal during Founding Beta. No automatic recurring charge.',
       status: 'Founding Beta',
       highlight: true,
       enabled: p.brand_pro.enabled,
       blurb: 'Campaign Intelligence & Sponsorship Operating System for brands and agencies.',
-      cta: 'Join Founding Beta',
+      cta: 'Start Brand Pro — $15',
       features: [
         { label: 'Everything in Brand Free' },
         { label: 'Advanced Channel Discovery & Filtering' },
@@ -148,10 +151,11 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
     display_price_minor: number;
   } | null>(null);
   const [lifetimeBusy, setLifetimeBusy] = useState(false);
+  const [brandProBusy, setBrandProBusy] = useState(false);
+  const [brandProErr, setBrandProErr] = useState<string | null>(null);
   const [lifetimeErr, setLifetimeErr] = useState<string | null>(null);
   const tiers = buildTiers(pricing);
   const ownerActivationPrice = formatMinorUSD(pricing.owner_activation.display_price_minor);
-  const bpDur = pricing.brand_pro.beta_duration_months;
   const bpRegDisplay = formatMinorUSD(pricing.brand_pro.regular_price_minor);
   const lifetimeDisplay = formatMinorUSD(pricing.brand_lifetime.price_minor);
 
@@ -198,6 +202,29 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
   }
   function openWaitlist(focus: 'brand_pro' | 'brand_founding_lifetime') { setWaitlistFocus(focus); setWaitlistOpen(true); }
 
+  // M17 — Brand Pro Founding Beta term checkout ($15 / 30 days, manual renewal).
+  // Server owns price/currency/term/purpose; creating the order grants nothing.
+  async function startBrandProCheckout() {
+    if (brandProBusy) return;
+    setBrandProBusy(true); setBrandProErr(null);
+    try {
+      if (!me) { router.push('/signup?next=' + encodeURIComponent('/pricing?intent=brand-pro#brand-pro')); return; }
+      const r = await fetch('/api/brand-pro/checkout', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+      });
+      const j = await r.json() as { ok?: boolean; data?: { order?: { approve_url?: string } }; error?: { message?: string } | string };
+      if (!r.ok || !j.data?.order?.approve_url) {
+        const msg = typeof j.error === 'string' ? j.error : (j.error?.message || 'Checkout failed');
+        throw new Error(msg);
+      }
+      window.location.href = j.data.order.approve_url;
+    } catch (e) {
+      setBrandProErr((e as Error).message);
+      setBrandProBusy(false);
+    }
+  }
+
   async function startFoundingLifetimeCheckout() {
     if (lifetimeBusy) return;
     setLifetimeBusy(true); setLifetimeErr(null);
@@ -205,7 +232,13 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
       // M15 — preserve intent through auth so users land back on the
       // Founding Lifetime section and can explicitly click purchase again.
       // No automatic PayPal order is created on return.
-      if (!me) { router.push('/signup?next=' + encodeURIComponent('/pricing?intent=founding-lifetime#founding-lifetime')); return; }
+      if (!me) {
+        // M17 — persist the commercial intent so a platform-forced landing on
+        // /dashboard can still surface an explicit "Continue to Payment" CTA.
+        rememberCommercialIntent('founding_lifetime');
+        router.push('/signup?next=' + encodeURIComponent('/pricing?intent=founding-lifetime#founding-lifetime'));
+        return;
+      }
       const r = await fetch('/api/brand/founding-lifetime/checkout', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -227,6 +260,7 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
 
   const lifetimeCheckoutLive = !!lifetimeState?.checkout_enabled && !!lifetimeState?.lifetime_available;
   const lifetimeAlreadyActive = !!lifetimeState?.already_active;
+  useEffect(() => { if (lifetimeAlreadyActive) clearCommercialIntent(); }, [lifetimeAlreadyActive]);
 
   return (
     <>
@@ -291,7 +325,15 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
                 <Button className="w-full" variant="outline" onClick={handleFree} disabled={!meLoaded} data-testid="cta-brand-free">{tier.cta}</Button>
               )}
               {tier.kind === 'brand_pro' && (
-                <Button className="w-full" onClick={() => openWaitlist('brand_pro')} data-testid="cta-brand-pro">{tier.cta}</Button>
+                <>
+                  <Button className="w-full" onClick={startBrandProCheckout} disabled={brandProBusy || !meLoaded} data-testid="cta-brand-pro">
+                    {brandProBusy ? 'Starting…' : tier.cta}
+                  </Button>
+                  {brandProErr && <div className="mt-2 text-xs text-rose-600" data-testid="brand-pro-error">{brandProErr}</div>}
+                  <p className="mt-2 text-[11px] text-muted-foreground" data-testid="brand-pro-renewal-note">
+                    One $15 payment gives 30 days of Brand Pro. Renewal is manual during Founding Beta — PayPal will not charge you automatically.
+                  </p>
+                </>
               )}
               {tier.kind === 'brand_founding_lifetime' && (
                 lifetimeAlreadyActive ? (
@@ -313,9 +355,12 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
       </div>
 
       <p className="mt-6 text-xs text-muted-foreground max-w-3xl" data-testid="brand-billing-note">
-        Brand Pro Founding Beta is {formatMinorUSD(pricing.brand_pro.beta_price_minor)}/month for the first {bpDur} month{bpDur === 1 ? '' : 's'}, then {bpRegDisplay}/month afterward. Founding
-        Lifetime is a one-time {lifetimeDisplay} offer available only during Public Beta. Automated recurring billing is being finalized —
-        Founding Beta and Founding Lifetime spots are secured today through the WaveLead commercial team.
+        {/* M17 — Brand Pro Founding Beta is sold as a single 30-day term with
+            MANUAL renewal. No recurring PayPal agreement is created. */}
+        Brand Pro Founding Beta is {formatMinorUSD(pricing.brand_pro.beta_price_minor)} for a 30-day term, renewed manually — PayPal never charges you
+        automatically, and nothing renews unless you pay again. Indicative pricing after the Founding Beta is {bpRegDisplay}/month; Founding Beta
+        pricing is honoured for the duration of each term you purchase. Founding Lifetime is a one-time {lifetimeDisplay} offer available only during
+        Public Beta and is not a permanent price.
       </p>
       {lifetimeErr && (
         <div className="mt-2 inline-flex items-center gap-1 text-sm text-rose-600" data-testid="lifetime-err">

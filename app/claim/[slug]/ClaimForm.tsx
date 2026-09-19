@@ -11,7 +11,7 @@ import { Loader2, CheckCircle2, AlertTriangle, Plus, Trash2 } from 'lucide-react
 
 type Method = 'domain' | 'social' | 'manual';
 
-interface EvidenceItem { evidence_type: 'website' | 'youtube' | 'instagram' | 'tiktok' | 'x' | 'facebook' | 'other'; evidence_url: string; note: string; }
+interface EvidenceItem { evidence_type: 'website' | 'youtube' | 'instagram' | 'tiktok' | 'threads' | 'x' | 'facebook' | 'other'; evidence_url: string; note: string; }
 
 interface Props {
   channel: { id: string; slug: string; name: string; website_url: string | null };
@@ -136,6 +136,7 @@ export default function ClaimForm({ channel, claimantEmail }: Props) {
                     <option value="youtube">YouTube</option>
                     <option value="instagram">Instagram</option>
                     <option value="tiktok">TikTok</option>
+                  <option value="threads">Threads</option>
                     <option value="x">X</option>
                     <option value="facebook">Facebook</option>
                     <option value="other">Other</option>

@@ -11,6 +11,8 @@
 //   • If SMTP is not configured → 'smtp_not_configured' (callers must treat
 //     this as a non-error and continue).
 
+import { resolveSmtpConfig, isSmtpConfigured, smtpTransportOptions } from '@/lib/services/smtpConfig';
+
 export type MailDeliveryStatus = 'sent' | 'smtp_not_configured' | 'send_failed';
 
 export interface MailMessage {
@@ -27,7 +29,8 @@ export interface MailResult {
 
 /** SMTP is the only supported transport for WaveLead transactional email. */
 export function hasSmtpTransport(): boolean {
-  return !!process.env.SMTP_HOST;
+  // Normalized read: quoted / whitespace-padded / blank values are handled.
+  return isSmtpConfigured();
 }
 
 /** Canonical app origin used to build safe deep-links inside emails. */
@@ -42,12 +45,8 @@ function looksLikeEmail(v: unknown): v is string {
 
 export async function sendMailBestEffort(msg: MailMessage): Promise<MailResult> {
   if (!looksLikeEmail(msg.to)) return { status: 'send_failed', error: 'invalid_recipient' };
-  const host = process.env.SMTP_HOST;
-  if (!host) return { status: 'smtp_not_configured' };
-  const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM || 'no-reply@wavelead.dev';
+  const cfg = resolveSmtpConfig();
+  if (!cfg.configured) return { status: 'smtp_not_configured' };
   try {
     // Dynamic import so environments without nodemailer never crash at load.
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -55,13 +54,9 @@ export async function sendMailBestEffort(msg: MailMessage): Promise<MailResult> 
     const mod: unknown = await import('nodemailer').catch(() => null);
     const nodemailer = mod as { createTransport?: (o: unknown) => { sendMail: (m: unknown) => Promise<unknown> } } | null;
     if (!nodemailer?.createTransport) return { status: 'smtp_not_configured' };
-    const transporter = nodemailer.createTransport({
-      host, port,
-      secure: port === 465,
-      auth: user && pass ? { user, pass } : undefined,
-    });
+    const transporter = nodemailer.createTransport(smtpTransportOptions(cfg));
     await transporter.sendMail({
-      from,
+      from: cfg.from,
       to: msg.to,
       subject: msg.subject,
       text: msg.text,

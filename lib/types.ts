@@ -148,7 +148,7 @@ export type ClaimStatus = 'draft' | 'pending' | 'needs_information' | 'approved'
 export type ClaimVerificationMethod = 'domain' | 'social' | 'manual';
 
 export interface ClaimEvidenceItem {
-  evidence_type: 'website' | 'youtube' | 'instagram' | 'tiktok' | 'x' | 'facebook' | 'other';
+  evidence_type: 'website' | 'youtube' | 'instagram' | 'tiktok' | 'threads' | 'x' | 'facebook' | 'other';
   evidence_url: string;
   note?: string | null;
 }
