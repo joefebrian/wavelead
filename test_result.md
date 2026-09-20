@@ -7044,3 +7044,34 @@ agent_communication:
         (12), m17 (18), m17_1 (10), m18 (17) → 57/57 PASS.
         tsc --noEmit clean (once); yarn build clean (once).
       DEPLOY: NOT EXECUTED.
+
+## M18 COOKIE PREFERENCES FOOTER DISCOVERABILITY (verified, NO code change)
+  - agent: "main"
+    comment: |
+      VERDICT: ALREADY COMPLIANT — no code change.
+      components/layout/Footer.tsx already renders
+      components/consent/CookiePreferencesTrigger (single instance) inside the
+      bottom legal row on EVERY page, alongside About | FAQ | Privacy | Terms |
+      Cookie Policy | Contact. Live check (Playwright, real browser):
+        • visible: true, label "Cookie Preferences", 146x20 px, legal row reads
+          "About | FAQ | Privacy | Terms | Cookie Policy | Contact |
+           Cookie Preferences"
+        • clicked from /channels (i.e. not just the homepage) → existing
+          preferences modal opened (no new UI, reuses
+          'wl:open-cookie-preferences' event + the mounted ConsentBanner)
+        • current state reflected: Analytics toggle read "On" while granted
+        • revoked from that panel → consent update {analytics_storage:'denied'}
+          fired immediately, no reload; a following SPA navigation produced NO
+          new page_view (count stayed 1)
+        • after reload: banner not re-shown (choice persisted), gtag undefined,
+          0 googletagmanager scripts → GA4 fully blocked
+      No footer redesign, no second preferences system, no second consent store,
+      no consent-history feature.
+      TESTS: tests/m18_ga4_consent.test.ts 30/30 PASS (adds §7 footer
+      discoverability); full targeted+regression run m18_ga4_consent (30),
+      m11_batch3 (12), m17 (18), m17_1 (10), m18 (17) → 87/87 PASS.
+      tsc --noEmit clean (once); yarn build clean (once).
+      DEFERRED TO M19 (unchanged): category landing depth, campaign handoff
+      polish; plus campaign deposit, campaign funding/wallet, PayPal recurring,
+      campaign conversation, consent audit log, analytics health view.
+      DEPLOY: NOT EXECUTED.

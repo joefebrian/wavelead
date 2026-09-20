@@ -296,3 +296,27 @@ describe('M18-GA4 §6 consent copy accuracy (no UI redesign)', () => {
     expect(BANNER).toContain('if (r.consent) setAnalyticsPref(!!r.consent.analytics)'); // restore on load
   });
 });
+
+// ------------------------------------------------- 7. FOOTER DISCOVERABILITY
+describe('M18-GA4 §7 Cookie Preferences reachable from the public footer', () => {
+  it('7.1 the existing trigger sits in the footer legal row on every page', () => {
+    const footer = src('components/layout/Footer.tsx');
+    expect(footer).toContain("import CookiePreferencesTrigger from '@/components/consent/CookiePreferencesTrigger'");
+    expect(footer).toContain('<CookiePreferencesTrigger />');
+    expect(footer).toContain("{ href: '/privacy', label: 'Privacy' }");
+    expect(footer).toContain("{ href: '/cookies', label: 'Cookie Policy' }");
+    // Exactly one trigger — no second preferences system.
+    expect((footer.match(/<CookiePreferencesTrigger \/>/g) || []).length).toBe(1);
+  });
+
+  it('7.2 the trigger reuses the existing preferences UI (no new mechanism)', () => {
+    const trig = src('components/consent/CookiePreferencesTrigger.tsx');
+    expect(trig).toContain("new Event('wl:open-cookie-preferences')");
+    expect(trig).toContain('Cookie Preferences');
+    expect(trig).toContain('data-testid="footer-cookie-preferences"');
+    expect(trig).not.toContain('localStorage');
+    expect(trig).not.toContain('document.cookie');
+    expect(trig).not.toContain('/api/consent');       // no second write path
+    expect(BANNER).toContain("window.addEventListener('wl:open-cookie-preferences', open)");
+  });
+});
