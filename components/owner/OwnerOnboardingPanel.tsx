@@ -168,7 +168,13 @@ export default function OwnerOnboardingPanel({ channelId }: { channelId: string 
 
         <div className="mt-4 space-y-2" data-testid="sample-work-list">
           {works.length === 0 && (
-            <p className="text-sm text-muted-foreground">No sample work yet.</p>
+            <div className="rounded-md border border-border bg-muted/40 p-3 flex flex-wrap items-center justify-between gap-2"
+                 data-testid="sample-work-empty-prompt">
+              <p className="text-sm">Add a sample work so brands can quickly see what you can create.</p>
+              <Button size="sm" variant="outline" onClick={() => setOpen(true)} data-testid="sample-work-empty-cta">
+                Add Sample Work
+              </Button>
+            </div>
           )}
           {works.map((w) => (
             <div key={w.id} className="flex items-start justify-between gap-3 rounded-md border border-border p-3">

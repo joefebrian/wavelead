@@ -289,3 +289,58 @@ describe('M18.1 Phase G/H onboarding + sample work', () => {
     expect(page).toContain('rel="noopener noreferrer nofollow"');
   });
 });
+
+/* ------------------------- PHASE 2 — FINAL ONBOARDING POLISH (M18.1) */
+describe('M18.1 Phase 2 final polish', () => {
+  const panel = src('components/owner/OwnerOnboardingPanel.tsx');
+  const mon = src('app/dashboard/channels/[id]/monetization/MonetizationClient.tsx');
+
+  it('2A sample-work prompt: inline, only when empty, never auto-creates', () => {
+    expect(panel).toContain('data-testid="sample-work-empty-prompt"');
+    expect(panel).toContain('Add a sample work so brands can quickly see what you can create.');
+    expect(panel).toContain('data-testid="sample-work-empty-cta"');
+    expect(panel).toContain('Add Sample Work');
+    // Rendered ONLY when there are zero entries → hides itself after the first real entry.
+    expect(panel).toContain('{works.length === 0 && (');
+    // No modal/interruption and no fabricated work.
+    expect(panel).not.toMatch(/Dialog|Modal|alert\(/);
+    expect(panel).not.toMatch(/createDefault|seedSample|autoCreate/);
+  });
+
+  it('2B rate-card starters are optional, editable and priceless by design', () => {
+    expect(mon).toContain('data-testid="rate-card-starters"');
+    expect(mon).toContain('Optional starters — structure only, you set the price');
+    expect(mon).toContain('data-testid={`rate-card-starter-${st.key}`}');
+    for (const k of ['sponsored-post', 'product-feature', 'placement-24h', 'multi-post']) {
+      expect(mon).toContain(`key: '${k}'`);
+    }
+    for (const l of ['Sponsored Channel Post', 'Product / Deal Feature', '24-Hour Placement', 'Multi-Post Package']) {
+      expect(mon).toContain(l);
+    }
+    expect(mon).toContain('not');
+    expect(mon).toContain('pricing advice or a market standard');
+    expect(mon).toContain('nothing is saved until you edit, review and press Save.');
+  });
+
+  it('2B nothing is auto-saved and no amount is ever suggested', () => {
+    // Starter + "Add package" both leave the price empty.
+    expect(mon).toContain('price_minor: null,                    // never a suggested amount');
+    expect(mon).not.toContain('price_minor: 25000');
+    // applyStarter only mutates local draft state — no fetch/PUT inside it.
+    const fn = mon.slice(mon.indexOf('function applyStarter'), mon.indexOf('function updatePkg'));
+    expect(fn).not.toContain('fetch(');
+    expect(fn).not.toContain('save()');
+    // Save requires an owner-typed price for every fixed-price package.
+    expect(mon).toContain("text: 'Set your own price for every fixed-price package before saving.'");
+    expect(mon).toContain("!(Number(p.price_minor) > 0)");
+  });
+
+  it('2B existing rate card is never overwritten by a starter', () => {
+    // Starters only ever APPEND to the current draft, and the draft is seeded
+    // from the saved card.
+    expect(mon).toContain('setPackages((p) => [...p, {');
+    expect(mon).toContain('(initialCard?.packages || []).map(');
+    // Starters are offered only in the empty state.
+    expect(mon.indexOf('data-testid="rate-card-starters"')).toBeGreaterThan(mon.indexOf('{packages.length === 0 && ('));
+  });
+});

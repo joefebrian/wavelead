@@ -31,14 +31,41 @@ export default function MonetizationClient({
   const [deliveryDraft, setDeliveryDraft] = useState<Record<string, { notes: string; urls: string; evidenceUrl: string }>>({});
 
   function addPkg() {
-    setPackages((p) => [...p, { type: 'sponsored_post', name: '', description: '', price_minor: 25000, currency: 'USD', deliverables: [], estimated_delivery_days: null, is_active: true }]);
+    // M18.1 Phase 2B — no suggested amount: the owner sets their own price.
+    setPackages((p) => [...p, { type: 'sponsored_post', name: '', description: '', price_minor: null, currency: 'USD', deliverables: [], estimated_delivery_days: null, is_active: true }]);
   }
+  // M18.1 Phase 2B — OPTIONAL editable starter STRUCTURES. Nothing is created
+  // or saved automatically: choosing a starter only fills the form (with NO
+  // price), and the owner must still edit, review and press Save. No amount is
+  // ever presented as a market standard.
+  const STARTERS: { key: string; label: string; type: MarketplacePackageType; name: string; description: string; deliverables: string[] }[] = [
+    { key: 'sponsored-post', label: 'Sponsored Channel Post', type: 'sponsored_post', name: 'Sponsored channel post', description: 'One sponsored post shared with my channel audience, with clear disclosure.', deliverables: ['1 sponsored post', 'Disclosure included'] },
+    { key: 'product-feature', label: 'Product / Deal Feature', type: 'sponsored_post', name: 'Product / deal feature', description: 'A focused feature of your product or limited-time deal.', deliverables: ['1 feature post', 'Offer details + link'] },
+    { key: 'placement-24h', label: '24-Hour Placement', type: 'sponsored_post_pin', name: 'Sponsored post + 24h pin', description: 'A sponsored post kept pinned for 24 hours.', deliverables: ['1 sponsored post', '24-hour pin'] },
+    { key: 'multi-post', label: 'Multi-Post Package', type: 'multi_post', name: 'Multi-post package', description: 'A short series of posts across several days.', deliverables: ['3 posts across 7 days'] },
+  ];
+
+  function applyStarter(st: typeof STARTERS[number]) {
+    setPackages((p) => [...p, {
+      type: PKG_TYPES.some((t) => t.value === st.type) ? st.type : 'sponsored_post',
+      name: st.name, description: st.description,
+      price_minor: null,                    // never a suggested amount
+      currency: 'USD', deliverables: st.deliverables,
+      estimated_delivery_days: null, is_active: true,
+    }]);
+    setMsg(null);                            // nothing is saved until Save is pressed
+  }
+
   function updatePkg(i: number, patch: Partial<DraftPackage>) {
     setPackages((p) => p.map((pk, ix) => (ix === i ? { ...pk, ...patch } : pk)));
   }
   function delPkg(i: number) { setPackages((p) => p.filter((_, ix) => ix !== i)); }
 
   async function save() {
+    // Explicit owner action only, and every fixed-price package needs a price
+    // the owner typed themselves.
+    const unpriced = packages.some((p) => p.type !== 'custom_quote' && !(Number(p.price_minor) > 0));
+    if (unpriced) { setMsg({ ok: false, text: 'Set your own price for every fixed-price package before saving.' }); return; }
     setBusy(true); setMsg(null);
     try {
       const cleaned = packages.map((p) => ({
@@ -157,10 +184,30 @@ export default function MonetizationClient({
         <div className="mt-4 space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">Brands pay WaveLead; you receive 90% of the applicable net (after gateway fee), WaveLead retains 10%.</p>
-            <Button size="sm" onClick={addPkg}><Plus className="h-4 w-4 mr-1" />Add package</Button>
+            <Button size="sm" onClick={addPkg} data-testid="rate-card-add-package"><Plus className="h-4 w-4 mr-1" />Add package</Button>
           </div>
           <div className="space-y-3">
-            {packages.length === 0 && <div className="text-sm text-muted-foreground py-6 text-center">No packages yet.</div>}
+            {packages.length === 0 && (
+              <div className="py-6 text-center" data-testid="rate-card-empty">
+                <div className="text-sm text-muted-foreground">No packages yet. Add your first package to let brands book you.</div>
+                <div className="mt-4 rounded-md border border-dashed border-border p-4 text-left" data-testid="rate-card-starters">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Optional starters — structure only, you set the price
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    These just pre-fill the form so you do not start from a blank page. They are <span className="font-semibold">not</span>
+                    {' '}pricing advice or a market standard, nothing is saved until you edit, review and press Save.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {STARTERS.map((st) => (
+                      <Button key={st.key} size="sm" variant="outline" onClick={() => applyStarter(st)} data-testid={`rate-card-starter-${st.key}`}>
+                        Use {st.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
             {packages.map((p, i) => (
               <div key={i} className="wh-card p-4 grid md:grid-cols-2 gap-3">
                 <label className="block text-sm"><span className="block text-xs uppercase text-muted-foreground mb-1">Type</span>

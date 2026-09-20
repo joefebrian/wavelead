@@ -7207,3 +7207,65 @@ agent_communication:
         tests/m07_security.test.ts primary super-admin seed (3, credentials are
         managed outside the repo), tests/m03.test.ts release-safety flag (1).
       DEPLOY: NOT EXECUTED.
+
+## M18.1 PRODUCTION RELEASE (deployed once) + WEEKLY SCHEDULER FINDING
+  - agent: "main"
+    comment: |
+      PHASE 1 — PRODUCTION FX SANITY (read-only, production data, existing
+      public-safe endpoint GET https://wavelead.org/api/fx/rate):
+        rate_scaled 18200, rate_scale 0, effective_from 2026-09-03T15:38:10Z
+        canonical_rate = 18200 / 10^0 = 18200 (finite, > 0) → PASS
+        Expected display: 1 USD = Rp18,200 · Manual Admin Reference Rate
+        (Manual Fallback while the PayPal FX contract is unavailable).
+        No production FX data was read/written through any mutating path.
+      PHASE 2 — FINAL POLISH:
+        2A Sample Work prompt: inline empty-state prompt "Add a sample work so
+           brands can quickly see what you can create." + "Add Sample Work"
+           CTA; rendered only when works.length === 0 so it self-hides after
+           the first real entry. No modal, no auto-creation, no fabricated
+           brand work, no effect on sponsorship eligibility.
+        2B Rate Card starters: the previous UX pre-filled an ARBITRARY $250
+           price on "Add package" — corrected. New packages and all four
+           optional starters (Sponsored Channel Post, Product / Deal Feature,
+           24-Hour Placement, Multi-Post Package) carry price_minor: null.
+           Starters only append to the local draft (no fetch/save inside
+           applyStarter), are offered only in the empty state, never overwrite
+           a saved card, and Save now refuses any fixed-price package without
+           an owner-typed price. Copy states they are not pricing advice or a
+           market standard.
+      PHASE 4 — VALIDATION: m18_1_fx 11/11, m18_1_post_launch 35/35, combined
+        targeted+regression (incl. m18_ga4_consent, m18, m17, m17_1,
+        m11_batch3, m03_ownership_verification, m141_pricing) 162/162 PASS;
+        npx tsc --noEmit clean (once); yarn build clean (once).
+      PHASE 5 — DEPLOY: ONE production deployment executed; M18.1 confirmed
+        live at 17:09 UTC. No secrets changed, no real-money payment/payout/
+        refund/booking, no code change between the final build and the deploy.
+      PHASE 6 — PRODUCTION SMOKE: / 200, /countries 200, /channels 200,
+        /pricing 200; /dashboard, /dashboard/campaigns, /admin, /admin/fx-rates
+        307→login; /api/health 200, /api/fx/rate 200 (18200/0),
+        /api/channels/<slug>/sample-work 200, /api/owner/channels/*/sample-work
+        401, /api/owner/channels/*/onboarding 401, /api/admin/claims 401,
+        /api/admin/channels 401, /api/admin/activation-payments 401.
+        Homepage: 8 country tiles (≤12), all with approved channels
+        (Indonesia 20, US 8, India 5, Brazil 2, Malaysia 2, Philippines 2,
+        Singapore 1, UK 1) + "View all countries"; /countries still renders
+        "Countries with channels" AND the full canonical "Other supported
+        countries" list. GA4 regression: 0 requests before consent, gtag
+        undefined, 0 _ga cookies, and 0 requests even after visiting
+        /channels?token=EC-SMOKE-181&PayerID=SMOKE181&utm_source=smoke.
+        NOTE: /admin/fx-rates itself is behind admin login in production, so
+        the rendered string was verified by derivation from the live record
+        (18200/0 → "18,200" via formatManualRate, unit-tested) rather than by
+        signing in.
+      PHASE 7 — WEEKLY SCHEDULER FINDING: the pod does ship an Emergent
+        webhook-cron mechanism (/app/.emergent/cron/*, driven by
+        /app/.emergent/crons.yml). It is NOT usable for this job as-is because
+        (a) watch_crons.sh reconciles with scope=preview and explicitly "keeps
+        prod/AWS untouched", so it would not schedule production; (b) it
+        authenticates with `Authorization: Bearer $WEBHOOK_CRON_SECRET` and a
+        schedule.triggered envelope, whereas /api/cron/whatsapp-refresh expects
+        `x-cron-secret: CRON_SECRET` — adapting it would be a post-deploy code
+        change, which is not authorized. Therefore:
+        WEEKLY SCHEDULER: MANUAL PLATFORM SETUP REQUIRED (not a blocker).
+        No secret value was printed, logged, returned or hardcoded.
+      POST-DEPLOY CODE CHANGES: NONE (this entry is documentation only).
