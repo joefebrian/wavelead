@@ -6953,3 +6953,26 @@ agent_communication:
         m11_batch3_consent_analytics (12), m18 (17) → 47/47 PASS.
         npx tsc --noEmit clean (once). yarn build clean (once).
       DEPLOY: NOT EXECUTED.
+
+## M18 GA4 AUDIT — ADDENDUM (URL PATH IDS, conditional item approved by operator)
+  - agent: "main"
+    comment: |
+      CONDITION MET: the audit confirmed internal object identifiers (UUIDs)
+      were reaching GA4 through page_path / page_location on private surfaces
+      (e.g. /dashboard/channels/<uuid>/verify, /dashboard/campaigns/<uuid>,
+      /admin/users/<uuid>). Smallest targeted fix applied INSIDE the existing
+      sanitizer only:
+        lib/analytics/ga4Location.ts → normalizeGa4Pathname() replaces
+        identifier-shaped segments (uuid, >=16-char hex/ObjectId, >=4-digit
+        numeric, >=20-char opaque token) with the literal `[id]`;
+        safeGa4Path() now normalizes the path before appending the allowlisted
+        query params. Applies ONLY to what analytics receives.
+      NOT CHANGED: real application routes/URLs, routing design, event
+      taxonomy, GA4 loader/config, consent banner, consent storage.
+      PRESERVED: public slug context (/channels/<slug>, /category/<slug>,
+      /sponsor/<slug>) — slugs do not match the identifier shapes.
+      DEFERRED per operator: consent audit-log UI, campaign conversation.
+      TESTS: tests/m18_ga4_consent.test.ts 23/23 PASS; regression m17 (18),
+      m17_1 (10), m11_batch3 (12), m18 (17) → 57/57 PASS.
+      tsc --noEmit clean (once); yarn build clean (once).
+      DEPLOY: NOT EXECUTED. M18 remains frozen.

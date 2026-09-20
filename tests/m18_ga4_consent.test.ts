@@ -9,7 +9,9 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { safeGa4Path, GA4_SAFE_QUERY_KEYS } from '@/lib/analytics/ga4Location';
+import { safeGa4Path, normalizeGa4Pathname, GA4_SAFE_QUERY_KEYS } from '@/lib/analytics/ga4Location';
+
+const UUID = '3f2a9c14-7b51-4d8e-9a20-6c1e5d4b8f77';
 
 const REPO = path.resolve(__dirname, '..');
 const src = (p: string) => readFileSync(path.join(REPO, p), 'utf8');
@@ -160,13 +162,32 @@ describe('M18-GA4 §5 no PII or sensitive identifiers reach GA4', () => {
     expect(out).not.toContain('brand_pro');
   });
 
-  it('5.3 internal commercial identifiers are stripped', () => {
+  it('5.3 internal commercial identifiers are stripped from the query', () => {
     expect(safeGa4Path('/dashboard/sponsorships', 'order=o-1&payment=paypal&attempt=a-1&status=return'))
       .toBe('/dashboard/sponsorships?status=return');
     expect(safeGa4Path('/pricing', 'founding_lifetime=fl-1&status=paid')).toBe('/pricing?status=paid');
-    expect(safeGa4Path('/dashboard/channels/8e0c/verify', 'activation=p-9&status=paid'))
-      .toBe('/dashboard/channels/8e0c/verify?status=paid');
-    expect(safeGa4Path('/dashboard/promotions/c-1', 'funding=f-1&status=paid')).toBe('/dashboard/promotions/c-1?status=paid');
+    expect(safeGa4Path(`/dashboard/channels/${UUID}/verify`, 'activation=p-9&status=paid'))
+      .toBe('/dashboard/channels/[id]/verify?status=paid');
+    expect(safeGa4Path(`/dashboard/promotions/${UUID}`, 'funding=f-1&status=paid'))
+      .toBe('/dashboard/promotions/[id]?status=paid');
+  });
+
+  it('5.3b internal object ids in the PATH are normalized to a route pattern', () => {
+    expect(normalizeGa4Pathname(`/dashboard/campaigns/${UUID}`)).toBe('/dashboard/campaigns/[id]');
+    expect(normalizeGa4Pathname(`/dashboard/sponsorship-requests/${UUID}`)).toBe('/dashboard/sponsorship-requests/[id]');
+    expect(normalizeGa4Pathname(`/admin/users/${UUID}/edit`)).toBe('/admin/users/[id]/edit');
+    expect(normalizeGa4Pathname('/admin/audience-snapshots/507f1f77bcf86cd799439011')).toBe('/admin/audience-snapshots/[id]');
+    expect(normalizeGa4Pathname('/dashboard/bookings/1234567890')).toBe('/dashboard/bookings/[id]');
+    expect(normalizeGa4Pathname('/x/ab12cd34ef56gh78ij90kl')).toBe('/x/[id]');
+    // Public slug surfaces keep their (non-sensitive, useful) context.
+    expect(normalizeGa4Pathname('/channels/daily-tech-news')).toBe('/channels/daily-tech-news');
+    expect(normalizeGa4Pathname('/category/business-finance')).toBe('/category/business-finance');
+    expect(normalizeGa4Pathname('/sponsor/daily-tech-news')).toBe('/sponsor/daily-tech-news');
+    expect(normalizeGa4Pathname('/')).toBe('/');
+    expect(normalizeGa4Pathname('/pricing')).toBe('/pricing');
+    // Real application routes are untouched — this is analytics-only.
+    expect(GA).toContain('safeGa4Path');
+    expect(src('lib/analytics/ga4Location.ts')).toContain('[id]');
   });
 
   it('5.4 auth / session / email / free-text values are stripped', () => {
