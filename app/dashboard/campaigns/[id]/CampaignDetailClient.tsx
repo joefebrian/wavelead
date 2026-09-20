@@ -33,6 +33,12 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [budget, setBudget] = useState('');
+  // M19 — Campaign Commitment Deposit (5%). Server-authoritative: this UI only
+  // displays what /commitment returns and never computes the requirement.
+  const [commitment, setCommitment] = useState<{
+    commitment_percent: number; required_commitment_minor: number; paid_commitment_minor: number;
+    topup_required_minor: number; excess_commitment_minor: number; funded: boolean;
+  } | null>(null);
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/brand/campaigns/${campaignId}`, { credentials: 'include' });
@@ -42,6 +48,10 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
       setApps(j.data.applications || []);
       setCommitted(j.data.committed_booking_value_minor || 0);
       setBudget(((j.data.campaign.budget_total_usd_minor || 0) / 100).toString());
+      try {
+        const cr = await fetch(`/api/brand/campaigns/${campaignId}/commitment`, { credentials: 'include' }).then((r) => r.json());
+        if (cr?.data?.commitment) setCommitment(cr.data.commitment);
+      } catch { /* display only */ }
     } else {
       setErr(typeof j?.error === 'string' ? j.error : 'Campaign not found');
     }
@@ -57,6 +67,35 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
       await load();
       return j.data;
     } catch (e) { setErr((e as Error).message); return null; } finally { setBusy(null); }
+  }
+
+  // Provider return → ALWAYS re-verify with the server. The browser return by
+  // itself never unlocks the campaign.
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const cid = sp.get('commitment');
+    if (!cid || sp.get('status') !== 'paid') return;
+    (async () => {
+      try {
+        await fetch(`/api/brand/campaigns/${campaignId}/commitment/${cid}`, { method: 'POST', credentials: 'include' });
+      } finally {
+        window.history.replaceState({}, '', `/dashboard/campaigns/${campaignId}`);
+        load();
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaignId]);
+
+  async function fundCommitment() {
+    setBusy('commitment'); setErr(null); setMsg(null);
+    try {
+      const r = await fetch(`/api/brand/campaigns/${campaignId}/commitment`, { method: 'POST', credentials: 'include' });
+      const j = await r.json();
+      if (!r.ok || !j?.ok) throw new Error(typeof j?.error === 'string' ? j.error : 'Could not start the commitment deposit');
+      const url = j.data?.commitment?.approve_url;
+      if (!url) throw new Error('The payment provider did not return an approval link');
+      window.location.href = url;
+    } catch (e) { setErr((e as Error).message); setBusy(null); }
   }
 
   async function saveBudget() {
@@ -91,7 +130,7 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
         description={`${campaign.brand_name} · ${campaign.objective}`}
         breadcrumb={{ href: '/dashboard/campaigns', label: 'Campaigns' }}
         actions={campaign.status === 'draft'
-          ? <Button onClick={() => call(`/api/brand/campaigns/${campaignId}/open`, 'open')} disabled={busy === 'open'} data-testid="open-campaign">
+          ? <Button onClick={() => call(`/api/brand/campaigns/${campaignId}/open`, 'open')} disabled={busy === 'open' || !!(commitment && !commitment.funded)} data-testid="open-campaign">
               {busy === 'open' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Open for applications
             </Button>
           : <StatusBadge tone="info" testId="campaign-status">{campaign.status.replace(/_/g, ' ')}</StatusBadge>}
@@ -107,7 +146,46 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
         <StatCard label="Committed bookings" value={usd(committed)} hint="Existing marketplace orders" testId="committed-value" />
       </div>
 
-      <SectionCard title="Campaign budget" description="Planning and display only — no deposit, no escrow, no wallet." className="mb-5" testId="budget-card">
+      <SectionCard
+        title="Campaign Commitment Deposit"
+        description="Payment Protection for creators: 5% of your campaign budget is funded up front before your campaign is visible to them."
+        className="mb-5" testId="commitment-card">
+        {commitment ? (
+          <>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <StatCard label={`Required (${commitment.commitment_percent}% of budget)`} value={usd(commitment.required_commitment_minor)} />
+              <StatCard label="Paid" value={usd(commitment.paid_commitment_minor)} />
+              <StatCard label="Top-up required" value={usd(commitment.topup_required_minor)} />
+            </div>
+            {commitment.excess_commitment_minor > 0 && (
+              <p className="mt-3 text-sm text-muted-foreground" data-testid="commitment-excess">
+                Excess commitment of {usd(commitment.excess_commitment_minor)} is held as a campaign-linked credit after your
+                budget decrease. It is not a WaveLead fee and is not recognised as revenue — contact support for credit or refund options.
+              </p>
+            )}
+            {commitment.topup_required_minor > 0 ? (
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <Button onClick={fundCommitment} disabled={busy === 'commitment'} data-testid="fund-commitment">
+                  {busy === 'commitment' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Fund {usd(commitment.topup_required_minor)} Campaign Commitment Deposit
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  {commitment.paid_commitment_minor > 0
+                    ? 'Top-up required after your budget increase. Approvals stay within your funded campaign limit until it is paid.'
+                    : 'Your campaign becomes visible to creators once this is successfully captured.'}
+                </span>
+              </div>
+            ) : (
+              <p className="mt-4 text-sm text-emerald-700" data-testid="commitment-funded">
+                Commitment deposit funded. This deposit is campaign-linked funding, not a WaveLead fee, and is separate from the
+                10% marketplace fee on any booking you later make.
+              </p>
+            )}
+          </>
+        ) : <p className="text-sm text-muted-foreground">Loading commitment status…</p>}
+      </SectionCard>
+
+      <SectionCard title="Campaign budget" description="Sets your required Campaign Commitment Deposit (5%). Bookings remain the only financial obligation to creators." className="mb-5" testId="budget-card">
         <div className="flex flex-wrap items-end gap-3">
           <label className="text-sm">Total campaign budget (USD)
             <input className={fieldClass} value={budget} onChange={(e) => setBudget(e.target.value)} data-testid="budget-input" />
@@ -138,7 +216,13 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
 
       <SectionCard title="Applicants" description="Shortlist, approve or reject. No WaveLead admin approval is involved." testId="applicants-card">
         {apps.length === 0 ? (
-          <EmptyState icon={<Users className="h-6 w-6" />} title="No applications yet" description="Open campaigns appear under Campaign Opportunities for eligible channel owners." />
+          <EmptyState
+            icon={<Users className="h-6 w-6" />}
+            title={campaign.status === 'open' || campaign.status === 'in_selection'
+              ? 'Your campaign is live. Applications will appear here as creators apply.'
+              : 'No applications yet'}
+            description="Open campaigns appear under Campaign Opportunities for eligible channel owners."
+          />
         ) : (
           <DataTable head={['Channel', 'Audience', 'Proposed rate', 'Status', 'Actions']} testId="applicants-table">
             {apps.map((a) => (

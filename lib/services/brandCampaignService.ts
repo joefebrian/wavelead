@@ -26,14 +26,17 @@ import type { Actor } from '@/lib/types';
 
 /* ------------------------------------------------------------------ MODEL */
 
-export const CAMPAIGN_STATUSES = ['draft', 'open', 'in_selection', 'active', 'completed', 'cancelled'] as const;
+// M19 — `commitment_required` sits between draft and open: the campaign is
+// complete but cannot be published until the 5% Campaign Commitment Deposit
+// has been authoritatively captured.
+export const CAMPAIGN_STATUSES = ['draft', 'commitment_required', 'open', 'in_selection', 'active', 'completed', 'cancelled'] as const;
 export type BrandCampaignStatus = typeof CAMPAIGN_STATUSES[number];
 
 export const APPLICATION_STATUSES = ['applied', 'shortlisted', 'approved', 'rejected', 'withdrawn'] as const;
 export type BrandCampaignApplicationStatus = typeof APPLICATION_STATUSES[number];
 
 /** Statuses in which the brand may still edit campaign content / budget. */
-export const EDITABLE_STATUSES: BrandCampaignStatus[] = ['draft', 'open', 'in_selection'];
+export const EDITABLE_STATUSES: BrandCampaignStatus[] = ['draft', 'commitment_required', 'open', 'in_selection'];
 
 export interface BudgetChange {
   previous_budget_usd_minor: number;
@@ -64,6 +67,9 @@ export interface BrandCampaign {
   materials_url: string | null;      // external HTTPS link; WaveLead hosts no files
   status: BrandCampaignStatus;
   opened_at: Date | null;
+  // M19 — commitment-deposit bookkeeping (brand/admin only, never creator-facing).
+  commitment_funded_at?: Date | null;
+  commitment_topup_required_minor?: number;
   created_at: Date;
   updated_at: Date;
 }
@@ -210,13 +216,35 @@ export const brandCampaignService = {
   },
 
   /** Publish: the campaign becomes visible to eligible creators. No payment. */
+  /**
+   * M19 PUBLISH GATE — a campaign only becomes publicly visible to creators
+   * once the required 5% Campaign Commitment Deposit is CAPTURED. The gate is
+   * server-authoritative; a browser return cannot open a campaign.
+   */
   async open(actor: Actor | null, id: string): Promise<BrandCampaign> {
     const c = await ownedCampaign(actor, id);
     if (c.status === 'open') return c;
-    if (c.status !== 'draft') throw new HttpError(409, `Only a draft campaign can be opened (current: ${c.status})`);
+    if (!['draft', 'commitment_required'].includes(c.status)) {
+      throw new HttpError(409, `Only a draft campaign can be opened (current: ${c.status})`);
+    }
+    const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
+    const sum = await campaignCommitmentService.summary(id);
+    if (!sum.funded) {
+      // Park the campaign in commitment_required and tell the brand what is due.
+      if (c.status === 'draft') await brandCampaignRepo.update(id, { status: 'commitment_required' } as never);
+      throw new HttpError(402,
+        `Campaign Commitment Deposit required before this campaign can open: ${(sum.required_commitment_minor / 100).toFixed(2)} USD required, ${(sum.paid_commitment_minor / 100).toFixed(2)} USD paid (${(sum.topup_required_minor / 100).toFixed(2)} USD outstanding).`);
+    }
     const patch = { status: 'open' as BrandCampaignStatus, opened_at: new Date() };
     await brandCampaignRepo.update(id, patch);
     return { ...c, ...patch };
+  },
+
+  /** Commitment picture for brand/admin surfaces (never shown to creators). */
+  async commitmentSummary(actor: Actor | null, id: string) {
+    await ownedCampaign(actor, id);
+    const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
+    return campaignCommitmentService.summary(id);
   },
 
   async setStatus(actor: Actor | null, id: string, status: BrandCampaignStatus): Promise<BrandCampaign> {
@@ -294,6 +322,17 @@ export const brandCampaignService = {
     };
     const history = [...(c.budget_history || []), change];
     await brandCampaignRepo.update(id, { budget_total_usd_minor: d.budget_total_usd_minor, budget_history: history });
+    // M19 — a budget INCREASE raises the required 5%: the campaign stays
+    // visible but approvals are capped at the funded limit until the top-up is
+    // captured. A DECREASE can leave excess commitment, which is tracked as a
+    // campaign-linked credit and NEVER recognised as WaveLead revenue here.
+    const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
+    const sum = await campaignCommitmentService.summary(id);
+    if (sum.topup_required_minor > 0 && ['open', 'in_selection'].includes(c.status)) {
+      await brandCampaignRepo.update(id, { commitment_topup_required_minor: sum.topup_required_minor } as never);
+    } else {
+      await brandCampaignRepo.update(id, { commitment_topup_required_minor: 0 } as never);
+    }
     return { ...c, budget_total_usd_minor: d.budget_total_usd_minor, budget_history: history };
   },
 
@@ -341,6 +380,11 @@ export const brandCampaignService = {
       updated_at: now,
     };
     await brandCampaignRepo.insertApplication(row);
+    // M19 — best-effort notifications; never allowed to corrupt state.
+    try {
+      const { campaignNotificationService } = await import('@/lib/services/campaignNotificationService');
+      await campaignNotificationService.applicationSubmitted(campaign, row, channel.name);
+    } catch { /* notifications are best-effort */ }
     return row;
   },
 
@@ -402,6 +446,12 @@ export const brandCampaignService = {
 
     // Reviewing applicants moves the campaign into selection — display only.
     if (campaign.status === 'open') await brandCampaignRepo.update(campaign.id, { status: 'in_selection' });
+    if (decision === 'approved') {
+      try {
+        const { campaignNotificationService } = await import('@/lib/services/campaignNotificationService');
+        await campaignNotificationService.applicationApproved(campaign, { ...app, ...patch } as BrandCampaignApplication);
+      } catch { /* notifications are best-effort */ }
+    }
     return { ...app, ...patch } as BrandCampaignApplication;
   },
 

@@ -38,7 +38,9 @@ export default async function AdminCampaignsPage() {
 
       <div className="mb-4">
         <InfoBanner>
-          Campaign budgets are planning figures. WaveLead holds no campaign deposit or wallet — the only financial records are
+          Campaigns publish only after their 5% Campaign Commitment Deposit is captured. That deposit is campaign-linked
+          funding (payment purpose CAMPAIGN_COMMITMENT_DEPOSIT), never WaveLead revenue and never the 10% marketplace fee.
+          Booking obligations to creators still come only from
           marketplace orders, which keep Payment Protection and the 90% owner / 10% WaveLead split.
         </InfoBanner>
       </div>

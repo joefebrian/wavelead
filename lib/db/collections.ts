@@ -32,6 +32,8 @@ export const COLLECTIONS = {
   // M18 — Brand Launch Campaigns (isolated from promotion_campaigns).
   BRAND_CAMPAIGNS: 'brand_campaigns',
   BRAND_CAMPAIGN_APPLICATIONS: 'brand_campaign_applications',
+  // M19 — Campaign Commitment Deposit payments (5%), isolated money stream.
+  BRAND_CAMPAIGN_COMMITMENTS: 'brand_campaign_commitments',
   SPONSORSHIP_LEADS: 'sponsorship_leads',
   INTEGRATION_CREDENTIALS: 'integration_credentials',
   INTEGRATION_PROVIDER_SETTINGS: 'integration_provider_settings',

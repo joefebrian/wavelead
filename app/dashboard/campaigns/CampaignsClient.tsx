@@ -16,7 +16,7 @@ interface Campaign {
 }
 
 const STATUS_TONE: Record<string, Tone> = {
-  draft: 'neutral', open: 'success', in_selection: 'info', active: 'info', completed: 'neutral', cancelled: 'danger',
+  draft: 'neutral', commitment_required: 'warning', open: 'success', in_selection: 'info', active: 'info', completed: 'neutral', cancelled: 'danger',
 };
 const usd = (minor: number) => `$${(minor / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 
@@ -70,7 +70,7 @@ export default function CampaignsClient() {
       <PageHeader
         title="Campaigns"
         description="Launch a campaign, review creator applications, then continue approved creators into the normal WaveLead booking flow."
-        actions={<Button onClick={() => setCreating((v) => !v)} data-testid="new-campaign"><Plus className="mr-1.5 h-4 w-4" />New campaign</Button>}
+        actions={<Button onClick={() => setCreating((v) => !v)} data-testid="new-campaign"><Plus className="mr-1.5 h-4 w-4" />Launch Campaign</Button>}
       />
 
       <div className="mb-5">
@@ -113,7 +113,7 @@ export default function CampaignsClient() {
         <EmptyState
           icon={<Megaphone className="h-6 w-6" />}
           title="No campaigns yet"
-          description="Launch a campaign to let verified channel owners apply to work with your brand."
+          description="Launch a campaign and let interested creators apply."
           action={<Button onClick={() => setCreating(true)}>Create your first campaign</Button>}
         />
       ) : (

@@ -63,7 +63,7 @@ export default function OpportunitiesClient() {
     <>
       <PageHeader
         title="Campaign Opportunities"
-        description="Brand campaigns open to WaveLead channel owners. Applying is free — payment only ever happens later through a normal booking."
+        description="See which brands currently have open campaigns and apply. Applying is free — payment only ever happens later through a normal booking."
       />
       {err && <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive" data-testid="opportunity-error">{err}</div>}
       {channels.length === 0 && (
@@ -73,7 +73,15 @@ export default function OpportunitiesClient() {
       {rows === null ? (
         <div className="text-sm text-muted-foreground">Loading opportunities…</div>
       ) : rows.length === 0 ? (
-        <EmptyState icon={<Compass className="h-6 w-6" />} title="No open campaigns right now" description="New brand campaigns will appear here as soon as they open for applications." />
+        <EmptyState
+          icon={<Compass className="h-6 w-6" />}
+          title="No campaigns are open for your channels right now."
+          description="New brand campaigns appear here the moment a brand funds and opens one. Meanwhile, a complete profile and rate card make you far easier to pick."
+          action={<div className="flex flex-wrap gap-2 justify-center">
+            <a href="/channels" className="text-sm font-semibold text-primary hover:underline" data-testid="opportunities-browse-channels">Browse Channels</a>
+            <a href="/dashboard/channels" className="text-sm font-semibold text-primary hover:underline" data-testid="opportunities-complete-profile">Complete Profile</a>
+          </div>}
+        />
       ) : (
         <div className="space-y-4" data-testid="opportunity-list">
           {rows.map((c) => (

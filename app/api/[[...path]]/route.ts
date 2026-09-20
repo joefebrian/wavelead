@@ -1567,6 +1567,33 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const body = await safeJson(request);
       return applyCors(ok({ campaign: await brandCampaignService.update(actor, path[2], body) }), request);
     }
+    // ---------------- M19 CAMPAIGN COMMITMENT DEPOSIT (5%) ----------------
+    // Provider-agnostic: the campaign domain calls the canonical payment
+    // service, never PayPal directly.
+    if (path.length === 4 && path[0] === 'brand' && path[1] === 'campaigns' && path[3] === 'commitment' && method === 'GET') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      return applyCors(ok({ commitment: await brandCampaignService.commitmentSummary(actor, path[2]) }), request);
+    }
+    if (path.length === 4 && path[0] === 'brand' && path[1] === 'campaigns' && path[3] === 'commitment' && method === 'POST') {
+      const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
+      const { resolveTrustedOrigin } = await import('@/lib/utils/canonicalOrigin');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      const trustedOrigin = resolveTrustedOrigin(request.headers);
+      const row = await campaignCommitmentService.createCheckout(actor, path[2], trustedOrigin);
+      return applyCors(ok({ commitment: { id: row.id, amount_minor: row.amount_minor, required_commitment_amount_minor: row.required_commitment_amount_minor, commitment_percent: row.commitment_percent, approve_url: row.approve_url, status: row.status } }, { status: 201 }), request);
+    }
+    // Authoritative finalize: always re-asks the provider. A browser return
+    // alone never unlocks a campaign.
+    if (path.length === 5 && path[0] === 'brand' && path[1] === 'campaigns' && path[3] === 'commitment' && path[4] && method === 'POST') {
+      const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      await brandCampaignService.commitmentSummary(actor, path[2]);   // ownership check
+      const row = await campaignCommitmentService.captureAndFinalize(path[4]);
+      return applyCors(ok({ status: row.status, captured_amount_minor: row.captured_amount_minor, commitment: await campaignCommitmentService.summary(path[2]) }), request);
+    }
+
     if (path[0] === 'brand' && path[1] === 'campaigns' && path[3] === 'open' && method === 'POST') {
       const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
       const actor = await resolveActor(request); requireRole(actor, ROLES.USER);

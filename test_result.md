@@ -7269,3 +7269,81 @@ agent_communication:
         WEEKLY SCHEDULER: MANUAL PLATFORM SETUP REQUIRED (not a blocker).
         No secret value was printed, logged, returned or hardcoded.
       POST-DEPLOY CODE CHANGES: NONE (this entry is documentation only).
+
+## M19 — OPERATIONS CLOSEOUT + CAMPAIGN POOLER + 5% COMMITMENT DEPOSIT (NOT DEPLOYED)
+  - agent: "main"
+    comment: |
+      PHASE A — SCHEDULER. Investigated the actual environment. A NATIVE
+      Emergent webhook-cron mechanism exists in the pod
+      (/app/.emergent/cron/{webhook_crond,watch_crons,dispatch_webhook}.sh,
+      driven by /app/.emergent/crons.yml, which does not exist yet). It is NOT
+      usable for this job without platform-side action because:
+        (1) watch_crons.sh reconciles with scope=preview and is documented to
+            keep prod/AWS untouched → it would not schedule production;
+        (2) dispatch_webhook.sh authenticates with
+            `Authorization: Bearer <WEBHOOK_CRON_SECRET>` read from a dotenv and
+            posts a schedule.triggered envelope, while
+            /api/cron/whatsapp-refresh expects `x-cron-secret: CRON_SECRET`;
+        (3) the crons.yml schema is not documented in the workspace, so writing
+            one would be guesswork.
+      → WEEKLY SCHEDULER: MANUAL PLATFORM SETUP REQUIRED. Weekly job to create
+        platform-side: POST https://wavelead.org/api/cron/whatsapp-refresh,
+        Monday 03:00 UTC, body {"limit":100,"delayMs":1000}, header
+        x-cron-secret sourced from the existing secure secret store. No secret
+        value was printed, returned, logged or hardcoded. The application side
+        is READY and idempotent (7-day staleness gating).
+      PHASE B — ADMIN FX. No production admin session is available to this
+      agent (credentials live outside the repo), so the authenticated visual
+      check was NOT faked: ADMIN FX VISUAL CHECK = AUTHENTICATED CHECK
+      UNAVAILABLE. Safe production data verification instead (read-only
+      GET /api/fx/rate): rate_scaled 18200, rate_scale 0 → canonical 18200,
+      finite and > 0 → "1 USD = Rp18,200", Manual Admin Reference Rate /
+      Manual Fallback. No Infinity, no NaN. Provider capability still reports
+      the CONTRACT_NOT_FOUND-class entitlement limitation (paypalFx.ts) and
+      settlement snapshots are untouched.
+      PHASES C–V — CAMPAIGN POOLER. Extended the EXISTING brand_campaigns /
+      brand_campaign_applications domain (promotion_campaigns untouched, no
+      second campaign domain):
+        • New status `commitment_required`; statuses are now draft →
+          commitment_required → open → in_selection → active → completed /
+          cancelled.
+        • NEW lib/services/payments/campaignCommitmentService.ts: purpose
+          CAMPAIGN_COMMITMENT_DEPOSIT, COMMITMENT_PERCENT = 5,
+          requiredCommitmentMinor() = ceil(budget × 5%), snapshots
+          (campaign_budget_snapshot_minor, commitment_percent,
+          required_commitment_amount_minor, captured_amount_minor, provider,
+          provider refs, status, captured_at) in the isolated
+          brand_campaign_commitments collection.
+        • PUBLISH GATE in brandCampaignService.open(): 402 + parks the campaign
+          in commitment_required until the deposit is CAPTURED; creators cannot
+          see or fetch the campaign before that.
+        • Authoritative + idempotent finalization (conditional status
+          transition); browser return always re-verifies with the provider;
+          webhook path shares the same pipeline.
+        • Budget increase → top-up amount + funded_campaign_limit_minor cap;
+          decrease → excess_commitment_minor tracked as campaign-linked credit,
+          never revenue, never auto-refunded; decrease still cannot fall below
+          committed marketplace bookings; every change versioned.
+        • Provider abstraction: campaign domain → getPaymentProvider() →
+          adapter. No PayPal identifier or provider state appears in executable
+          campaign-domain code (asserted in tests).
+        • Notifications (best-effort, existing mailer): creator application
+          received, brand new application, creator approved. Shortlisted/
+          rejected emails DEFERRED.
+        • UI: "Launch Campaign" CTA, commitment card (Required / Paid /
+          Top-up / excess note, Fund button, open-button disabled while
+          unfunded), corrected budget copy, creator opportunities copy +
+          "No campaigns are open for your channels right now." empty state with
+          Browse Channels / Complete Profile, zero-applicant "Your campaign is
+          live…" state, admin oversight copy naming the deposit purpose and
+          stating it is never WaveLead revenue.
+        • Marketplace economics untouched (owner 90 / WaveLead 10); no campaign
+          commission added; approval never charges a booking; handoff reuses
+          the existing order (findActiveBySourceCampaignApplication) so no
+          duplicate booking.
+      PUBLIC /campaigns DISCOVERY: reported as an OPTION only, not built.
+      TESTS: tests/m19.test.ts 23/23 (mock payment provider, no real money);
+        adjacent suites m18 (17, updated to the reopened deposit policy),
+        m18_1_fx (11), m18_1_post_launch (35), m08b1_marketplace (43) →
+        129/129 PASS. npx tsc --noEmit clean (once); yarn build clean (once).
+      DEPLOY: NOT EXECUTED. No real-money payment/payout/booking performed.

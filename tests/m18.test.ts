@@ -251,6 +251,34 @@ describe('M18 provider FX transparency', () => {
 });
 
 /* ------------------------------------------------------------ CAMPAIGNS --- */
+
+// M19 POLICY UPDATE — a campaign now publishes only after its 5% Campaign
+// Commitment Deposit is captured. These M18 behaviours are unchanged apart
+// from that gate, so the helper funds the deposit with a MOCK provider (no
+// real money) and then opens the campaign.
+async function fundAndOpen(brandActor: Parameters<typeof brandCampaignService.open>[0], campaignId: string) {
+  const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
+  const { _setPaymentProviderForTesting } = await import('@/lib/services/payments/providerFactory');
+  let amount = 0;
+  _setPaymentProviderForTesting({
+    id: 'mock',
+    async createPayment({ amount_minor }: { amount_minor: number }) {
+      amount = amount_minor;
+      return { provider_order_id: `mock-${campaignId}-${Date.now()}`, approve_url: 'https://provider.example/a', internal_status: 'checkout_created' };
+    },
+    async capturePayment() {
+      return { internal_status: 'paid', provider_capture_id: `cap-${Date.now()}`, amount_captured_minor: amount };
+    },
+  } as never);
+  try {
+    const row = await campaignCommitmentService.createCheckout(brandActor, campaignId);
+    await campaignCommitmentService.captureAndFinalize(row.id);
+  } finally {
+    _setPaymentProviderForTesting(null);
+  }
+  return brandCampaignService.open(brandActor, campaignId);
+}
+
 describe('M18 Brand Launch Campaigns', () => {
   it('10. brand creates a draft, opens it, and a creator sees + applies with an owned channel', async () => {
     await withDb(async (db) => {
@@ -267,7 +295,7 @@ describe('M18 Brand Launch Campaigns', () => {
 
       // Not visible while it is a draft.
       expect((await brandCampaignService.listOpportunities()).some((c) => c.id === draft.id)).toBe(false);
-      const open = await brandCampaignService.open(actorFor(brand), draft.id);
+      const open = await fundAndOpen(actorFor(brand), draft.id);
       expect(open.status).toBe('open');
       expect((await brandCampaignService.listOpportunities()).some((c) => c.id === draft.id)).toBe(true);
 
@@ -299,7 +327,7 @@ describe('M18 Brand Launch Campaigns', () => {
       const stranger = await seedUser(db);
       const channel = await seedChannel(db, creator);
       const c = await brandCampaignService.createDraft(actorFor(brand), campaignInput);
-      await brandCampaignService.open(actorFor(brand), c.id);
+      await fundAndOpen(actorFor(brand), c.id);
       const app = await brandCampaignService.apply(actorFor(creator), c.id, { channel_id: channel, pitch: 'Strong audience match for this campaign brief.' });
 
       await expect(brandCampaignService.decide(actorFor(stranger), app.id, 'approved')).rejects.toMatchObject({ status: 403 });
@@ -325,13 +353,18 @@ describe('M18 Brand Launch Campaigns', () => {
 
       // The campaign domain never imports a payment provider.
       const svc = src('lib/services/brandCampaignService.ts');
-      // No provider dependency of any kind leaks into the campaign domain.
-      expect(svc).not.toMatch(/paypalProvider|paypalConfigService|api-m\.paypal|providerFactory|paymentProvider/i);
-      expect(svc).not.toMatch(/createPayment|capturePayment|approve_url/i);
-      // Strip comments: the header documents what is deliberately ABSENT, the
-      // assertion is about executable code only.
+      // No PROVIDER dependency of any kind leaks into the campaign domain.
+      // (M19: the domain may delegate the Campaign Commitment Deposit to the
+      // canonical payment service, but it still never touches a provider SDK,
+      // provider states or provider URLs itself.)
+      expect(svc).not.toMatch(/paypalProvider|paypalConfigService|api-m\.paypal/i);
+      expect(svc).not.toMatch(/createPayment\(|capturePayment\(|approve_url/i);
+      // Strip comments: the assertion is about executable code only.
       const code = svc.split('\n').filter((l) => !/^\s*(\/\/|\/\*\*|\*|\/\*)/.test(l)).join('\n');
-      expect(code).not.toMatch(/deposit|wallet|escrow|funding_balance|top_?up/i);
+      // Still NO campaign wallet / funding balance in the campaign domain —
+      // only the M19 commitment deposit delegated to the payment service.
+      expect(code).not.toMatch(/wallet|escrow|funding_balance/i);
+      expect(code).toContain('campaignCommitmentService');
     });
   });
 
@@ -341,7 +374,7 @@ describe('M18 Brand Launch Campaigns', () => {
       const creator = await seedUser(db);
       const channel = await seedChannel(db, creator);
       const c = await brandCampaignService.createDraft(actorFor(brand), campaignInput);
-      await brandCampaignService.open(actorFor(brand), c.id);
+      await fundAndOpen(actorFor(brand), c.id);
       const app = await brandCampaignService.apply(actorFor(creator), c.id, { channel_id: channel, pitch: 'Ready to deliver this campaign for your brand.' });
       await brandCampaignService.decide(actorFor(brand), app.id, 'approved');
 
@@ -394,7 +427,7 @@ describe('M18 Brand Launch Campaigns', () => {
   });
 
   it('14. lifecycle + application statuses stay minimal and consistent', () => {
-    expect([...CAMPAIGN_STATUSES]).toEqual(['draft', 'open', 'in_selection', 'active', 'completed', 'cancelled']);
+    expect([...CAMPAIGN_STATUSES]).toEqual(['draft', 'commitment_required', 'open', 'in_selection', 'active', 'completed', 'cancelled']);
     expect([...APPLICATION_STATUSES]).toEqual(['applied', 'shortlisted', 'approved', 'rejected', 'withdrawn']);
   });
 
