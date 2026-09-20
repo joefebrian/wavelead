@@ -541,6 +541,12 @@ export const marketplaceService = {
       if (app.status !== 'approved') throw new HttpError(409, 'This campaign applicant has not been approved yet');
       const existingCampaignOrder = await marketplaceOrderRepo.findActiveBySourceCampaignApplication(app.id);
       if (existingCampaignOrder) return existingCampaignOrder;
+      // M19 D6 — an unresolved Campaign Commitment Deposit shortfall (refund /
+      // reversal) blocks NEW campaign obligations. Existing bookings above are
+      // resumed untouched, and all non-campaign bookings are unaffected.
+      if (campaign.commitment_issue_state) {
+        throw new HttpError(409, 'This campaign has an unresolved Campaign Commitment Deposit shortfall. Restore the deposit before creating new bookings.');
+      }
       sourceCampaignId = campaign.id;
       sourceCampaignApplicationId = app.id;
     }
@@ -594,7 +600,19 @@ export const marketplaceService = {
       completed_at: null, completed_by: null, completion_source: null, completion_note: null,
       paid_out_at: null, payout_id: null,
     };
-    return marketplaceOrderRepo.insert(order);
+    const created = await marketplaceOrderRepo.insert(order);
+    // M19 D1 — write the durable back-link from the campaign application to
+    // this order immediately (display + oversight). Best-effort: the
+    // authoritative committed value is derived from the order's own
+    // `source_brand_campaign_id`, so a failure here can never hide an
+    // obligation from the budget-safety check.
+    if (sourceCampaignApplicationId) {
+      try {
+        const { brandCampaignService } = await import('./brandCampaignService');
+        await brandCampaignService.attachOrder(sourceCampaignApplicationId, created.id);
+      } catch { /* non-financial association; never blocks booking creation */ }
+    }
+    return created;
   },
 
   // -------- Owner list / accept / reject --------

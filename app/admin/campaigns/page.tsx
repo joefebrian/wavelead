@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: 'Admin · Campaigns', robots: { index
 export const dynamic = 'force-dynamic';
 
 const TONE: Record<string, Tone> = {
-  draft: 'neutral', open: 'success', in_selection: 'info', active: 'info', completed: 'neutral', cancelled: 'danger',
+  draft: 'neutral', commitment_required: 'warning', open: 'success', in_selection: 'info', active: 'info', completed: 'neutral', cancelled: 'danger',
 };
 const usd = (m: number) => `$${(m / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 
@@ -48,12 +48,21 @@ export default async function AdminCampaignsPage() {
       {rows.length === 0 ? (
         <EmptyState title="No campaigns yet" description="Brand campaigns appear here as soon as a brand creates one." />
       ) : (
-        <DataTable head={['Campaign', 'Brand', 'Budget (plan)', 'Apps', 'Shortlisted', 'Approved', 'Bookings', 'Committed', 'Status', 'Created']} testId="admin-campaign-table">
+        <DataTable head={['Campaign', 'Brand', 'Budget (plan)', 'Deposit req.', 'Deposit paid', 'Shortfall', 'Apps', 'Shortlisted', 'Approved', 'Bookings', 'Committed', 'Status', 'Created']} testId="admin-campaign-table">
           {rows.map((r) => (
             <tr key={r.id} className="hover:bg-muted/40">
               <td className="px-3 py-2.5 font-medium">{r.name}</td>
               <td className="px-3 py-2.5 text-xs">{r.brand_name}</td>
               <td className="px-3 py-2.5 tabular-nums">{usd(r.budget_total_usd_minor)}</td>
+              <td className="px-3 py-2.5 tabular-nums" data-testid={`required-commitment-${r.id}`}>{usd(r.required_commitment_minor)}</td>
+              <td className="px-3 py-2.5 tabular-nums" data-testid={`paid-commitment-${r.id}`}>{usd(r.paid_commitment_minor)}</td>
+              <td className="px-3 py-2.5 tabular-nums">
+                {r.commitment_shortfall_minor > 0 ? (
+                  <StatusBadge tone="danger" testId={`commitment-issue-${r.id}`}>
+                    {usd(r.commitment_shortfall_minor)}{r.commitment_issue_state ? ' · refund' : ''}
+                  </StatusBadge>
+                ) : '—'}
+              </td>
               <td className="px-3 py-2.5 tabular-nums">{r.applications}</td>
               <td className="px-3 py-2.5 tabular-nums">{r.shortlisted}</td>
               <td className="px-3 py-2.5 tabular-nums">{r.approved}</td>

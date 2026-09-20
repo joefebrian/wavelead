@@ -982,14 +982,23 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
           const fee_minor: number | null = typeof feeVal === 'string' ? Math.round(parseFloat(feeVal) * 100) : null;
           const net_minor: number | null = typeof netVal === 'string' ? Math.round(parseFloat(netVal) * 100) : null;
           if (orderId && captureId && amt_minor > 0) {
-            // Domain routing: marketplace → promote → activation → founding-lifetime.
+            // Domain routing: marketplace → founding-lifetime → campaign
+            // commitment deposit → owner promotion funding.
             const mp = await marketplaceService.finalizeMarketplaceCaptureFromWebhook(orderId, captureId, amt_minor, currency, fee_minor, net_minor);
             if (!mp) {
               // Founding Brand Pro Lifetime (SaaS one-time).
               const { brandFoundingLifetimeService } = await import('@/lib/services/brandFoundingLifetimeService');
               const lt = await brandFoundingLifetimeService.finalizeFromWebhookByOrderId(orderId, captureId, amt_minor, fee_minor, net_minor);
               if (!lt) {
-                await campaignFundingService.finalizePaidByProviderOrderId(orderId, captureId, amt_minor);
+                // M19 D6 — Campaign Commitment Deposit finalized from the
+                // AUTHORITATIVE provider event: the campaign never depends on
+                // the brand returning to WaveLead. Snapshot-verified and
+                // idempotent inside the service.
+                const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
+                const cd = await campaignCommitmentService.finalizeCapturedFromProviderEvent(orderId, captureId, amt_minor, currency);
+                if (!cd) {
+                  await campaignFundingService.finalizePaidByProviderOrderId(orderId, captureId, amt_minor);
+                }
               }
             }
           }
@@ -1004,6 +1013,16 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
               const mp = await marketplaceService.captureMarketplacePaypalOrderByProviderOrderId(orderId);
               handled = !!mp;
             } catch { /* server-side capture may race with return-callback; guards dedupe */ }
+            if (!handled) {
+              // M19 D6 — server-side authoritative capture for a Campaign
+              // Commitment Deposit. Either race (webhook or browser return)
+              // may win; the service is idempotent.
+              try {
+                const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
+                const cd = await campaignCommitmentService.captureByProviderOrderId(orderId);
+                handled = !!cd;
+              } catch { /* capture may race with the return-callback; guards dedupe */ }
+            }
             if (!handled) {
               try { await campaignFundingService.captureFundingOrderByProviderOrderId(orderId); } catch { /* server-side capture may race with return-callback; the ledger guard dedupes */ }
             }
@@ -1026,7 +1045,14 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
               const { brandFoundingLifetimeService } = await import('@/lib/services/brandFoundingLifetimeService');
               const lt = await brandFoundingLifetimeService.recordRefundByOrderId(orderId, amt_minor);
               if (!lt) {
-                await campaignFundingService.recordRefund(orderId, amt_minor, refundRef);
+                // M19 D6 — Campaign Commitment Deposit refund / reversal.
+                // Financial-state-aware: existing creator bookings are never
+                // cancelled; the campaign funding state is recomputed.
+                const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
+                const cd = await campaignCommitmentService.recordRefundOrReversal(orderId, amt_minor, refundRef);
+                if (!cd) {
+                  await campaignFundingService.recordRefund(orderId, amt_minor, refundRef);
+                }
               }
             }
           }
@@ -1590,6 +1616,12 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
       const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
       await brandCampaignService.commitmentSummary(actor, path[2]);   // ownership check
+      // M19 — the commitment must belong to THIS campaign (payment ↔ campaign
+      // association is verified server-side, never inferred from the URL).
+      const owned = await campaignCommitmentService.listForCampaign(path[2]);
+      if (!owned.some((r) => r.id === path[4])) {
+        return applyCors(fail(404, 'Commitment deposit not found for this campaign'), request);
+      }
       const row = await campaignCommitmentService.captureAndFinalize(path[4]);
       return applyCors(ok({ status: row.status, captured_amount_minor: row.captured_amount_minor, commitment: await campaignCommitmentService.summary(path[2]) }), request);
     }
@@ -1627,12 +1659,17 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
     }
 
     // Creator-facing campaign opportunities + applications.
+    // M19 D3 — creator discovery requires authentication. A PUBLIC ANONYMOUS
+    // campaign board is DEFERRED, so an anonymous caller can neither list
+    // opportunities nor read a campaign brief by direct id.
     if (route === '/campaign-opportunities' && method === 'GET') {
       const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
       return applyCors(ok({ campaigns: await brandCampaignService.listOpportunities() }), request);
     }
     if (path[0] === 'campaign-opportunities' && path.length === 2 && method === 'GET') {
       const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
       return applyCors(ok({ campaign: await brandCampaignService.getOpportunity(path[1]) }), request);
     }
     if (path[0] === 'campaign-opportunities' && path[2] === 'apply' && method === 'POST') {

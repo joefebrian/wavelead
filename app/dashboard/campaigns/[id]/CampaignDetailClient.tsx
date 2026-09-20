@@ -20,6 +20,8 @@ interface Campaign {
   id: string; name: string; brand_name: string; objective: string; brief: string; status: string;
   budget_total_usd_minor: number; application_deadline: string | null;
   budget_history: Array<{ previous_budget_usd_minor: number; new_budget_usd_minor: number; changed_at: string; reason: string | null }>;
+  // M19 — set when a provider refund/reversal left the deposit short.
+  commitment_issue_state?: string | null; commitment_issue_shortfall_minor?: number;
 }
 
 const TONE: Record<string, Tone> = { applied: 'neutral', shortlisted: 'info', approved: 'success', rejected: 'danger', withdrawn: 'neutral' };
@@ -138,6 +140,15 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
 
       {err && <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive" data-testid="campaign-error">{err}</div>}
       {msg && <div className="mb-4 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900">{msg}</div>}
+
+      {campaign.commitment_issue_state && (
+        <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" data-testid="commitment-issue-banner">
+          Your Campaign Commitment Deposit was refunded or reversed and is now short by{' '}
+          <strong>{usd(campaign.commitment_issue_shortfall_minor ?? 0)}</strong>. Existing bookings, payouts and Payment
+          Protection are unaffected, but this campaign is hidden from Campaign Opportunities and no new booking can be
+          created until the deposit is restored below.
+        </div>
+      )}
 
       <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Applications" value={apps.length} />

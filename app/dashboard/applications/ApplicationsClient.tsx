@@ -9,6 +9,9 @@ import { ClipboardList } from 'lucide-react';
 interface App {
   id: string; campaign_id: string; status: string; pitch: string;
   proposed_rate_usd_minor: number | null; created_at: string; marketplace_order_id: string | null;
+  // M19 — display enrichment from the server (brand + campaign + channel used).
+  campaign_name: string | null; brand_name: string | null; campaign_status: string | null;
+  channel_name: string | null; channel_slug: string | null;
 }
 
 const TONE: Record<string, Tone> = { applied: 'neutral', shortlisted: 'info', approved: 'success', rejected: 'danger', withdrawn: 'neutral' };
@@ -39,12 +42,17 @@ export default function ApplicationsClient() {
       ) : rows.length === 0 ? (
         <EmptyState icon={<ClipboardList className="h-6 w-6" />} title="No applications yet" description="Browse Campaign Opportunities to apply with one of your approved channels." />
       ) : (
-        <DataTable head={['Applied', 'Pitch', 'Proposed rate', 'Status', '']} testId="my-applications-table">
+        <DataTable head={['Brand & campaign', 'Channel used', 'Proposed rate', 'Applied', 'Status', '']} testId="my-applications-table">
           {rows.map((a) => (
-            <tr key={a.id} className="align-top hover:bg-muted/40">
-              <td className="px-3 py-2.5 text-xs text-muted-foreground">{new Date(a.created_at).toLocaleDateString()}</td>
-              <td className="px-3 py-2.5"><p className="max-w-md text-xs text-muted-foreground">{a.pitch}</p></td>
+            <tr key={a.id} className="align-top hover:bg-muted/40" data-testid={`my-application-${a.id}`}>
+              <td className="px-3 py-2.5">
+                <div className="font-medium" data-testid={`application-brand-${a.id}`}>{a.brand_name || 'Brand'}</div>
+                <div className="text-xs text-muted-foreground" data-testid={`application-campaign-${a.id}`}>{a.campaign_name || 'Campaign'}</div>
+                <p className="mt-1 max-w-md text-xs text-muted-foreground">{a.pitch}</p>
+              </td>
+              <td className="px-3 py-2.5 text-xs">{a.channel_name || '—'}</td>
               <td className="px-3 py-2.5 tabular-nums">{a.proposed_rate_usd_minor === null ? '—' : `$${(a.proposed_rate_usd_minor / 100).toFixed(2)}`}</td>
+              <td className="px-3 py-2.5 text-xs text-muted-foreground">{new Date(a.created_at).toLocaleDateString()}</td>
               <td className="px-3 py-2.5"><StatusBadge tone={TONE[a.status] || 'neutral'}>{a.status}</StatusBadge></td>
               <td className="px-3 py-2.5 text-right">
                 {['applied', 'shortlisted'].includes(a.status) && !a.marketplace_order_id && (

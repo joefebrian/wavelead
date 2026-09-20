@@ -38,6 +38,12 @@ export type BrandCampaignApplicationStatus = typeof APPLICATION_STATUSES[number]
 /** Statuses in which the brand may still edit campaign content / budget. */
 export const EDITABLE_STATUSES: BrandCampaignStatus[] = ['draft', 'commitment_required', 'open', 'in_selection'];
 
+/**
+ * M19 D2/D3 — statuses in which a campaign is readable on CREATOR discovery
+ * surfaces. Reaching any of them requires a captured commitment deposit.
+ */
+export const CREATOR_VISIBLE_STATUSES: BrandCampaignStatus[] = ['open', 'in_selection', 'active'];
+
 export interface BudgetChange {
   previous_budget_usd_minor: number;
   new_budget_usd_minor: number;
@@ -70,6 +76,15 @@ export interface BrandCampaign {
   // M19 — commitment-deposit bookkeeping (brand/admin only, never creator-facing).
   commitment_funded_at?: Date | null;
   commitment_topup_required_minor?: number;
+  /**
+   * M19 D6 — set when an authoritative provider refund/reversal left the
+   * Campaign Commitment Deposit short. Existing marketplace obligations are
+   * preserved; the campaign is hidden from creator discovery and blocked from
+   * creating NEW bookings until the deposit is restored.
+   */
+  commitment_issue_state?: 'refund_shortfall' | null;
+  commitment_issue_shortfall_minor?: number;
+  commitment_issue_detected_at?: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -247,10 +262,28 @@ export const brandCampaignService = {
     return campaignCommitmentService.summary(id);
   },
 
+  /**
+   * M19 D2 — status transitions may never move a campaign into a
+   * CREATOR-VISIBLE state without an authoritatively captured commitment
+   * deposit. `open` goes through open(); `in_selection` / `active` are gated
+   * the same way; `completed` / `cancelled` are always allowed.
+   */
   async setStatus(actor: Actor | null, id: string, status: BrandCampaignStatus): Promise<BrandCampaign> {
     const c = await ownedCampaign(actor, id);
     if (!CAMPAIGN_STATUSES.includes(status)) throw new HttpError(400, 'Unknown campaign status');
     if (status === 'open') return this.open(actor, id);
+    if (status === c.status) return c;
+    if (!['in_selection', 'active', 'completed', 'cancelled'].includes(status)) {
+      throw new HttpError(409, `A campaign cannot be moved back to ${status}`);
+    }
+    if (CREATOR_VISIBLE_STATUSES.includes(status)) {
+      const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
+      const sum = await campaignCommitmentService.summary(id);
+      if (!sum.funded || c.commitment_issue_state) {
+        throw new HttpError(402,
+          `Campaign Commitment Deposit required before this campaign can become ${status}: ${(sum.topup_required_minor / 100).toFixed(2)} USD outstanding.`);
+      }
+    }
     await brandCampaignRepo.update(id, { status });
     return { ...c, status };
   },
@@ -260,40 +293,92 @@ export const brandCampaignService = {
     return brandCampaignRepo.listForBrand(actor.user.id);
   },
 
-  /** Creator-facing opportunities. Closed deadlines are filtered out. */
+  /**
+   * CREATOR-FACING opportunities.
+   *
+   * M19 D2/D3 — an unfunded campaign is never discoverable: the caller must be
+   * an authenticated user (enforced at the route), and every row must have an
+   * authoritatively captured commitment deposit with no funding issue. Closed
+   * deadlines and non-open statuses are filtered out as before.
+   */
   async listOpportunities(): Promise<BrandCampaign[]> {
     const rows = await brandCampaignRepo.listOpen();
     const now = Date.now();
-    return rows.filter((c) => !c.application_deadline || new Date(c.application_deadline).getTime() >= now);
+    const live = rows.filter((c) => !c.commitment_issue_state
+      && (!c.application_deadline || new Date(c.application_deadline).getTime() >= now));
+    if (!live.length) return [];
+    const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
+    const funded = await campaignCommitmentService.fundedCampaignIds(
+      live.map((c) => ({ id: c.id, budget_total_usd_minor: c.budget_total_usd_minor })),
+    );
+    return live.filter((c) => funded.has(c.id));
   },
 
+  /**
+   * CREATOR-FACING campaign detail. Same gate as the list, so a direct
+   * campaign id / URL can never bypass the funding gate.
+   */
   async getOpportunity(id: string): Promise<BrandCampaign> {
     const c = await brandCampaignRepo.findById(id);
     if (!c) throw new HttpError(404, 'Campaign not found');
-    if (!['open', 'in_selection', 'active'].includes(c.status)) throw new HttpError(404, 'Campaign is not open');
+    if (!CREATOR_VISIBLE_STATUSES.includes(c.status)) throw new HttpError(404, 'Campaign is not open');
+    if (c.commitment_issue_state) throw new HttpError(404, 'Campaign is not open');
+    const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
+    const sum = await campaignCommitmentService.summary(id);
+    if (!sum.funded) throw new HttpError(404, 'Campaign is not open');
     return c;
   },
 
   /**
-   * Sum of EXISTING marketplace orders created from this campaign. Marketplace
-   * orders are the only financially authoritative commitment.
+   * COMMITTED BOOKING VALUE (M19 D1) — the only financially authoritative
+   * obligation a campaign can carry.
+   *
+   * Source of truth = EXISTING marketplace orders, resolved from the durable
+   * association written at order creation:
+   *   • every order with `source_brand_campaign_id === campaignId`, UNION
+   *   • every order referenced by `application.marketplace_order_id` for an
+   *     application of this campaign (back-link safety net for orders created
+   *     before the link existed), accepted only when that order carries no
+   *     different campaign id — so no unrelated order is ever counted.
+   * Orders are de-duplicated by order id.
+   *
+   * NON-OBLIGATING orders are excluded using the existing marketplace
+   * financial semantics — the same terminal set the duplicate-booking guard
+   * uses: `owner_rejected` (owner declined) and `cancelled` (voided).
+   *
+   * Value per order = `snapshot.gross_price_minor` (authoritative accepted
+   * price) when present, otherwise the server-derived `quoted_price_minor`.
+   *
+   * Application status (applied / shortlisted / approved) is NEVER used: an
+   * approval creates no obligation, only a marketplace order does.
    */
   async committedBookingValueMinor(campaignId: string): Promise<{ total_minor: number; order_ids: string[] }> {
+    const NON_OBLIGATING = ['owner_rejected', 'cancelled'];
+    const byId = new Map<string, number>();
+
+    // (a) authoritative: orders that carry this campaign's source reference.
+    const direct = await marketplaceOrderRepo.listBySourceCampaign(campaignId);
+    for (const o of direct) {
+      if (NON_OBLIGATING.includes(o.status as string)) continue;
+      byId.set(o.id, o.snapshot?.gross_price_minor ?? o.quoted_price_minor ?? 0);
+    }
+
+    // (b) safety net: orders linked back from this campaign's applications.
     const apps = await brandCampaignRepo.listApplicationsForCampaign(campaignId);
-    const ids = apps.map((a) => a.marketplace_order_id).filter((x): x is string => !!x);
-    let total = 0;
-    const order_ids: string[] = [];
-    for (const oid of ids) {
+    for (const a of apps) {
+      const oid = a.marketplace_order_id;
+      if (!oid || byId.has(oid)) continue;
       const o = await marketplaceOrderRepo.findById(oid);
       if (!o) continue;
-      if (o.status === 'owner_rejected') continue;
-      // Committed value = the authoritative accepted price when available,
-      // otherwise the quoted price. Marketplace orders remain the only
-      // financial truth; the campaign budget never moves money.
-      total += o.snapshot?.gross_price_minor ?? o.quoted_price_minor ?? 0;
-      order_ids.push(oid);
+      // Never count an order that belongs to a different campaign.
+      if (o.source_brand_campaign_id && o.source_brand_campaign_id !== campaignId) continue;
+      if (NON_OBLIGATING.includes(o.status as string)) continue;
+      byId.set(o.id, o.snapshot?.gross_price_minor ?? o.quoted_price_minor ?? 0);
     }
-    return { total_minor: total, order_ids };
+
+    let total = 0;
+    for (const v of byId.values()) total += v;
+    return { total_minor: total, order_ids: [...byId.keys()] };
   },
 
   /**
@@ -398,9 +483,40 @@ export const brandCampaignService = {
     return { ...app, status: 'withdrawn' };
   },
 
-  async listMyApplications(actor: Actor | null): Promise<BrandCampaignApplication[]> {
+  /**
+   * Creator's own applications, enriched for display (M19 — Applications
+   * clarity): every row carries the Brand name, Campaign name and the channel
+   * used, so the creator never has to open a detail view to know which brand
+   * and campaign an application belongs to. Read-only enrichment — no new
+   * notification scope, no private brand data.
+   */
+  async listMyApplications(actor: Actor | null): Promise<(BrandCampaignApplication & {
+    campaign_name: string | null; brand_name: string | null; campaign_status: string | null;
+    channel_name: string | null; channel_slug: string | null;
+  })[]> {
     requireAuth(actor);
-    return brandCampaignRepo.listApplicationsForCreator(actor.user.id);
+    const rows = await brandCampaignRepo.listApplicationsForCreator(actor.user.id);
+    const campaigns = new Map<string, BrandCampaign | null>();
+    const channels = new Map<string, { name: string; slug: string } | null>();
+    const out = [];
+    for (const a of rows) {
+      if (!campaigns.has(a.campaign_id)) campaigns.set(a.campaign_id, await brandCampaignRepo.findById(a.campaign_id));
+      if (!channels.has(a.channel_id)) {
+        const ch = await channelRepo.findById(a.channel_id);
+        channels.set(a.channel_id, ch ? { name: ch.name, slug: ch.slug } : null);
+      }
+      const c = campaigns.get(a.campaign_id) || null;
+      const ch = channels.get(a.channel_id) || null;
+      out.push({
+        ...a,
+        campaign_name: c?.name ?? null,
+        brand_name: c?.brand_name ?? null,
+        campaign_status: c?.status ?? null,
+        channel_name: ch?.name ?? null,
+        channel_slug: ch?.slug ?? null,
+      });
+    }
+    return out;
   },
 
   /** Brand workspace: campaign + applicants enriched with public channel data. */
@@ -481,6 +597,13 @@ export const brandCampaignService = {
       }
     }
 
+    // M19 D6 — a refund/reversal shortfall blocks NEW obligations only. An
+    // already existing booking stays fully accessible and untouched.
+    if (!existingOrderId && campaign.commitment_issue_state) {
+      throw new HttpError(409,
+        `This campaign has an unresolved Campaign Commitment Deposit shortfall of ${((campaign.commitment_issue_shortfall_minor || 0) / 100).toFixed(2)} USD. Restore the deposit before creating new bookings. Existing bookings are unaffected.`);
+    }
+
     return {
       application_id: app.id,
       campaign: { id: campaign.id, name: campaign.name, brand_name: campaign.brand_name, objective: campaign.objective, brief: campaign.brief },
@@ -506,10 +629,12 @@ export const brandCampaignService = {
   /** Admin oversight only — no approval gate, no campaign mutation. */
   async adminOverview() {
     const rows = await brandCampaignRepo.listAll();
+    const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
     const out = [];
     for (const c of rows) {
       const apps = await brandCampaignRepo.listApplicationsForCampaign(c.id);
       const committed = await this.committedBookingValueMinor(c.id);
+      const sum = await campaignCommitmentService.summary(c.id);
       out.push({
         id: c.id,
         name: c.name,
@@ -517,6 +642,13 @@ export const brandCampaignService = {
         brand_user_id: c.brand_user_id,
         status: c.status,
         budget_total_usd_minor: c.budget_total_usd_minor,
+        // M19 — commitment oversight (NOT WaveLead revenue).
+        required_commitment_minor: sum.required_commitment_minor,
+        paid_commitment_minor: sum.paid_commitment_minor,
+        refunded_commitment_minor: sum.refunded_commitment_minor,
+        commitment_shortfall_minor: sum.topup_required_minor,
+        commitment_funded: sum.funded,
+        commitment_issue_state: c.commitment_issue_state ?? null,
         applications: apps.length,
         shortlisted: apps.filter((a) => a.status === 'shortlisted').length,
         approved: apps.filter((a) => a.status === 'approved').length,
