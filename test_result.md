@@ -7075,3 +7075,57 @@ agent_communication:
       polish; plus campaign deposit, campaign funding/wallet, PayPal recurring,
       campaign conversation, consent audit log, analytics health view.
       DEPLOY: NOT EXECUTED.
+
+## M18 PRODUCTION DEPLOY RESULT (operator-approved, one deployment)
+  - agent: "main"
+    comment: |
+      DEPLOY: PASS. One production deployment executed via the Emergent
+      deployer for https://wavelead.org. New build confirmed live at 06:56 UTC
+      (M18 closeout marker "Google Analytics 4" present on /cookies).
+      No production secrets or env configuration changed. No real-money
+      payment, payout or marketplace transaction executed.
+      PUBLIC: / 200, /categories 200 (lucide icons render), /channels 200,
+        /pricing 200, /cookies 200, /privacy 200, /login 200.
+      LOGO: /brand/wavelead-logo.png 200, 310162 bytes, 2172x724 (ratio 3.000),
+        byte-identical to the repo asset; homepage references only the local
+        path; zero external hotlinks (oaiusercontent/chatgpt/openai/s3/blob = 0).
+      ROUTE RESOLUTION (unauthenticated, guarded): /dashboard,
+        /dashboard/campaigns, /dashboard/campaigns/new, /dashboard/opportunities,
+        /dashboard/applications, /dashboard/billing, /admin, /admin/fx-rates,
+        /admin/campaigns all 307 -> login (resolve, no 404/500).
+      API (production, guarded, no transactions): /api/health 200,
+        /api/categories 200, /api/consent 200 {consent:null},
+        /api/campaign-opportunities 200 {campaigns:[]},
+        /api/brand/campaigns 401, /api/campaign-applications 401,
+        /api/admin/campaigns 401, /api/admin/fx-rates 403 (admin required),
+        /api/admin/fx/reference 401, /api/admin/fx/provider-capability 401.
+      NOT VISUALLY CONFIRMED IN PRODUCTION: logged-in AppShell / admin sidebar
+        rendering, because production credentials are managed outside the repo
+        and rotate after deployment. Route + API layer verified instead.
+      GA4 PRODUCTION SMOKE (real browser against https://wavelead.org):
+        BEFORE CONSENT: dataLayer undefined, gtag undefined, 0 gtag.js, 0 _ga
+          cookies, 0 GA4 network requests.
+        AFTER ACCEPT: consent default {ad_storage:denied, ad_user_data:denied,
+          ad_personalization:denied, analytics_storage:denied} ->
+          update {analytics_storage:granted} -> config G-MYGZLGH4SR
+          {send_page_view:false, anonymize_ip:true} -> set(sanitized) ->
+          1 page_view. Collect hit shows gcs=G101 (ad denied / analytics
+          granted) and npa=1. _ga + _ga_MYGZLGH4SR set only after consent.
+        SPA: page_view paths ['/', '/categories'] -> exactly 1 per navigation.
+        URL PRIVACY: /channels?token=EC-TEST-ORDER-123&PayerID=SMOKEPAYER9&
+          utm_source=smoke&q=private+search&order=abc-123 was reported to GA4 as
+          "/channels?utm_source=smoke"; /channels/<uuid> reported as
+          "/channels/[id]". Browser URL unchanged. Zero sensitive values present
+          anywhere in dataLayer.
+        REVOCATION: from the footer Cookie Preferences control -> consent update
+          {analytics_storage:'denied'} immediately, no reload; following SPA
+          navigation produced no new page_view (count stayed 1); after reload
+          banner not re-shown, gtag undefined, 0 gtag.js.
+        OBSERVATION (no action taken, candidate for M19): the _ga/_ga_* cookies
+          written during the granted period are not deleted on revocation
+          (standard Consent Mode behaviour); no further GA4 requests are made.
+      POST-DEPLOY CODE CHANGES: NONE.
+      STILL DEFERRED: campaign commitment deposit, campaign funding/wallet,
+        PayPal recurring, campaign conversation, consent audit log, analytics
+        health view, consent confirmation toast, category landing depth (M19),
+        campaign handoff polish (M19).
