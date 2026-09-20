@@ -829,3 +829,439 @@ describe('M19 §6 — My Applications clarity (display only)', () => {
     expect((domain.match(/campaignNotificationService\./g) || []).length).toBe(2);
   });
 });
+
+/* =====================================================================
+ * M19 §7 — FINAL CORRECTIONS: D4 payload, D7 funded capacity,
+ *          D9 applicant pool, D12 zero budget, LEGACY (no grandfathering)
+ * ===================================================================== */
+
+async function fundCampaign(campaignId: string) {
+  const row = await campaignCommitmentService.createCheckout(brand, campaignId);
+  await campaignCommitmentService.captureAndFinalize(row.id);
+  return row;
+}
+
+describe('M19 §7 D4 — creator payload projection', () => {
+  const FORBIDDEN = ['brand_user_id', '_id', 'budget_history', 'changed_by', 'commitment_', 'provider_', 'payment_'];
+
+  it('7.1 the opportunities list is a safe DTO', async () => {
+    const c = await freshCampaign();
+    await fundCampaign(c.id);
+    const list = await brandCampaignService.listOpportunities();
+    const row = list.find((x) => x.id === c.id)!;
+    expect(row).toBeTruthy();
+    for (const key of Object.keys(row)) {
+      expect(FORBIDDEN.some((f) => key.includes(f))).toBe(false);
+    }
+    const raw = JSON.stringify(row);
+    for (const f of FORBIDDEN) expect(raw).not.toContain(f);
+    // …but everything a creator needs is present.
+    expect(row.brand_name).toBe('Acme Labs');
+    expect(row.name).toBeTruthy();
+    expect(row.objective).toBeTruthy();
+    expect(row.brief).toBeTruthy();
+    expect(row.budget_total_usd_minor).toBe(1_000_000);
+    expect(row.status).toBe('open');
+    expect(Array.isArray(row.target_country_codes)).toBe(true);
+    expect('application_deadline' in row).toBe(true);
+    expect('creator_requirements' in row).toBe(true);
+    expect('deliverables' in row).toBe(true);
+    expect('materials_url' in row).toBe(true);
+  });
+
+  it('7.2 the opportunity detail is the same safe DTO', async () => {
+    const c = await freshCampaign();
+    await fundCampaign(c.id);
+    const detail = await brandCampaignService.getOpportunity(c.id);
+    const raw = JSON.stringify(detail);
+    for (const f of FORBIDDEN) expect(raw).not.toContain(f);
+    expect(detail.brand_logo_url).toBeDefined();
+    const svc = src('lib/services/brandCampaignService.ts');
+    expect(svc).toContain('export function toCreatorOpportunity');
+    expect(svc).toContain('assertCreatorVisible');
+  });
+
+  it('7.3 brand and admin views keep the fields they legitimately need', async () => {
+    const c = await freshCampaign();
+    const own = await brandCampaignService.getForBrand(brand, c.id);
+    expect(own.campaign.brand_user_id).toBe(brandId);
+    expect(Array.isArray(own.campaign.budget_history)).toBe(true);
+    const adminRow = (await brandCampaignService.adminOverview()).find((r) => r.id === c.id)!;
+    expect(adminRow.brand_user_id).toBe(brandId);
+    expect(adminRow.required_commitment_minor).toBe(50_000);
+  });
+});
+
+describe('M19 §7 D7 — funded campaign capacity is enforced', () => {
+  const orderIds: string[] = [];
+  async function bookingOf(campaignId: string, grossMinor: number, status = 'paid') {
+    const id = uuidv4();
+    orderIds.push(id);
+    await withDb(async (db) => {
+      await db.collection(COLLECTIONS.MARKETPLACE_ORDERS).insertOne({
+        id, status, economics_status: 'finalized', source_brand_campaign_id: campaignId,
+        buyer_user_id: brandId, channel_id: channelId, channel_slug: `${RUN}-ch`, owner_user_id: creatorId,
+        quoted_price_minor: grossMinor, currency: 'USD', snapshot: { gross_price_minor: grossMinor },
+        created_at: new Date(), updated_at: new Date(),
+      } as never);
+    });
+    return id;
+  }
+  afterAll(async () => {
+    await withDb(async (db) => { await db.collection(COLLECTIONS.MARKETPLACE_ORDERS).deleteMany({ id: { $in: orderIds } }); });
+  });
+
+  it('7.4 a fully funded $10,000 campaign allows obligations up to $10,000', async () => {
+    const c = await freshCampaign();
+    await fundCampaign(c.id);
+    const cap = await brandCampaignService.fundedCapacity(c.id);
+    expect(cap.paid_commitment_minor).toBe(50_000);
+    expect(cap.funded_campaign_limit_minor).toBe(1_000_000);
+    expect(cap.funded_campaign_capacity_minor).toBe(1_000_000);
+    expect(cap.available_funded_capacity_minor).toBe(1_000_000);
+    await expect(brandCampaignService.assertNewObligationAllowed(c.id, 1_000_000)).resolves.toBeTruthy();
+    await expect(brandCampaignService.assertNewObligationAllowed(c.id, 1_000_001)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('7.5 $8,000 committed + $2,000 new = allowed; + $3,000 = BLOCKED', async () => {
+    const c = await freshCampaign();
+    await fundCampaign(c.id);
+    await bookingOf(c.id, 800_000);
+    const cap = await brandCampaignService.fundedCapacity(c.id);
+    expect(cap.committed_booking_value_minor).toBe(800_000);
+    expect(cap.available_funded_capacity_minor).toBe(200_000);
+    await expect(brandCampaignService.assertNewObligationAllowed(c.id, 200_000)).resolves.toBeTruthy();
+    await expect(brandCampaignService.assertNewObligationAllowed(c.id, 300_000))
+      .rejects.toMatchObject({ status: 409, message: expect.stringContaining('2000.00 USD available') });
+  });
+
+  it('7.6 a budget increase without top-up keeps the funded capacity at the funded amount', async () => {
+    const c = await freshCampaign();
+    await fundCampaign(c.id);
+    await brandCampaignService.changeBudget(brand, c.id, { budget_total_usd_minor: 2_000_000 });
+    const cap = await brandCampaignService.fundedCapacity(c.id);
+    expect(cap.required_commitment_minor).toBe(100_000);
+    expect(cap.paid_commitment_minor).toBe(50_000);
+    expect(cap.commitment_shortfall_minor).toBe(50_000);
+    expect(cap.funded_campaign_capacity_minor).toBe(1_000_000);      // still $10,000
+    // A $12,000 obligation is blocked, a $10,000 one is still allowed.
+    await expect(brandCampaignService.assertNewObligationAllowed(c.id, 1_200_000)).rejects.toMatchObject({ status: 409 });
+    await expect(brandCampaignService.assertNewObligationAllowed(c.id, 1_000_000)).resolves.toBeTruthy();
+    // A pure top-up shortfall is NOT a funding issue: discovery stays intact.
+    const camp = await brandCampaignService.getForBrand(brand, c.id);
+    expect(camp.campaign.commitment_issue_state).toBeFalsy();
+    expect((await brandCampaignService.listOpportunities()).map((x) => x.id)).toContain(c.id);
+
+    // …and the captured top-up raises the capacity to $20,000.
+    const topup = await campaignCommitmentService.createCheckout(brand, c.id);
+    expect(topup.amount_minor).toBe(50_000);
+    await campaignCommitmentService.captureAndFinalize(topup.id);
+    const after = await brandCampaignService.fundedCapacity(c.id);
+    expect(after.paid_commitment_minor).toBe(100_000);
+    expect(after.funded_campaign_capacity_minor).toBe(2_000_000);
+    await expect(brandCampaignService.assertNewObligationAllowed(c.id, 1_200_000)).resolves.toBeTruthy();
+  });
+
+  it('7.7 approving an applicant never consumes funded capacity', async () => {
+    const c = await freshCampaign();
+    await fundCampaign(c.id);
+    const before = await brandCampaignService.fundedCapacity(c.id);
+    const app = await brandCampaignService.apply(creator, c.id, {
+      channel_id: channelId, pitch: 'Approval alone must never consume funded campaign capacity.', proposed_rate_usd_minor: 900_000,
+    });
+    await brandCampaignService.decide(brand, app.id, 'shortlisted');
+    await brandCampaignService.decide(brand, app.id, 'approved');
+    const after = await brandCampaignService.fundedCapacity(c.id);
+    expect(after.committed_booking_value_minor).toBe(before.committed_booking_value_minor);
+    expect(after.available_funded_capacity_minor).toBe(before.available_funded_capacity_minor);
+  });
+
+  it('7.8 a refund lowers the funded capacity; existing bookings are preserved', async () => {
+    const c = await freshCampaign();
+    const row = await campaignCommitmentService.createCheckout(brand, c.id);
+    await campaignCommitmentService.captureAndFinalize(row.id);
+    const oid = await bookingOf(c.id, 400_000);
+    expect((await brandCampaignService.fundedCapacity(c.id)).funded_campaign_capacity_minor).toBe(1_000_000);
+
+    await campaignCommitmentService.recordRefundOrReversal(row.provider_order_id!, 30_000, `rf-${uuidv4()}`);
+    const cap = await brandCampaignService.fundedCapacity(c.id);
+    expect(cap.paid_commitment_minor).toBe(20_000);
+    expect(cap.funded_campaign_capacity_minor).toBe(400_000);         // 20,000 ÷ 5%
+    expect(cap.committed_booking_value_minor).toBe(400_000);
+    expect(cap.available_funded_capacity_minor).toBe(0);
+    await expect(brandCampaignService.assertNewObligationAllowed(c.id, 1)).rejects.toMatchObject({ status: 409 });
+    await withDb(async (db) => {
+      expect((await db.collection(COLLECTIONS.MARKETPLACE_ORDERS).findOne({ id: oid }))?.status).toBe('paid');
+    });
+  });
+
+  it('7.9 an unrelated campaign booking never consumes this campaign capacity', async () => {
+    const mine = await freshCampaign();
+    const other = await freshCampaign();
+    await fundCampaign(mine.id);
+    await bookingOf(other.id, 900_000);
+    const cap = await brandCampaignService.fundedCapacity(mine.id);
+    expect(cap.committed_booking_value_minor).toBe(0);
+    expect(cap.available_funded_capacity_minor).toBe(1_000_000);
+  });
+
+  it('7.10 the gate is server-side and runs before the marketplace order is inserted', () => {
+    const mp = src('lib/services/marketplaceService.ts');
+    const gate = mp.indexOf('assertNewObligationAllowed');
+    const insert = mp.indexOf('marketplaceOrderRepo.insert(order)');
+    expect(gate).toBeGreaterThan(0);
+    expect(gate).toBeLessThan(insert);
+    expect(mp).toContain('assertNewObligationAllowed(campaign.id, pkg.price_minor ?? 0)');
+    const svc = src('lib/services/brandCampaignService.ts');
+    expect(svc).toContain('funded_campaign_capacity_minor');
+    // Capacity is derived from captured commitment + real orders, never from the client.
+    expect(svc).toContain('Math.min(sum.funded_campaign_limit_minor, sum.campaign_budget_usd_minor)');
+    const ui = src('app/dashboard/campaigns/[id]/CampaignDetailClient.tsx');
+    expect(ui).toContain('Available funded capacity');
+    expect(ui).not.toContain('Approvals stay within your funded campaign limit');
+  });
+});
+
+describe('M19 §7 D9 — richer applicant pool (public data only)', () => {
+  let cardChannel = '';
+  let campaignId = '';
+  let appId = '';
+
+  beforeAll(async () => {
+    cardChannel = uuidv4();
+    await withDb(async (db) => {
+      const cat = await db.collection(COLLECTIONS.CATEGORIES).findOne({ is_active: true });
+      await db.collection(COLLECTIONS.CHANNELS).insertOne({
+        id: cardChannel, slug: `${RUN}-rc`, name: `${RUN} rate card channel`, status: 'approved',
+        owner_id: creatorId, submitted_by: creatorId, verification_status: 'verified',
+        whatsapp_url: 'https://whatsapp.com/channel/0029Vm21', country_code: 'ID',
+        logo_url: 'https://cdn.example/logo.png', category_id: (cat as { id?: string } | null)?.id ?? null,
+        follower_count: 5000, public_followers_count: 15000,
+        created_at: new Date(), updated_at: new Date(),
+      } as never);
+      await db.collection(COLLECTIONS.CHANNEL_RATE_CARDS).insertOne({
+        id: uuidv4(), channel_id: cardChannel, owner_user_id: creatorId,
+        packages: [{
+          id: uuidv4(), type: 'single_post', name: 'Single post', description: 'One sponsored post',
+          price_minor: 150_000, currency: 'USD', deliverables: ['1 post'], estimated_delivery_days: 3,
+          is_active: true, created_at: new Date(), updated_at: new Date(),
+        }],
+        created_at: new Date(), updated_at: new Date(),
+      } as never);
+      await db.collection(COLLECTIONS.CHANNEL_SAMPLE_WORKS).insertOne({
+        id: uuidv4(), channel_id: cardChannel, owner_user_id: creatorId, type: 'sponsored_post',
+        title: 'Past campaign', description: 'A previous sponsored post', url: 'https://example.com/work',
+        created_at: new Date(), updated_at: new Date(),
+      } as never);
+    });
+    const c = await freshCampaign();
+    campaignId = c.id;
+    await fundCampaign(campaignId);
+    const app = await brandCampaignService.apply(creator, campaignId, {
+      channel_id: cardChannel, pitch: 'Our audience matches your brief and we have published sample work.',
+      proposed_rate_usd_minor: 150_000, audience_note: 'Mostly Jakarta tech workers',
+    });
+    appId = app.id;
+  });
+
+  afterAll(async () => {
+    await withDb(async (db) => {
+      await db.collection(COLLECTIONS.CHANNELS).deleteMany({ id: cardChannel });
+      await db.collection(COLLECTIONS.CHANNEL_RATE_CARDS).deleteMany({ channel_id: cardChannel });
+      await db.collection(COLLECTIONS.CHANNEL_SAMPLE_WORKS).deleteMany({ channel_id: cardChannel });
+    });
+  });
+
+  it('7.11 the brand sees avatar, category, followers, rate card, sample work and the application date', async () => {
+    const view = await brandCampaignService.getForBrand(brand, campaignId);
+    const row = view.applications.find((a) => a.id === appId)!;
+    expect(row.channel?.logo_url).toBe('https://cdn.example/logo.png');
+    expect(row.channel?.public_followers_count).toBe(15000);
+    expect(row.channel?.profile_url).toBe(`/channel/${RUN}-rc`);
+    expect(row.channel?.has_rate_card).toBe(true);
+    expect(row.channel?.rate_card_packages).toBe(1);
+    expect(row.channel?.rate_card_url).toContain('#rate-card');
+    expect(row.channel?.has_sample_work).toBe(true);
+    expect(row.channel?.sample_work_count).toBe(1);
+    expect(row.channel?.sample_work_url).toContain('#sample-work');
+    expect(row.created_at).toBeTruthy();
+    expect(row.status).toBe('applied');
+    expect(row.proposed_rate_usd_minor).toBe(150_000);
+    // category_name is resolved from the existing category domain when set.
+    expect('category_name' in (row.channel || {})).toBe(true);
+  });
+
+  it('7.12 no private creator identity, contact or payout data is exposed', async () => {
+    const view = await brandCampaignService.getForBrand(brand, campaignId);
+    const raw = JSON.stringify(view.applications);
+    for (const f of ['email', 'owner_id', 'submitted_by', 'payout', 'phone', 'password', 'whatsapp_url']) {
+      expect(raw).not.toContain(f);
+    }
+  });
+
+  it('7.13 the applicant pool reuses existing rate card / sample work domains (no duplication)', () => {
+    const svc = src('lib/services/brandCampaignService.ts');
+    expect(svc).toContain('marketplaceService.getPublicRateCard');
+    expect(svc).toContain('sampleWorkService.listPublic');
+    expect(svc).not.toMatch(/CHANNEL_RATE_CARDS|CHANNEL_SAMPLE_WORKS/);
+    const ui = src('app/dashboard/campaigns/[id]/CampaignDetailClient.tsx');
+    for (const t of ['applicant-avatar-', 'applicant-meta-', 'applicant-followers-', 'applicant-date-',
+      'view-channel-', 'view-rate-card-', 'view-sample-work-']) {
+      expect(ui).toContain(t);
+    }
+    const channelPage = src('app/channel/[slug]/page.tsx');
+    expect(channelPage).toContain('id="rate-card"');
+    expect(channelPage).toContain('id="sample-work"');
+  });
+});
+
+describe('M19 §7 D12 — zero / negative budget', () => {
+  it('7.14 a zero budget campaign is rejected server-side', async () => {
+    await expect(brandCampaignService.createDraft(brand, { ...CAMPAIGN_INPUT, budget_total_usd_minor: 0 }))
+      .rejects.toMatchObject({ status: 400, message: expect.stringContaining('greater than $0') });
+  });
+
+  it('7.15 a negative budget is rejected', async () => {
+    await expect(brandCampaignService.createDraft(brand, { ...CAMPAIGN_INPUT, budget_total_usd_minor: -100 }))
+      .rejects.toMatchObject({ status: 400 });
+  });
+
+  it('7.16 a valid positive budget is accepted and the 5% is unchanged', async () => {
+    const c = await brandCampaignService.createDraft(brand, { ...CAMPAIGN_INPUT, name: `${RUN}-pos`, budget_total_usd_minor: 10_000 });
+    expect(c.budget_total_usd_minor).toBe(10_000);
+    expect(requiredCommitmentMinor(10_000)).toBe(500);
+    expect(requiredCommitmentMinor(100_000)).toBe(5_000);
+    expect(requiredCommitmentMinor(1_000_000)).toBe(50_000);
+  });
+
+  it('7.17 an existing campaign cannot be edited down to zero', async () => {
+    const c = await freshCampaign();
+    await expect(brandCampaignService.changeBudget(brand, c.id, { budget_total_usd_minor: 0 }))
+      .rejects.toMatchObject({ status: 400, message: expect.stringContaining('greater than $0') });
+    await expect(brandCampaignService.changeBudget(brand, c.id, { budget_total_usd_minor: -1 }))
+      .rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe('M19 §7 LEGACY pre-M19 campaigns — NO GRANDFATHERING', () => {
+  const legacyIds: string[] = [];
+  const legacyOrderIds: string[] = [];
+
+  /** Writes a campaign exactly as M18 would have left it: open, no deposit. */
+  async function legacyOpenCampaign(): Promise<string> {
+    const id = uuidv4();
+    legacyIds.push(id);
+    await withDb(async (db) => {
+      await db.collection(COLLECTIONS.BRAND_CAMPAIGNS).insertOne({
+        id, brand_user_id: brandId, name: `${RUN} legacy ${id.slice(0, 5)}`, brand_name: 'Legacy Brand',
+        objective: 'Awareness', brief: 'A campaign published before M19 existed at all.',
+        target_country_codes: ['ID'], target_category_slugs: [],
+        start_date: null, end_date: null, application_deadline: null,
+        budget_total_usd_minor: 1_000_000, budget_history: [],
+        creator_requirements: null, expected_creator_count: null, deliverables: null, materials_url: null,
+        status: 'open', opened_at: new Date('2026-01-01'),
+        created_at: new Date('2026-01-01'), updated_at: new Date('2026-01-01'),
+      } as never);
+    });
+    return id;
+  }
+
+  afterAll(async () => {
+    await withDb(async (db) => {
+      await db.collection(COLLECTIONS.BRAND_CAMPAIGNS).deleteMany({ id: { $in: legacyIds } });
+      await db.collection(COLLECTIONS.MARKETPLACE_ORDERS).deleteMany({ id: { $in: legacyOrderIds } });
+    });
+  });
+
+  it('7.18 a legacy unfunded campaign is hidden from creator discovery', async () => {
+    const id = await legacyOpenCampaign();
+    expect((await brandCampaignService.listOpportunities()).map((x) => x.id)).not.toContain(id);
+    await expect(brandCampaignService.getOpportunity(id)).rejects.toMatchObject({ status: 404 });
+    await expect(brandCampaignService.apply(creator, id, {
+      channel_id: channelId, pitch: 'Trying to apply to a legacy campaign that was never funded.',
+    })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('7.19 the brand keeps management and sees the exact commitment required', async () => {
+    const id = await legacyOpenCampaign();
+    const view = await brandCampaignService.getForBrand(brand, id);
+    expect(view.campaign.id).toBe(id);
+    expect(view.capacity.required_commitment_minor).toBe(50_000);
+    expect(view.capacity.paid_commitment_minor).toBe(0);
+    expect(view.capacity.commitment_shortfall_minor).toBe(50_000);
+    expect(view.capacity.funded_campaign_capacity_minor).toBe(0);
+    // Effective funding state is clearly "commitment required" — data intact.
+    expect(view.campaign.status).toBe('commitment_required');
+    expect(view.campaign.commitment_issue_state).toBe('commitment_shortfall');
+    expect(view.campaign.name).toContain('legacy');
+    expect(Array.isArray(view.campaign.budget_history)).toBe(true);
+    const sum = await brandCampaignService.commitmentSummary(brand, id);
+    expect(sum.required_commitment_minor).toBe(50_000);
+    expect(sum.funded).toBe(false);
+    // Editing still works.
+    const edited = await brandCampaignService.changeBudget(brand, id, { budget_total_usd_minor: 600_000 });
+    expect(edited.budget_total_usd_minor).toBe(600_000);
+  });
+
+  it('7.20 funding a legacy campaign makes it eligible to open again', async () => {
+    const id = await legacyOpenCampaign();
+    await brandCampaignService.getForBrand(brand, id);        // normalises to commitment_required
+    const row = await campaignCommitmentService.createCheckout(brand, id);
+    expect(row.amount_minor).toBe(50_000);
+    await campaignCommitmentService.captureAndFinalize(row.id);
+    const view = await brandCampaignService.getForBrand(brand, id);
+    expect(view.campaign.status).toBe('open');
+    expect(view.campaign.commitment_issue_state).toBeFalsy();
+    expect((await brandCampaignService.listOpportunities()).map((x) => x.id)).toContain(id);
+    expect((await brandCampaignService.getOpportunity(id)).status).toBe('open');
+  });
+
+  it('7.21 legacy bookings made before M19 are PRESERVED and only new ones are blocked', async () => {
+    const id = await legacyOpenCampaign();
+    const orderId = uuidv4();
+    legacyOrderIds.push(orderId);
+    await withDb(async (db) => {
+      await db.collection(COLLECTIONS.MARKETPLACE_ORDERS).insertOne({
+        id: orderId, status: 'completed', economics_status: 'finalized',
+        source_brand_campaign_id: id, buyer_user_id: brandId,
+        channel_id: channelId, channel_slug: `${RUN}-ch`, owner_user_id: creatorId,
+        quoted_price_minor: 300_000, currency: 'USD', snapshot: { gross_price_minor: 300_000 },
+        created_at: new Date('2026-02-01'), updated_at: new Date('2026-02-01'),
+      } as never);
+    });
+
+    const view = await brandCampaignService.getForBrand(brand, id);
+    // Lifecycle preserved (NOT reset) because a real obligation exists…
+    expect(view.campaign.status).toBe('open');
+    expect(view.campaign.commitment_issue_state).toBe('commitment_shortfall');
+    expect(view.committed_booking_value_minor).toBe(300_000);
+    // …the order itself is untouched…
+    await withDb(async (db) => {
+      expect((await db.collection(COLLECTIONS.MARKETPLACE_ORDERS).findOne({ id: orderId }))?.status).toBe('completed');
+    });
+    // …creators still cannot see it, and NEW obligations are blocked…
+    expect((await brandCampaignService.listOpportunities()).map((x) => x.id)).not.toContain(id);
+    await expect(brandCampaignService.assertNewObligationAllowed(id, 1)).rejects.toMatchObject({ status: 409 });
+    // …and the budget still cannot drop below the legacy obligation.
+    await expect(brandCampaignService.changeBudget(brand, id, { budget_total_usd_minor: 200_000 }))
+      .rejects.toMatchObject({ status: 409 });
+
+    // Funding it restores everything without touching the legacy booking.
+    const row = await campaignCommitmentService.createCheckout(brand, id);
+    await campaignCommitmentService.captureAndFinalize(row.id);
+    const after = await brandCampaignService.getForBrand(brand, id);
+    expect(after.campaign.commitment_issue_state).toBeFalsy();
+    expect(after.committed_booking_value_minor).toBe(300_000);
+    expect((await brandCampaignService.listOpportunities()).map((x) => x.id)).toContain(id);
+    expect((await brandCampaignService.fundedCapacity(id)).available_funded_capacity_minor).toBe(700_000);
+  });
+
+  it('7.22 no commitment record is ever fabricated for a legacy campaign', async () => {
+    const id = await legacyOpenCampaign();
+    await brandCampaignService.getForBrand(brand, id);
+    expect(await campaignCommitmentService.listForCampaign(id)).toEqual([]);
+    const svc = src('lib/services/payments/campaignCommitmentService.ts');
+    expect(svc).toContain('NO GRANDFATHERING');
+    expect(svc).not.toMatch(/legacy_(grant|waiver)|skip_commitment|grandfather(ed)?\s*=/i);
+  });
+});

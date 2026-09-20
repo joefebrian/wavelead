@@ -82,7 +82,7 @@ export interface BrandCampaign {
    * preserved; the campaign is hidden from creator discovery and blocked from
    * creating NEW bookings until the deposit is restored.
    */
-  commitment_issue_state?: 'refund_shortfall' | null;
+  commitment_issue_state?: 'refund_shortfall' | 'commitment_shortfall' | null;
   commitment_issue_shortfall_minor?: number;
   commitment_issue_detected_at?: Date | null;
   created_at: Date;
@@ -122,7 +122,12 @@ export const campaignInputSchema = z.object({
   start_date: z.string().datetime().optional().nullable(),
   end_date: z.string().datetime().optional().nullable(),
   application_deadline: z.string().datetime().optional().nullable(),
-  budget_total_usd_minor: z.number().int().min(0).max(100_000_000),
+  /**
+   * M19 D12 — a campaign that requires a 5% Campaign Commitment Deposit can
+   * never carry a zero or negative budget: $0 would render a "0.00 required"
+   * deposit and a campaign that is funded by nothing.
+   */
+  budget_total_usd_minor: z.number().int().min(1, 'Enter a campaign budget greater than $0.').max(100_000_000),
   creator_requirements: z.string().trim().max(2_000).optional().nullable(),
   expected_creator_count: z.number().int().min(1).max(10_000).optional().nullable(),
   deliverables: z.string().trim().max(2_000).optional().nullable(),
@@ -139,7 +144,8 @@ export const applicationInputSchema = z.object({
 });
 
 export const budgetChangeSchema = z.object({
-  budget_total_usd_minor: z.number().int().min(0).max(100_000_000),
+  // M19 D12 — an existing campaign can never be edited down to $0 either.
+  budget_total_usd_minor: z.number().int().min(1, 'Enter a campaign budget greater than $0.').max(100_000_000),
   reason: z.string().trim().max(300).optional().nullable(),
 });
 
@@ -172,6 +178,63 @@ function normalizeCountries(list: string[]): string[] {
 }
 
 function toDate(v: string | null | undefined): Date | null { return v ? new Date(v) : null; }
+
+/** USD minor units → display string, for server-side error messages. */
+function money(m: number): string { return `${(m / 100).toFixed(2)} USD`; }
+
+/**
+ * M19 D4 — CREATOR-FACING DTO.
+ *
+ * Creators never receive a raw brand_campaigns document. This projection is an
+ * explicit allow-list: it deliberately omits `brand_user_id`, Mongo `_id`, the
+ * whole `budget_history` audit trail (including `changed_by`), every
+ * commitment / payment / provider reference and every internal funding or
+ * accounting field. Brand and Admin surfaces keep their own richer payloads.
+ */
+export interface CreatorOpportunity {
+  id: string;
+  brand_name: string;
+  brand_logo_url: string | null;
+  name: string;
+  objective: string;
+  brief: string;
+  target_country_codes: string[];
+  target_category_slugs: string[];
+  start_date: Date | null;
+  end_date: Date | null;
+  application_deadline: Date | null;
+  creator_requirements: string | null;
+  expected_creator_count: number | null;
+  deliverables: string | null;
+  materials_url: string | null;
+  /** Compensation context only — the campaign budget holds no money. */
+  budget_total_usd_minor: number;
+  status: BrandCampaignStatus;
+  opened_at: Date | null;
+}
+
+export function toCreatorOpportunity(c: BrandCampaign): CreatorOpportunity {
+  return {
+    id: c.id,
+    brand_name: c.brand_name,
+    brand_logo_url: null,                 // no brand logo field exists in this domain yet
+    name: c.name,
+    objective: c.objective,
+    brief: c.brief,
+    target_country_codes: c.target_country_codes || [],
+    target_category_slugs: c.target_category_slugs || [],
+    start_date: c.start_date ?? null,
+    end_date: c.end_date ?? null,
+    application_deadline: c.application_deadline ?? null,
+    creator_requirements: c.creator_requirements ?? null,
+    expected_creator_count: c.expected_creator_count ?? null,
+    deliverables: c.deliverables ?? null,
+    materials_url: c.materials_url ?? null,
+    budget_total_usd_minor: c.budget_total_usd_minor,
+    status: c.status,
+    opened_at: c.opened_at ?? null,
+  };
+}
 
 /* ---------------------------------------------------------------- SERVICE */
 
@@ -259,7 +322,11 @@ export const brandCampaignService = {
   async commitmentSummary(actor: Actor | null, id: string) {
     await ownedCampaign(actor, id);
     const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
-    return campaignCommitmentService.summary(id);
+    // Normalises legacy / refunded / topped-up state before reporting (idempotent).
+    await campaignCommitmentService.reconcileFundingState(id);
+    const sum = await campaignCommitmentService.summary(id);
+    const cap = await this.fundedCapacity(id);
+    return { ...sum, ...cap };
   },
 
   /**
@@ -301,32 +368,46 @@ export const brandCampaignService = {
    * authoritatively captured commitment deposit with no funding issue. Closed
    * deadlines and non-open statuses are filtered out as before.
    */
-  async listOpportunities(): Promise<BrandCampaign[]> {
+  async listOpportunities(): Promise<CreatorOpportunity[]> {
     const rows = await brandCampaignRepo.listOpen();
     const now = Date.now();
     const live = rows.filter((c) => !c.commitment_issue_state
       && (!c.application_deadline || new Date(c.application_deadline).getTime() >= now));
     if (!live.length) return [];
     const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
-    const funded = await campaignCommitmentService.fundedCampaignIds(
+    const backed = await campaignCommitmentService.commitmentBackedCampaignIds(
       live.map((c) => ({ id: c.id, budget_total_usd_minor: c.budget_total_usd_minor })),
     );
-    return live.filter((c) => funded.has(c.id));
+    // D4 — safe creator projection, never the raw campaign document.
+    return live.filter((c) => backed.has(c.id)).map(toCreatorOpportunity);
   },
 
   /**
-   * CREATOR-FACING campaign detail. Same gate as the list, so a direct
-   * campaign id / URL can never bypass the funding gate.
+   * INTERNAL creator-visibility gate. Returns the raw campaign for server-side
+   * checks only — it is never returned to a creator (see getOpportunity).
+   *
+   * A campaign is readable by creators only while it is backed by REAL
+   * captured commitment and carries no funding issue. Publishing itself is
+   * gated separately and more strictly by open() (full required 5%).
    */
-  async getOpportunity(id: string): Promise<BrandCampaign> {
+  async assertCreatorVisible(id: string): Promise<BrandCampaign> {
     const c = await brandCampaignRepo.findById(id);
     if (!c) throw new HttpError(404, 'Campaign not found');
     if (!CREATOR_VISIBLE_STATUSES.includes(c.status)) throw new HttpError(404, 'Campaign is not open');
     if (c.commitment_issue_state) throw new HttpError(404, 'Campaign is not open');
     const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
     const sum = await campaignCommitmentService.summary(id);
-    if (!sum.funded) throw new HttpError(404, 'Campaign is not open');
+    if (sum.paid_commitment_minor <= 0) throw new HttpError(404, 'Campaign is not open');
     return c;
+  },
+
+  /**
+   * CREATOR-FACING campaign detail. Same gate as the list, so a direct
+   * campaign id / URL can never bypass the funding gate, and the payload is
+   * the safe D4 projection.
+   */
+  async getOpportunity(id: string): Promise<CreatorOpportunity> {
+    return toCreatorOpportunity(await this.assertCreatorVisible(id));
   },
 
   /**
@@ -382,6 +463,55 @@ export const brandCampaignService = {
   },
 
   /**
+   * M19 D7 — FUNDED CAMPAIGN CAPACITY (server-authoritative).
+   *
+   *   funded_campaign_limit_minor  = captured commitment ÷ 5%   (i.e. the
+   *                                  budget actually backed by real money)
+   *   funded_campaign_capacity_minor = min(funded limit, current budget)
+   *   available_funded_capacity_minor = capacity − committed booking value
+   *
+   * Inputs are all server-side: the authoritative captured (minus refunded)
+   * commitment, the stored commitment percentage, the stored campaign budget
+   * and committedBookingValueMinor(). Application status is never used.
+   */
+  async fundedCapacity(campaignId: string) {
+    const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
+    const sum = await campaignCommitmentService.summary(campaignId);
+    const committed = await this.committedBookingValueMinor(campaignId);
+    const capacity = Math.max(0, Math.min(sum.funded_campaign_limit_minor, sum.campaign_budget_usd_minor));
+    return {
+      commitment_percent: sum.commitment_percent,
+      campaign_budget_usd_minor: sum.campaign_budget_usd_minor,
+      required_commitment_minor: sum.required_commitment_minor,
+      paid_commitment_minor: sum.paid_commitment_minor,
+      commitment_shortfall_minor: sum.topup_required_minor,
+      funded_campaign_limit_minor: sum.funded_campaign_limit_minor,
+      funded_campaign_capacity_minor: capacity,
+      committed_booking_value_minor: committed.total_minor,
+      available_funded_capacity_minor: Math.max(0, capacity - committed.total_minor),
+      committed_order_ids: committed.order_ids,
+    };
+  },
+
+  /**
+   * Hard financial gate for a NEW marketplace obligation created from a
+   * campaign: existing committed booking value + the new booking must fit
+   * inside the funded campaign capacity. Approving an applicant never reaches
+   * this gate — approval creates no obligation.
+   */
+  async assertNewObligationAllowed(campaignId: string, newObligationMinor: number) {
+    const cap = await this.fundedCapacity(campaignId);
+    const add = Math.max(0, Math.round(Number(newObligationMinor) || 0));
+    if (cap.committed_booking_value_minor + add > cap.funded_campaign_capacity_minor) {
+      throw new HttpError(409,
+        `This booking of ${money(add)} exceeds the funded campaign capacity of ${money(cap.funded_campaign_capacity_minor)} `
+        + `(${money(cap.committed_booking_value_minor)} already committed, ${money(cap.available_funded_capacity_minor)} available). `
+        + `Capture the ${money(cap.commitment_shortfall_minor)} Campaign Commitment Deposit top-up before creating this obligation.`);
+    }
+    return cap;
+  },
+
+  /**
    * Budget edit with lightweight version history. The budget may never drop
    * below the value already committed through real marketplace bookings.
    */
@@ -408,16 +538,13 @@ export const brandCampaignService = {
     const history = [...(c.budget_history || []), change];
     await brandCampaignRepo.update(id, { budget_total_usd_minor: d.budget_total_usd_minor, budget_history: history });
     // M19 — a budget INCREASE raises the required 5%: the campaign stays
-    // visible but approvals are capped at the funded limit until the top-up is
-    // captured. A DECREASE can leave excess commitment, which is tracked as a
-    // campaign-linked credit and NEVER recognised as WaveLead revenue here.
+    // visible, but the FUNDED CAMPAIGN CAPACITY stays at the budget actually
+    // backed by captured commitment (D7), so no new obligation beyond it can
+    // be created until the top-up is captured. A DECREASE can leave excess
+    // commitment, tracked as a campaign-linked credit and NEVER recognised as
+    // WaveLead revenue. One source of truth: reconcileFundingState().
     const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
-    const sum = await campaignCommitmentService.summary(id);
-    if (sum.topup_required_minor > 0 && ['open', 'in_selection'].includes(c.status)) {
-      await brandCampaignRepo.update(id, { commitment_topup_required_minor: sum.topup_required_minor } as never);
-    } else {
-      await brandCampaignRepo.update(id, { commitment_topup_required_minor: 0 } as never);
-    }
+    await campaignCommitmentService.reconcileFundingState(id);
     return { ...c, budget_total_usd_minor: d.budget_total_usd_minor, budget_history: history };
   },
 
@@ -430,7 +557,7 @@ export const brandCampaignService = {
    */
   async apply(actor: Actor | null, campaignId: string, input: unknown): Promise<BrandCampaignApplication> {
     requireAuth(actor);
-    const campaign = await this.getOpportunity(campaignId);
+    const campaign = await this.assertCreatorVisible(campaignId);
     if (campaign.status !== 'open') throw new HttpError(409, 'This campaign is no longer accepting applications');
     if (campaign.application_deadline && new Date(campaign.application_deadline).getTime() < Date.now()) {
       throw new HttpError(409, 'The application deadline for this campaign has passed');
@@ -519,26 +646,66 @@ export const brandCampaignService = {
     return out;
   },
 
-  /** Brand workspace: campaign + applicants enriched with public channel data. */
+  /**
+   * Brand workspace: campaign + applicants enriched with PUBLIC channel data
+   * (M19 D9 — applicant pool). Only existing public/authorised domains are
+   * reused: the public rate card (marketplaceService.getPublicRateCard) and
+   * public Sample Work (sampleWorkService.listPublic). Nothing is duplicated
+   * or re-stored, and no private creator identity, contact or payment data is
+   * exposed — the brand sees the same channel facts a public visitor sees,
+   * plus the applicant's own submission.
+   */
   async getForBrand(actor: Actor | null, id: string) {
-    const campaign = await ownedCampaign(actor, id);
+    await ownedCampaign(actor, id);
+    const { campaignCommitmentService } = await import('@/lib/services/payments/campaignCommitmentService');
+    // Legacy / refund / top-up normalisation before the brand sees the state.
+    await campaignCommitmentService.reconcileFundingState(id);
+    const campaign = await brandCampaignRepo.findById(id) as BrandCampaign;
     const apps = await brandCampaignRepo.listApplicationsForCampaign(id);
+
+    const { categoryRepo } = await import('@/lib/repositories/categoryRepo');
+    const categories = await categoryRepo.listActive().catch(() => []);
+    const categoryName = new Map(categories.map((c) => [c.id, c.name] as const));
+    const { marketplaceService } = await import('@/lib/services/marketplaceService');
+    const { sampleWorkService } = await import('@/lib/services/sampleWorkService');
+
     const enriched = [];
     for (const a of apps) {
       const ch = await channelRepo.findById(a.channel_id);
+      let rateCardPackages = 0;
+      let sampleWorks = 0;
+      if (ch) {
+        const card = await marketplaceService.getPublicRateCard(ch.id).catch(() => null);
+        rateCardPackages = card?.packages?.length || 0;
+        sampleWorks = (await sampleWorkService.listPublic(ch.id).catch(() => [])).length;
+      }
       enriched.push({
         ...a,
         channel: ch ? {
           id: ch.id, slug: ch.slug, name: ch.name,
+          logo_url: ch.logo_url ?? null,
           country_code: ch.country_code, category_id: ch.category_id,
+          category_name: ch.category_id ? (categoryName.get(ch.category_id) ?? null) : null,
           follower_count: ch.follower_count,
           public_followers_count: ch.public_followers_count ?? null,
           verification_status: ch.verification_status,
+          profile_url: `/channel/${ch.slug}`,
+          has_rate_card: rateCardPackages > 0,
+          rate_card_packages: rateCardPackages,
+          rate_card_url: rateCardPackages > 0 ? `/channel/${ch.slug}#rate-card` : null,
+          has_sample_work: sampleWorks > 0,
+          sample_work_count: sampleWorks,
+          sample_work_url: sampleWorks > 0 ? `/channel/${ch.slug}#sample-work` : null,
         } : null,
       });
     }
-    const committed = await this.committedBookingValueMinor(id);
-    return { campaign, applications: enriched, committed_booking_value_minor: committed.total_minor };
+    const capacity = await this.fundedCapacity(id);
+    return {
+      campaign,
+      applications: enriched,
+      committed_booking_value_minor: capacity.committed_booking_value_minor,
+      capacity,
+    };
   },
 
   /**
@@ -597,11 +764,19 @@ export const brandCampaignService = {
       }
     }
 
-    // M19 D6 — a refund/reversal shortfall blocks NEW obligations only. An
-    // already existing booking stays fully accessible and untouched.
+    // M19 D6 — a refund/reversal (or a wholly unfunded legacy campaign) blocks
+    // NEW obligations only. An already existing booking stays fully accessible.
     if (!existingOrderId && campaign.commitment_issue_state) {
       throw new HttpError(409,
         `This campaign has an unresolved Campaign Commitment Deposit shortfall of ${((campaign.commitment_issue_shortfall_minor || 0) / 100).toFixed(2)} USD. Restore the deposit before creating new bookings. Existing bookings are unaffected.`);
+    }
+    // M19 D7 — funded campaign capacity pre-flight. The authoritative gate
+    // runs again when the marketplace order is actually created.
+    const capacity = await this.fundedCapacity(campaign.id);
+    if (!existingOrderId && capacity.available_funded_capacity_minor <= 0) {
+      throw new HttpError(409,
+        `No funded campaign capacity left: ${money(capacity.committed_booking_value_minor)} of ${money(capacity.funded_campaign_capacity_minor)} is already committed. `
+        + `Capture the ${money(capacity.commitment_shortfall_minor)} Campaign Commitment Deposit top-up to raise the funded capacity.`);
     }
 
     return {
@@ -610,6 +785,10 @@ export const brandCampaignService = {
       channel: { id: channel.id, slug: channel.slug, name: channel.name },
       proposed_rate_usd_minor: app.proposed_rate_usd_minor,
       existing_order_id: existingOrderId,
+      // M19 D7 — funded capacity context for the brand (display + pre-flight).
+      funded_campaign_capacity_minor: capacity.funded_campaign_capacity_minor,
+      committed_booking_value_minor: capacity.committed_booking_value_minor,
+      available_funded_capacity_minor: capacity.available_funded_capacity_minor,
       // The brand continues in the existing marketplace booking surface.
       booking_url: existingOrderId
         ? `/dashboard/sponsorships`
@@ -633,27 +812,33 @@ export const brandCampaignService = {
     const out = [];
     for (const c of rows) {
       const apps = await brandCampaignRepo.listApplicationsForCampaign(c.id);
-      const committed = await this.committedBookingValueMinor(c.id);
+      // Normalise legacy / refunded state so admin always sees the real
+      // effective funding state (idempotent, non-destructive).
+      await campaignCommitmentService.reconcileFundingState(c.id);
+      const fresh = (await brandCampaignRepo.findById(c.id)) || c;
+      const cap = await this.fundedCapacity(c.id);
       const sum = await campaignCommitmentService.summary(c.id);
       out.push({
         id: c.id,
         name: c.name,
         brand_name: c.brand_name,
         brand_user_id: c.brand_user_id,
-        status: c.status,
-        budget_total_usd_minor: c.budget_total_usd_minor,
+        status: fresh.status,
+        budget_total_usd_minor: fresh.budget_total_usd_minor,
         // M19 — commitment oversight (NOT WaveLead revenue).
         required_commitment_minor: sum.required_commitment_minor,
         paid_commitment_minor: sum.paid_commitment_minor,
         refunded_commitment_minor: sum.refunded_commitment_minor,
         commitment_shortfall_minor: sum.topup_required_minor,
         commitment_funded: sum.funded,
-        commitment_issue_state: c.commitment_issue_state ?? null,
+        commitment_issue_state: fresh.commitment_issue_state ?? null,
+        funded_campaign_capacity_minor: cap.funded_campaign_capacity_minor,
+        available_funded_capacity_minor: cap.available_funded_capacity_minor,
         applications: apps.length,
         shortlisted: apps.filter((a) => a.status === 'shortlisted').length,
         approved: apps.filter((a) => a.status === 'approved').length,
-        marketplace_bookings: committed.order_ids.length,
-        committed_booking_value_minor: committed.total_minor,
+        marketplace_bookings: cap.committed_order_ids.length,
+        committed_booking_value_minor: cap.committed_booking_value_minor,
         created_at: c.created_at,
       });
     }

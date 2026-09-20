@@ -131,13 +131,23 @@ export const campaignCommitmentService = {
   },
 
   /**
-   * M19 D2/D3 — batch funding check for creator discovery surfaces. One query
-   * for the whole candidate list instead of a summary() per campaign.
+   * M19 D2/D3/D7 — batch creator-discovery check. One query for the whole
+   * candidate list instead of a summary() per campaign.
+   *
+   * A campaign is discoverable when it is backed by REAL captured commitment
+   * (effective paid > 0). The PUBLISH gate is stricter and separate: `open()`
+   * requires the FULL required 5%. This split is deliberate — after a budget
+   * INCREASE the campaign keeps running (creators may still apply, the brand
+   * may still review, shortlist and approve) while the outstanding top-up
+   * caps the FUNDED CAMPAIGN CAPACITY (D7) for any NEW booking. A campaign
+   * with no captured commitment at all (legacy / fully refunded) is never
+   * discoverable, and a refund shortfall additionally sets a funding issue
+   * flag which hides the campaign.
    */
-  async fundedCampaignIds(campaigns: { id: string; budget_total_usd_minor: number }[]): Promise<Set<string>> {
+  async commitmentBackedCampaignIds(campaigns: { id: string; budget_total_usd_minor: number }[]): Promise<Set<string>> {
     const ids = campaigns.map((c) => c.id);
-    const funded = new Set<string>();
-    if (!ids.length) return funded;
+    const backed = new Set<string>();
+    if (!ids.length) return backed;
     const c = await coll();
     const rows = (await c.find({ campaign_id: { $in: ids } }, { projection: { _id: 0 } }).toArray()) as CampaignCommitment[];
     const paid = new Map<string, number>();
@@ -145,10 +155,9 @@ export const campaignCommitmentService = {
       paid.set(r.campaign_id, (paid.get(r.campaign_id) || 0) + this.effectivePaidMinor(r));
     }
     for (const camp of campaigns) {
-      const required = requiredCommitmentMinor(camp.budget_total_usd_minor);
-      if (required > 0 && (paid.get(camp.id) || 0) >= required) funded.add(camp.id);
+      if ((paid.get(camp.id) || 0) > 0) backed.add(camp.id);
     }
-    return funded;
+    return backed;
   },
 
   /**
@@ -352,43 +361,66 @@ export const campaignCommitmentService = {
   },
 
   /**
-   * Financial-state-aware funding reconciliation after a refund/reversal.
+   * Financial-state-aware funding reconciliation. Called after a refund /
+   * reversal, after a budget change and lazily from brand/admin reads — which
+   * is also how PRE-M19 legacy campaigns are normalised (NO GRANDFATHERING):
+   * a legacy `open` campaign with no captured deposit falls back to
+   * `commitment_required`, keeps all of its data and gets the normal 5%
+   * funding path. Idempotent: it writes only when something changes and it
+   * never deletes a campaign, an application, an order or any history.
    *
-   *  • effective paid ≥ required          → campaign healthy, issue cleared
-   *  • shortfall, NO creator bookings yet → campaign leaves Open and returns
-   *                                         to `commitment_required` (it also
-   *                                         disappears from creator discovery)
-   *  • shortfall WITH creator bookings    → bookings are PRESERVED; the
-   *                                         campaign is flagged with an
-   *                                         explicit funding issue, hidden
-   *                                         from creator discovery and blocked
-   *                                         from creating NEW obligations
+   *  • effective paid ≥ required          → healthy, any issue flag cleared
+   *  • shortfall, NO creator bookings yet → the campaign leaves Open and
+   *                                         returns to `commitment_required`
+   *  • shortfall WITH creator bookings    → obligations are PRESERVED and the
+   *                                         lifecycle kept; the campaign is
+   *                                         flagged with a funding issue
+   *
+   * ISSUE FLAG (hard block on NEW obligations) is set only when the shortfall
+   * comes from a refund/reversal (`refund_shortfall`) or from a campaign with
+   * NO captured commitment at all (`commitment_shortfall`, e.g. legacy). A
+   * pure top-up shortfall after a budget INCREASE is not an issue: there the
+   * funded campaign capacity (D7) is the control, so bookings that still fit
+   * inside the already funded capacity remain possible.
    */
   async reconcileFundingState(campaignId: string): Promise<{ shortfall_minor: number; issue: string | null; status: string | null }> {
     const campaign = await brandCampaignRepo.findById(campaignId);
     if (!campaign) return { shortfall_minor: 0, issue: null, status: null };
     const sum = await this.summary(campaignId);
     const shortfall = sum.topup_required_minor;
+    const patch: Record<string, unknown> = {};
+    const want = (k: string, v: unknown, current: unknown) => {
+      if (JSON.stringify(v ?? null) !== JSON.stringify(current ?? null)) patch[k] = v;
+    };
 
     if (shortfall <= 0) {
-      await brandCampaignRepo.update(campaignId, {
-        commitment_issue_state: null,
-        commitment_issue_shortfall_minor: 0,
-        commitment_issue_detected_at: null,
-      } as never);
+      want('commitment_issue_state', null, campaign.commitment_issue_state);
+      want('commitment_issue_shortfall_minor', 0, campaign.commitment_issue_shortfall_minor);
+      want('commitment_topup_required_minor', 0, campaign.commitment_topup_required_minor);
+      if (campaign.commitment_issue_state) patch.commitment_issue_detected_at = null;
+      if (Object.keys(patch).length) await brandCampaignRepo.update(campaignId, patch as never);
       return { shortfall_minor: 0, issue: null, status: campaign.status };
     }
 
     const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
     const committed = await brandCampaignService.committedBookingValueMinor(campaignId);
-    const patch: Record<string, unknown> = {
-      commitment_issue_state: 'refund_shortfall',
-      commitment_issue_shortfall_minor: shortfall,
-      commitment_issue_detected_at: new Date(),
-      commitment_topup_required_minor: shortfall,
-    };
+    // Cause of the shortfall decides whether NEW obligations are hard-blocked.
+    const cause: 'refund_shortfall' | 'commitment_shortfall' | null =
+      sum.refunded_commitment_minor > 0 ? 'refund_shortfall'
+        : sum.paid_commitment_minor === 0 ? 'commitment_shortfall'
+          : null;                                   // pure top-up shortfall → D7 capacity governs
+
+    want('commitment_topup_required_minor', shortfall, campaign.commitment_topup_required_minor);
+    want('commitment_issue_state', cause, campaign.commitment_issue_state);
+    want('commitment_issue_shortfall_minor', cause ? shortfall : 0, campaign.commitment_issue_shortfall_minor);
+    if (cause && !campaign.commitment_issue_detected_at) patch.commitment_issue_detected_at = new Date();
+
     let nextStatus = campaign.status as string;
-    if (committed.total_minor === 0 && ['open', 'in_selection'].includes(campaign.status)) {
+    // Only a genuine funding ISSUE takes a live campaign out of Open. A pure
+    // top-up shortfall after a budget increase keeps the campaign running
+    // (applications, review, shortlist, approve) — the funded campaign
+    // capacity (D7) is what limits NEW bookings there.
+    if (cause && committed.total_minor === 0 && ['open', 'in_selection'].includes(campaign.status)) {
       // No creator obligation exists yet → the campaign simply stops being Open.
       patch.status = 'commitment_required';
       patch.commitment_funded_at = null;
@@ -396,8 +428,8 @@ export const campaignCommitmentService = {
     }
     // With existing bookings the lifecycle is preserved on purpose: the
     // obligations, payouts and Payment Protection of those bookings stay valid.
-    await brandCampaignRepo.update(campaignId, patch as never);
-    return { shortfall_minor: shortfall, issue: 'refund_shortfall', status: nextStatus };
+    if (Object.keys(patch).length) await brandCampaignRepo.update(campaignId, patch as never);
+    return { shortfall_minor: shortfall, issue: cause, status: nextStatus };
   },
 
   /** Same pipeline for the provider webhook branch — one source of truth. */

@@ -547,6 +547,14 @@ export const marketplaceService = {
       if (campaign.commitment_issue_state) {
         throw new HttpError(409, 'This campaign has an unresolved Campaign Commitment Deposit shortfall. Restore the deposit before creating new bookings.');
       }
+      // M19 D7 — AUTHORITATIVE funded-capacity gate: committed booking value +
+      // this new obligation must fit inside the campaign budget that is really
+      // backed by captured commitment. Server-side only; the client never
+      // supplies the limit or the price.
+      {
+        const { brandCampaignService } = await import('./brandCampaignService');
+        await brandCampaignService.assertNewObligationAllowed(campaign.id, pkg.price_minor ?? 0);
+      }
       sourceCampaignId = campaign.id;
       sourceCampaignApplicationId = app.id;
     }

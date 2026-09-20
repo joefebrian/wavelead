@@ -14,7 +14,14 @@ interface Application {
   id: string; status: string; pitch: string; proposed_rate_usd_minor: number | null;
   audience_note: string | null; message_to_brand: string | null; materials_url: string | null;
   created_at: string; marketplace_order_id: string | null;
-  channel: { id: string; slug: string; name: string; country_code: string; follower_count: number; public_followers_count: number | null; verification_status: string } | null;
+  channel: {
+    id: string; slug: string; name: string; logo_url: string | null;
+    country_code: string; category_id: string | null; category_name: string | null;
+    follower_count: number; public_followers_count: number | null; verification_status: string;
+    profile_url: string;
+    has_rate_card: boolean; rate_card_packages: number; rate_card_url: string | null;
+    has_sample_work: boolean; sample_work_count: number; sample_work_url: string | null;
+  } | null;
 }
 interface Campaign {
   id: string; name: string; brand_name: string; objective: string; brief: string; status: string;
@@ -40,6 +47,8 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
   const [commitment, setCommitment] = useState<{
     commitment_percent: number; required_commitment_minor: number; paid_commitment_minor: number;
     topup_required_minor: number; excess_commitment_minor: number; funded: boolean;
+    funded_campaign_capacity_minor: number; committed_booking_value_minor: number;
+    available_funded_capacity_minor: number; campaign_budget_usd_minor: number;
   } | null>(null);
 
   const load = useCallback(async () => {
@@ -182,7 +191,7 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
                 </Button>
                 <span className="text-xs text-muted-foreground">
                   {commitment.paid_commitment_minor > 0
-                    ? 'Top-up required after your budget increase. Approvals stay within your funded campaign limit until it is paid.'
+                    ? 'Top-up required after your budget increase. Until it is captured, new bookings are limited to your currently funded campaign capacity below.'
                     : 'Your campaign becomes visible to creators once this is successfully captured.'}
                 </span>
               </div>
@@ -192,6 +201,25 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
                 10% marketplace fee on any booking you later make.
               </p>
             )}
+
+            {/* M19 D7 — truthful funded-capacity picture. */}
+            <div className="mt-5 rounded-md border border-border bg-muted/40 p-4" data-testid="funded-capacity">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Funded campaign capacity</div>
+              <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+                <div>Campaign budget: <strong>{usd(commitment.campaign_budget_usd_minor)}</strong></div>
+                <div>Required commitment ({commitment.commitment_percent}%): <strong>{usd(commitment.required_commitment_minor)}</strong></div>
+                <div>Commitment paid: <strong>{usd(commitment.paid_commitment_minor)}</strong></div>
+                <div>Commitment shortfall: <strong data-testid="capacity-shortfall">{usd(commitment.topup_required_minor)}</strong></div>
+                <div>Currently funded capacity: <strong data-testid="capacity-funded">{usd(commitment.funded_campaign_capacity_minor)}</strong></div>
+                <div>Committed creator bookings: <strong>{usd(commitment.committed_booking_value_minor)}</strong></div>
+                <div className="lg:col-span-3">Available funded capacity: <strong data-testid="capacity-available">{usd(commitment.available_funded_capacity_minor)}</strong></div>
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Shortlisting, rejecting and approving a creator never move money. The financial gate happens when a NEW
+                marketplace booking is created: committed bookings plus the new booking must fit inside your funded campaign
+                capacity, which is the part of your budget actually backed by the captured commitment deposit.
+              </p>
+            </div>
           </>
         ) : <p className="text-sm text-muted-foreground">Loading commitment status…</p>}
       </SectionCard>
@@ -235,16 +263,48 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
             description="Open campaigns appear under Campaign Opportunities for eligible channel owners."
           />
         ) : (
-          <DataTable head={['Channel', 'Audience', 'Proposed rate', 'Status', 'Actions']} testId="applicants-table">
+          <DataTable head={['Channel', 'Audience', 'Proposed rate', 'Applied', 'Materials', 'Status', 'Actions']} testId="applicants-table">
             {apps.map((a) => (
               <tr key={a.id} className="align-top hover:bg-muted/40" data-testid={`applicant-${a.id}`}>
                 <td className="px-3 py-2.5">
-                  <div className="font-medium">{a.channel?.name || 'Channel'}</div>
-                  <div className="text-xs text-muted-foreground">{a.channel?.country_code} · {a.channel?.verification_status}</div>
-                  <p className="mt-1 max-w-sm text-xs text-muted-foreground">{a.pitch}</p>
+                  <div className="flex items-start gap-2">
+                    {a.channel?.logo_url ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img src={a.channel.logo_url} alt="" className="mt-0.5 h-8 w-8 rounded-full border border-border object-cover"
+                        data-testid={`applicant-avatar-${a.id}`} />
+                    ) : (
+                      <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-muted text-[11px] font-semibold"
+                        data-testid={`applicant-avatar-${a.id}`}>
+                        {(a.channel?.name || '?').slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                    <div>
+                      <div className="font-medium">
+                        {a.channel?.profile_url
+                          ? <a className="underline-offset-2 hover:underline" href={a.channel.profile_url} target="_blank" rel="noreferrer" data-testid={`view-channel-${a.id}`}>{a.channel.name}</a>
+                          : 'Channel'}
+                      </div>
+                      <div className="text-xs text-muted-foreground" data-testid={`applicant-meta-${a.id}`}>
+                        {a.channel?.country_code} · {a.channel?.category_name || 'Uncategorised'} · {a.channel?.verification_status}
+                      </div>
+                      <p className="mt-1 max-w-sm text-xs text-muted-foreground">{a.pitch}</p>
+                    </div>
+                  </div>
                 </td>
-                <td className="px-3 py-2.5 text-xs tabular-nums">{(a.channel?.public_followers_count ?? a.channel?.follower_count ?? 0).toLocaleString()}</td>
+                <td className="px-3 py-2.5 text-xs tabular-nums" data-testid={`applicant-followers-${a.id}`}>{(a.channel?.public_followers_count ?? a.channel?.follower_count ?? 0).toLocaleString()}</td>
                 <td className="px-3 py-2.5 tabular-nums">{usd(a.proposed_rate_usd_minor)}</td>
+                <td className="px-3 py-2.5 text-xs text-muted-foreground" data-testid={`applicant-date-${a.id}`}>{new Date(a.created_at).toLocaleDateString()}</td>
+                <td className="px-3 py-2.5 text-xs">
+                  <div className="flex flex-col gap-1">
+                    {a.channel?.has_rate_card
+                      ? <a className="text-primary underline-offset-2 hover:underline" href={a.channel.rate_card_url!} target="_blank" rel="noreferrer" data-testid={`view-rate-card-${a.id}`}>Rate card ({a.channel.rate_card_packages})</a>
+                      : <span className="text-muted-foreground" data-testid={`no-rate-card-${a.id}`}>No rate card</span>}
+                    {a.channel?.has_sample_work
+                      ? <a className="text-primary underline-offset-2 hover:underline" href={a.channel.sample_work_url!} target="_blank" rel="noreferrer" data-testid={`view-sample-work-${a.id}`}>Sample work ({a.channel.sample_work_count})</a>
+                      : <span className="text-muted-foreground" data-testid={`no-sample-work-${a.id}`}>No sample work</span>}
+                    {a.materials_url && <a className="text-primary underline-offset-2 hover:underline" href={a.materials_url} target="_blank" rel="noreferrer">Applicant link</a>}
+                  </div>
+                </td>
                 <td className="px-3 py-2.5"><StatusBadge tone={TONE[a.status] || 'neutral'}>{a.status}</StatusBadge></td>
                 <td className="px-3 py-2.5">
                   <div className="flex flex-wrap gap-1.5">

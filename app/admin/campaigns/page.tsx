@@ -48,7 +48,7 @@ export default async function AdminCampaignsPage() {
       {rows.length === 0 ? (
         <EmptyState title="No campaigns yet" description="Brand campaigns appear here as soon as a brand creates one." />
       ) : (
-        <DataTable head={['Campaign', 'Brand', 'Budget (plan)', 'Deposit req.', 'Deposit paid', 'Shortfall', 'Apps', 'Shortlisted', 'Approved', 'Bookings', 'Committed', 'Status', 'Created']} testId="admin-campaign-table">
+        <DataTable head={['Campaign', 'Brand', 'Budget (plan)', 'Deposit req.', 'Deposit paid', 'Shortfall', 'Funded cap.', 'Available', 'Apps', 'Shortlisted', 'Approved', 'Bookings', 'Committed', 'Status', 'Created']} testId="admin-campaign-table">
           {rows.map((r) => (
             <tr key={r.id} className="hover:bg-muted/40">
               <td className="px-3 py-2.5 font-medium">{r.name}</td>
@@ -63,6 +63,8 @@ export default async function AdminCampaignsPage() {
                   </StatusBadge>
                 ) : '—'}
               </td>
+              <td className="px-3 py-2.5 tabular-nums" data-testid={`funded-capacity-${r.id}`}>{usd(r.funded_campaign_capacity_minor)}</td>
+              <td className="px-3 py-2.5 tabular-nums">{usd(r.available_funded_capacity_minor)}</td>
               <td className="px-3 py-2.5 tabular-nums">{r.applications}</td>
               <td className="px-3 py-2.5 tabular-nums">{r.shortlisted}</td>
               <td className="px-3 py-2.5 tabular-nums">{r.approved}</td>

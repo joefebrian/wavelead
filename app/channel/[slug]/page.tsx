@@ -223,7 +223,7 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
         </section>
 
         {publicRateCard && publicRateCard.packages.length > 0 && (
-          <section className="container py-8" data-testid="sponsorship-opportunities">
+          <section id="rate-card" className="container py-8" data-testid="sponsorship-opportunities">
             <div className="flex items-end justify-between flex-wrap gap-3">
               <div>
                 <h2 className="text-xl md:text-2xl font-bold tracking-tight flex items-center gap-2">
@@ -272,7 +272,7 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
         {/* M18.1 Phase H — Sample work: public links the owner published, shown so
             brands can evaluate the channel before sending a sponsorship. */}
         {sampleWorks.length > 0 && (
-          <section className="container py-8" data-testid="public-sample-work">
+          <section id="sample-work" className="container py-8" data-testid="public-sample-work">
             <SectionHeader title="Sample work" subtitle="Published work shared by the channel owner." />
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {sampleWorks.map((w) => (
