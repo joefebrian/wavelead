@@ -445,13 +445,21 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       if (!secret) return applyCors(fail(503, 'Scheduler not configured'), request);
       const provided = request.headers.get('x-cron-secret') || '';
       if (provided !== secret) return applyCors(fail(401, 'Unauthorized'), request);
-      const { whatsappRefreshService } = await import('@/lib/services/whatsappRefreshService');
+      const { whatsappRefreshService, WEEKLY_STALE_DAYS } = await import('@/lib/services/whatsappRefreshService');
       const body = await safeJson(request);
+      // M18.1 Phase E — weekly cadence. Default staleAfterDays=7 makes the job
+      // idempotent: channels observed inside the window are skipped, so a retry
+      // (or a more frequent trigger) never re-fetches the same channel twice.
       const summary = await whatsappRefreshService.refreshBatch({
         limit: typeof body?.limit === 'number' ? body.limit : undefined,
         delayMs: typeof body?.delayMs === 'number' ? body.delayMs : undefined,
+        staleAfterDays: typeof body?.staleAfterDays === 'number' ? body.staleAfterDays : undefined,
       });
-      return applyCors(ok({ processed: summary.processed, ok: summary.ok, skipped: summary.skipped, failed: summary.failed }), request);
+      return applyCors(ok({
+        processed: summary.processed, ok: summary.ok, skipped: summary.skipped,
+        failed: summary.failed, skipped_fresh: summary.skipped_fresh,
+        cadence_days: WEEKLY_STALE_DAYS,
+      }), request);
     }
 
     // ---------- CURATION (M02) ----------
@@ -1824,6 +1832,41 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
     }
 
     // ---------- MARKETPLACE (Phase B1) ----------
+    // ---------- M18.1 PHASE G/H — SAMPLE WORK + OWNER ONBOARDING ----------
+    // Owner/admin CRUD. Public links only; nothing is ever fabricated.
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'sample-work' && method === 'GET') {
+      const { sampleWorkService } = await import('@/lib/services/sampleWorkService');
+      const actor = await resolveActor(request);
+      return applyCors(ok({ items: await sampleWorkService.listForOwner(actor, path[2]) }), request);
+    }
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'sample-work' && method === 'POST') {
+      const { sampleWorkService } = await import('@/lib/services/sampleWorkService');
+      const actor = await resolveActor(request);
+      const body = await safeJson(request);
+      return applyCors(ok({ item: await sampleWorkService.create(actor, path[2], body) }, { status: 201 }), request);
+    }
+    if (path.length === 2 && path[0] === 'owner' && path[1] === 'sample-work' && method === 'DELETE') {
+      return applyCors(fail(400, 'Sample work id required'), request);
+    }
+    if (path.length === 3 && path[0] === 'owner' && path[1] === 'sample-work' && method === 'DELETE') {
+      const { sampleWorkService } = await import('@/lib/services/sampleWorkService');
+      const actor = await resolveActor(request);
+      return applyCors(ok(await sampleWorkService.remove(actor, path[2])), request);
+    }
+    if (path.length === 4 && path[0] === 'owner' && path[1] === 'channels' && path[3] === 'onboarding' && method === 'GET') {
+      const { sampleWorkService } = await import('@/lib/services/sampleWorkService');
+      const actor = await resolveActor(request);
+      return applyCors(ok(await sampleWorkService.onboardingChecklist(actor, path[2])), request);
+    }
+    // Public read for brands evaluating a channel.
+    if (path.length === 3 && path[0] === 'channels' && path[2] === 'sample-work' && method === 'GET') {
+      const { sampleWorkService } = await import('@/lib/services/sampleWorkService');
+      const { channelRepo } = await import('@/lib/repositories/channelRepo');
+      const ch = await channelRepo.findBySlug(path[1]) || await channelRepo.findById(path[1]);
+      if (!ch || ch.status !== 'approved') return applyCors(ok({ items: [] }), request);
+      return applyCors(ok({ items: await sampleWorkService.listPublic(ch.id) }), request);
+    }
+
     // Owner rate-card CRUD (verified owner only)
     if (path.length === 3 && path[0] === 'owner' && path[1] === 'channels' && path[2] === 'rate-card' && method === 'GET') {
       // /owner/channels/:id/rate-card — this shape supported below

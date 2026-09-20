@@ -124,13 +124,23 @@ describe('M17 §1 countries', () => {
 
 // --------------------- FAST OWNER VERIFICATION ($1) ------------------------
 describe('M17 §2 fast owner verification', () => {
-  it('1 & 2. listing must be approved; unrelated user blocked', async () => {
+  // M18.1 Phase D — POLICY CHANGE: a submitter no longer waits for listing
+  // moderation. A pending_review listing is eligible (it is approved as an
+  // OUTCOME of a successful fast verification); strangers are still blocked.
+  it('1 & 2. pending listing is eligible for the submitter; unrelated user blocked', async () => {
     await withDb(async (db) => {
       const submitter = await seedUser(db);
       const stranger = await seedUser(db);
       const pending = await seedChannel(db, submitter, 'pending');
-      await expect(ownerVerificationService.startFastVerification(actorFor(submitter), pending.id))
-        .rejects.toMatchObject({ status: 409 });
+      const pendingDoc = await db.collection(COLLECTIONS.CHANNELS).findOne({ id: pending.id });
+      // Eligibility no longer rejects a pending_review listing.
+      await expect(ownerVerificationService.assertFastVerificationEligible(
+        actorFor(submitter), pendingDoc as unknown as Channel,
+      )).resolves.toBeUndefined();
+      // Starting checkout must not fail with the old 409 "not approved" gate.
+      await ownerVerificationService.startFastVerification(actorFor(submitter), pending.id)
+        .then(() => undefined)
+        .catch((e: { status?: number }) => { expect(e?.status).not.toBe(409); });
       const approved = await seedChannel(db, submitter, 'approved');
       await expect(ownerVerificationService.startFastVerification(actorFor(stranger), approved.id))
         .rejects.toMatchObject({ status: 403 });

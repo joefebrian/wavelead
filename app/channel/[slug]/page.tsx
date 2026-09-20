@@ -13,6 +13,7 @@ import { countryByCode } from '@/lib/constants/countries';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { channelRepo } from '@/lib/repositories/channelRepo';
 import { marketplaceService } from '@/lib/services/marketplaceService';
+import { sampleWorkService, SAMPLE_WORK_TYPE_LABELS } from '@/lib/services/sampleWorkService';
 import { trackingService, normalizeReferrerDomain, normalizeSource } from '@/lib/services/trackingService';
 import { cookies, headers } from 'next/headers';
 import { ShieldCheck, Users, Share2, ArrowUpRight, Sparkles, BadgeCheck, Flag, KeyRound, Handshake, Package, Clock } from 'lucide-react';
@@ -57,6 +58,8 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
   ]);
   // Public marketplace rate card (only active fixed-price packages; null if none).
   const publicRateCard = await marketplaceService.getPublicRateCard(channel.id).catch(() => null);
+  // M18.1 Phase H — public sample work (owner-supplied public links only).
+  const sampleWorks = await sampleWorkService.listPublic(channel.id, 6).catch(() => []);
   // Sponsored related channel — never self-promote (server enforces exclude).
   const sponsored = await loadOneSponsored({
     placement: 'sponsored_related_channel',
@@ -263,6 +266,30 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
               ))}
             </div>
             <p className="mt-4 text-xs text-muted-foreground">All sponsorships are subject to WaveLead marketplace terms. Owner has 7 days to accept or reject.</p>
+          </section>
+        )}
+
+        {/* M18.1 Phase H — Sample work: public links the owner published, shown so
+            brands can evaluate the channel before sending a sponsorship. */}
+        {sampleWorks.length > 0 && (
+          <section className="container py-8" data-testid="public-sample-work">
+            <SectionHeader title="Sample work" subtitle="Published work shared by the channel owner." />
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {sampleWorks.map((w) => (
+                <div key={w.id} className="wh-card p-5" data-testid={`sample-work-${w.id}`}>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                    {SAMPLE_WORK_TYPE_LABELS[w.work_type] || 'Work'}
+                  </div>
+                  <div className="mt-1 font-semibold">{w.title}</div>
+                  {w.brand_name && <div className="text-xs text-muted-foreground mt-0.5">{w.brand_name}{w.published_on ? ` · ${w.published_on}` : ''}</div>}
+                  {w.description && <p className="mt-2 text-sm text-muted-foreground">{w.description}</p>}
+                  <a href={w.content_url} target="_blank" rel="noopener noreferrer nofollow"
+                     className="mt-3 inline-block text-sm font-semibold text-primary hover:underline">
+                    View content →
+                  </a>
+                </div>
+              ))}
+            </div>
           </section>
         )}
 

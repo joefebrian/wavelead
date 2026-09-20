@@ -94,37 +94,12 @@ export const moderationService = {
       after_data: { status: 'approved', ...patch },
       created_at: now,
     });
-    // M17 — notify the submitter that the LISTING is approved and owner
-    // verification is now open. Best-effort: an email failure must NEVER roll
-    // back the moderation decision.
+    // M18.1 Phase F/I — one transactional "your channel is live" email per
+    // approval transition, via the SHARED notifier also used by the Fast
+    // Verification path. Best-effort: never rolls back the moderation decision.
     try {
-      const submitterId = (channel as unknown as { submitted_by?: string | null }).submitted_by || channel.owner_id || null;
-      if (submitterId) {
-        const { userRepo } = await import('@/lib/repositories/userRepo');
-        const { sendMailBestEffort, hasSmtpTransport, appOrigin } = await import('./mailer');
-        if (hasSmtpTransport()) {
-          const u = await userRepo.findById(submitterId);
-          if (u?.email) {
-            const base = appOrigin();
-            await sendMailBestEffort({
-              to: u.email,
-              subject: 'Your WaveLead channel is approved',
-              text: [
-                `Your channel listing for ${channel.name} has been approved.`,
-                '',
-                'Complete owner verification to start managing monetization and payouts.',
-                '',
-                'Fast Verification — $1 one-time',
-                'Manual Verification — Free',
-                '',
-                `Verify Channel Ownership: ${base}/dashboard/channels/${channelId}/verify`,
-                '',
-                '— WaveLead',
-              ].join('\n'),
-            });
-          }
-        }
-      }
+      const { notifyChannelLive } = await import('./channelLiveNotification');
+      await notifyChannelLive({ ...channel, ...patch, id: channelId } as Channel, 'moderation_approval');
     } catch { /* email is best-effort */ }
     return { ok: true };
   },
@@ -156,6 +131,12 @@ export const moderationService = {
       after_data: { status: 'rejected', reason: parsed.data.reason, notes: parsed.data.notes || null },
       created_at: now,
     });
+    // M18.1 Phase I — leaving the approved state clears the "live" email marker
+    // so a genuine later re-approval notifies again (a refresh never does).
+    if (channel.status === 'approved') {
+      const { resetChannelLiveEmailMarker } = await import('./channelLiveNotification');
+      await resetChannelLiveEmailMarker(channelId);
+    }
     return { ok: true };
   },
 };

@@ -7129,3 +7129,81 @@ agent_communication:
         PayPal recurring, campaign conversation, consent audit log, analytics
         health view, consent confirmation toast, category landing depth (M19),
         campaign handoff polish (M19).
+
+## M18.1 POST-M18 PRODUCTION REVIEW (Phases A–I) — NOT DEPLOYED
+  - agent: "main"
+    comment: |
+      PHASE A — FX INFINITY HOTFIX. ROOT CAUSE:
+        lib/services/fx/providerFxService.ts (manual fallback branch) computed
+          const rate = (manual.rate_scaled / manual.rate_scale).toString();
+        i.e. it divided by the DECIMAL-PLACE COUNT instead of 10^rate_scale.
+        Production row { rate_scaled: 18200, rate_scale: 0 } → 18200 / 0 =
+        Infinity → FxProviderPanel rendered Number('Infinity').toLocaleString()
+        = "1 USD = ∞ IDR". For rate_scale > 0 it produced a silently WRONG
+        number (16523545/3 instead of 16523.545). Second latent defect: the
+        admin page formatted the active rate with formatIdr(), which THROWS on
+        any fractional canonical rate.
+      FIX (canonical rule in ONE place, lib/services/fx/manualRate.ts):
+        canonical_rate = rate_scaled / 10 ** rate_scale, valid only when finite
+        and > 0; resolveLatestValidManualRate() falls back to the most recent
+        VALID historical row when the active row is unusable (history is never
+        rewritten, transactions are never re-priced); when nothing valid exists
+        the UI shows "FX Reference Unavailable" and asks for admin action.
+        Panel + admin page now refuse to render Infinity/NaN/0. Manual values
+        stay labelled "Manual Admin Reference Rate" — never PayPal. Payment
+        economics untouched: convertUsdMicrosToIdr (BigInt) is unchanged.
+        Preview reference now reads 1 USD = 16,500 IDR (Manual Fallback);
+        production's 18,200 row will render as 18,200.
+      PHASE B — homepage countries: active-only, ranked by approved channel
+        count, capped at 12 (8 shown in preview), plus "View all countries" →
+        /countries. Canonical dataset, /country/<slug> URLs and SEO untouched.
+      PHASE C — removed the redundant bottom quick-link pill row from
+        /dashboard (10 pills). Every destination remains in the AppShell
+        sidebar. Public footer + legal links + Cookie Preferences untouched
+        (the footer is not rendered inside the authenticated shells).
+      PHASE D — Fast Verification no longer waits for listing moderation.
+        assertFastListingState() replaces assertListingApproved(): pending_review
+        is eligible, rejected/suspended/archived/removed stay blocked, a channel
+        with no submitted WhatsApp link is refused. Still required: authenticated
+        original submitter (or eligible claimant), no conflicting verified owner,
+        identity, payout destination, declaration and an authoritative
+        captured_finalized $1 capture. finalizeIfComplete() now performs ONE
+        explicit idempotent transition (status→approved, published_at,
+        verification_status→verified, activation_status→active) with an audit
+        row (listing_approved_by_fast_path, second_admin_approval_required:
+        false). No duplicate listing/activation rows. Manual Verification stays
+        FREE and evidence-based. tests/m17.test.ts updated to the NEW policy.
+      PHASE E — weekly follower refresh reuses whatsappRefreshService +
+        the existing guarded /api/cron/whatsapp-refresh endpoint. Added
+        WEEKLY_STALE_DAYS=7 staleness gating (skips channels observed inside the
+        window → idempotent/retry-safe), per-channel try/catch failure
+        isolation, and cadence_days in the response. SSRF-safe public metadata
+        fetch, bounded batch (<=500) and inter-request delay unchanged; no
+        invented counts, no browser farm, no private API.
+        SCHEDULER: PLATFORM SCHEDULER REQUIRED (see readout for the exact step).
+      PHASE F/I — new shared notifier lib/services/channelLiveNotification.ts
+        ("Your WaveLead channel is live", primary CTA Set Your Rate Card,
+        secondary sample-work/profile/opportunities guidance) used by BOTH
+        moderationService.approve and the fast path. Best-effort; marker
+        live_email_sent_at is written only after a successful send (one email
+        per approval transition, never on refresh) and cleared when the channel
+        leaves the approved state so a genuine re-approval notifies again.
+        Existing SMTP/mailer only — no second mail system.
+      PHASE G/H — components/owner/OwnerOnboardingPanel.tsx adds the checklist
+        (Channel approved / Set rate card / Add sample work / Complete
+        sponsorship profile) with the Rate Card CTA, plus Sample Work CRUD
+        (channel_sample_works, public https links only, max 12, no file
+        hosting, SSRF-style private-host rejection). Templates are labelled
+        EXAMPLES ONLY and are never stored as the creator's work. Public
+        sample-work section added to /channel/<slug> so brands can evaluate.
+        Existing rate-card domain reused; no competing pricing model.
+      TESTS: tests/m18_1_fx.test.ts 11/11; tests/m18_1_post_launch.test.ts
+        31/31; combined targeted+regression run (m18_1_fx, m18_1_post_launch,
+        m18_ga4_consent, m18, m17, m17_1, m11_batch3, m03_ownership_verification,
+        m141_pricing) 158/158 PASS. npx tsc --noEmit clean (once);
+        yarn build clean (once).
+      PRE-EXISTING FAILURES (verified identical on HEAD via git stash, NOT
+        caused by M18.1): tests/pricing_conversion.test.ts (2, cta-free id),
+        tests/m07_security.test.ts primary super-admin seed (3, credentials are
+        managed outside the repo), tests/m03.test.ts release-safety flag (1).
+      DEPLOY: NOT EXECUTED.

@@ -82,10 +82,20 @@ function maskRef(v: string | null | undefined): string | null {
   return v.length <= 6 ? `${v.slice(0, 2)}****` : `${v.slice(0, 4)}****${v.slice(-2)}`;
 }
 
-/** Listing approval is a precondition for ANY owner-verification path. */
-function assertListingApproved(channel: Channel): void {
-  if (channel.status !== 'approved') {
-    throw new HttpError(409, 'This channel listing has not been approved yet. Owner verification opens once the listing is approved.');
+/**
+ * M18.1 Phase D — the FAST path no longer waits for listing moderation.
+ * A submitter may start Fast Verification while the listing is still
+ * pending_review; a successful $1 capture plus identity/payout/declaration
+ * approves the listing itself. Terminal/blocked states stay blocked.
+ */
+const FAST_BLOCKED_STATUSES = new Set(['rejected', 'archived', 'suspended', 'removed']);
+
+function assertFastListingState(channel: Channel): void {
+  if (FAST_BLOCKED_STATUSES.has(String(channel.status))) {
+    throw new HttpError(409, 'This channel listing is not eligible for Fast Verification. Contact support if you believe this is a mistake.');
+  }
+  if (!channel.whatsapp_url && !(channel as unknown as { invite_url?: string }).invite_url) {
+    throw new HttpError(409, 'This channel has no submitted WhatsApp Channel link yet.');
   }
 }
 
@@ -94,7 +104,7 @@ function assertListingApproved(channel: Channel): void {
  * visitor must NEVER be able to pay $1 against an arbitrary public channel.
  */
 export async function assertFastVerificationEligible(actor: Actor, channel: Channel): Promise<void> {
-  assertListingApproved(channel);
+  assertFastListingState(channel);
   const suspended = (channel as unknown as { is_suspended?: boolean; is_disputed?: boolean });
   if (suspended.is_suspended || suspended.is_disputed) {
     throw new HttpError(409, 'This channel is under review and cannot start owner verification right now.');
@@ -145,6 +155,8 @@ export type FastVerificationStep =
   | 'verified';
 
 export const ownerVerificationService = {
+  // M18.1 — exposed for callers/tests that need the eligibility guard alone.
+  assertFastVerificationEligible,
   OWNER_DECLARATION_TEXT,
   OWNER_DECLARATION_VERSION,
   FAST_AMOUNT_MINOR: ACTIVATION_AMOUNT_MINOR,
@@ -168,8 +180,11 @@ export const ownerVerificationService = {
     const paymentFinalized = payment?.status === 'captured_finalized';
     const identityComplete = !!identity && identity.declaration_accepted;
 
+    // M18.1 Phase D — only a terminal/blocked listing is ineligible. A
+    // pending_review listing can go through the whole fast flow.
+    const listingBlocked = FAST_BLOCKED_STATUSES.has(String(channel.status));
     let step: FastVerificationStep = 'ready_to_pay';
-    if (channel.status !== 'approved') step = 'ineligible';
+    if (listingBlocked) step = 'ineligible';
     else if (verified && channel.activation_status === 'active') step = 'verified';
     else if (!payment || ['failed', 'cancelled'].includes(payment.status)) step = 'ready_to_pay';
     else if (!paymentFinalized) step = 'payment_pending';
@@ -181,12 +196,17 @@ export const ownerVerificationService = {
       channel_id: channel.id,
       channel_name: channel.name,
       listing_approved: channel.status === 'approved',
+      listing_status: channel.status,
+      // Fast path approves the listing itself on successful completion.
+      fast_path_approves_listing: true,
       step,
       fast_amount_minor: ACTIVATION_AMOUNT_MINOR,
       currency: ACTIVATION_CURRENCY,
       manual_path_free: true,
       requirements: {
+        // Kept for compatibility, but it is NO LONGER a precondition to start.
         listing_approved: channel.status === 'approved',
+        listing_eligible: !listingBlocked,
         payment_finalized: paymentFinalized,
         identity_complete: identityComplete,
         declaration_accepted: !!identity?.declaration_accepted,
@@ -374,7 +394,9 @@ export const ownerVerificationService = {
     const channel = await channelRepo.findById(channelId);
     if (!channel) throw new HttpError(404, 'Channel not found');
     const blocked: string[] = [];
-    if (channel.status !== 'approved') blocked.push('listing_approval');
+    // M18.1 Phase D — listing approval is an OUTCOME of this gate, not a
+    // precondition. Only a terminal/blocked listing stops the fast path.
+    if (FAST_BLOCKED_STATUSES.has(String(channel.status))) blocked.push('listing_blocked');
 
     const c = await payCol();
     const payment = await c.findOne({ channel_id: channelId, owner_user_id: userId, status: 'captured_finalized' } as never);
@@ -390,8 +412,16 @@ export const ownerVerificationService = {
     if (blocked.length > 0) return { verified: false, blocked_by: blocked };
 
     const now = new Date();
+    // Explicit, idempotent transition. The listing leaves the moderation queue
+    // here (no second manual ownership review); re-running this is a no-op
+    // because the same target values are written and no new row is created.
+    const listingBecomesApproved = channel.status !== 'approved';
     await channelRepo.update(channelId, {
       owner_id: userId,
+      status: 'approved',
+      published_at: channel.published_at ?? now,
+      rejection_reason: null,
+      rejection_notes: null,
       verification_status: 'verified',
       activation_status: 'active',
       activation_active_at: now,
@@ -410,6 +440,8 @@ export const ownerVerificationService = {
         after_data: {
           verification_status: 'verified',
           activation_status: 'active',
+          status: 'approved',
+          listing_approved_by_fast_path: listingBecomesApproved,
           path: 'fast_verification',
           second_admin_approval_required: false,
           activation_payment_id: (payment as unknown as { id: string })?.id || null,
@@ -417,6 +449,13 @@ export const ownerVerificationService = {
         created_at: now,
       } as never);
     } catch { /* audit-only */ }
+
+    // M18.1 Phase F/I — one "your channel is live" email per approval
+    // transition, via the SHARED notifier. Never blocks activation.
+    try {
+      const { notifyChannelLive } = await import('./channelLiveNotification');
+      await notifyChannelLive({ ...channel, status: 'approved', owner_id: userId } as Channel, 'fast_verification');
+    } catch { /* email is best-effort */ }
 
     return { verified: true, blocked_by: [] };
   },

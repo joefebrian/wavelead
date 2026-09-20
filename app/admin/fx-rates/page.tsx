@@ -1,7 +1,7 @@
 import { resolveActorFromCookies, rankOf, ROLES } from '@/lib/auth/rbac';
 import { redirect } from 'next/navigation';
 import { fxAdminService } from '@/lib/services/fx/fxAdminService';
-import { formatIdr } from '@/lib/utils/idrFormat';
+import { formatManualRate, isValidManualRateRow, FX_UNAVAILABLE_LABEL } from '@/lib/services/fx/manualRate';
 import AdminFxCreateForm from './AdminFxCreateForm';
 import FxProviderPanel from './FxProviderPanel';
 import { PageHeader } from '@/components/appkit';
@@ -9,12 +9,10 @@ import { PageHeader } from '@/components/appkit';
 export const metadata = { title: 'FX Rates — Admin' };
 export const dynamic = 'force-dynamic';
 
+// M18.1 — ONE canonical rule: rate_scaled / 10^rate_scale. Invalid rows are
+// reported as unavailable instead of rendering Infinity/NaN/0.
 function formatRate(rate_scaled: number, rate_scale: number): string {
-  if (rate_scale === 0) return rate_scaled.toLocaleString('en-US');
-  const s = rate_scaled.toString().padStart(rate_scale + 1, '0');
-  const whole = s.slice(0, -rate_scale) || '0';
-  const frac = s.slice(-rate_scale).replace(/0+$/, '');
-  return frac ? `${Number(whole).toLocaleString('en-US')}.${frac}` : Number(whole).toLocaleString('en-US');
+  return formatManualRate({ rate_scaled, rate_scale }) ?? FX_UNAVAILABLE_LABEL;
 }
 
 export default async function AdminFxRatesPage() {
@@ -38,15 +36,19 @@ export default async function AdminFxRatesPage() {
 
         <section className="wh-card p-5 mb-6">
           <h2 className="font-semibold mb-2">Current USD → IDR checkout rate</h2>
-          {active ? (
+          {active && isValidManualRateRow(active) ? (
             <div className="flex flex-wrap items-baseline gap-2">
-              <div className="text-2xl font-bold">1 USD = {formatIdr(active.rate_scaled / Math.pow(10, active.rate_scale))}</div>
+              <div className="text-2xl font-bold" data-testid="fx-active-manual-rate">1 USD = Rp{formatRate(active.rate_scaled, active.rate_scale)}</div>
               <div className="text-sm text-muted-foreground">rate_scaled=<code>{active.rate_scaled}</code> rate_scale=<code>{active.rate_scale}</code></div>
               <div className="text-sm text-muted-foreground">effective from {active.effective_from ? new Date(active.effective_from).toISOString().slice(0, 19) + 'Z' : '—'}</div>
               <span className="ml-auto text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Active</span>
             </div>
           ) : (
-            <div className="text-sm text-red-700">No active USD → IDR rate configured. Owner IDR-equivalent displays will be hidden until a rate is set.</div>
+            <div className="text-sm text-red-700" data-testid="fx-active-manual-unavailable">
+              {active
+                ? `${FX_UNAVAILABLE_LABEL} — the active rate row (rate_scaled=${active.rate_scaled}, rate_scale=${active.rate_scale}) does not yield a finite positive rate. Activate a corrected rate below.`
+                : `${FX_UNAVAILABLE_LABEL} — no active USD → IDR rate configured. Owner IDR-equivalent displays stay hidden until a valid rate is set.`}
+            </div>
           )}
         </section>
 

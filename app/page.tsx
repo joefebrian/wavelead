@@ -46,7 +46,17 @@ export default async function HomePage() {
     .sort((a, b) => b.channel_count - a.channel_count)
     .slice(0, 10);
   const pillCats = bundle.categories.slice(0, 10);
-  const countries: CountryWithCount[] = bundle.countries;
+  // M18.1 Phase B — homepage shows a COMPACT set only: countries that actually
+  // have at least one approved public channel, ranked by that count, capped at
+  // 12. The canonical country dataset, /country/<slug> URLs and the full
+  // /countries directory are untouched.
+  const HOMEPAGE_COUNTRY_LIMIT = 12;
+  const activeCountries: CountryWithCount[] = bundle.countries.filter((c) => c.channel_count > 0);
+  const countries: CountryWithCount[] = activeCountries
+    .slice()
+    .sort((a, b) => b.channel_count - a.channel_count || a.name.localeCompare(b.name))
+    .slice(0, HOMEPAGE_COUNTRY_LIMIT);
+  const hasMoreCountries = activeCountries.length > countries.length || bundle.countries.length > countries.length;
 
   return (
     <>
@@ -148,19 +158,29 @@ export default async function HomePage() {
             title="Discover by country"
             subtitle="See what’s popular near you — or far from you."
           />
-          <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+          <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-4" data-testid="home-country-grid">
             {countries.map((c) => (
               <Link key={c.code} href={`/country/${c.slug}`} className="wh-card p-4 flex items-center gap-3">
                 <span className="text-2xl" aria-hidden>{c.flag}</span>
                 <div className="min-w-0">
                   <div className="font-semibold text-sm truncate">{c.name}</div>
                   <div className="text-xs text-muted-foreground">
-                    {c.channel_count > 0 ? `${c.channel_count} ${c.channel_count === 1 ? 'channel' : 'channels'}` : 'Coming soon'}
+                    {c.channel_count} {c.channel_count === 1 ? 'channel' : 'channels'}
                   </div>
                 </div>
               </Link>
             ))}
           </div>
+          {countries.length === 0 && (
+            <p className="text-sm text-muted-foreground">No country has an approved public channel yet.</p>
+          )}
+          {hasMoreCountries && (
+            <div className="mt-4">
+              <Link href="/countries" className="text-sm font-semibold text-primary hover:underline" data-testid="home-view-all-countries">
+                View all countries →
+              </Link>
+            </div>
+          )}
         </section>
 
         {/* Explore interests */}

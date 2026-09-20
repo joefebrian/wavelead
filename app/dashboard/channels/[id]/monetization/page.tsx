@@ -5,6 +5,7 @@ import { channelRepo } from '@/lib/repositories/channelRepo';
 import { channelRateCardRepo, marketplaceOrderRepo } from '@/lib/repositories/marketplaceRepo';
 import { sponsorshipLeadService } from '@/lib/services/sponsorshipLeadService';
 import MonetizationClient from './MonetizationClient';
+import OwnerOnboardingPanel from '@/components/owner/OwnerOnboardingPanel';
 
 export const metadata: Metadata = { title: 'Channel · Monetization — WaveLead', robots: { index: false, follow: false } };
 export const dynamic = 'force-dynamic';
@@ -31,6 +32,8 @@ export default async function OwnerMonetizationPage({ params }: { params: Promis
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight">{channel.name}</h1>
         <p className="mt-1 text-sm text-muted-foreground">Manage your rate card, incoming sponsorship requests, and active sponsorships.</p>
         <MonetizationClient channelId={id} channelName={channel.name} channelSlug={channel.slug} isVerified={isVerified} verificationStatus={vs || null} initialCard={card} initialOrders={orders} initialLeads={leads} />
+        {/* M18.1 Phase G/H — onboarding checklist (rate card CTA) + sample work. */}
+        <OwnerOnboardingPanel channelId={id} />
       </section>
     </>
   );

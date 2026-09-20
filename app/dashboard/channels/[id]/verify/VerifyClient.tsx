@@ -23,7 +23,7 @@ interface VState {
   listing_approved: boolean;
   fast_amount_minor: number;
   currency: string;
-  requirements: { listing_approved: boolean; payment_finalized: boolean; identity_complete: boolean; declaration_accepted: boolean; payout_configured: boolean };
+  requirements: { listing_approved: boolean; listing_eligible?: boolean; payment_finalized: boolean; identity_complete: boolean; declaration_accepted: boolean; payout_configured: boolean };
   verification_status: string | null;
   activation_status: string;
   approve_url?: string | null;
@@ -99,6 +99,9 @@ export default function VerifyClient({
   const req = state?.requirements;
   const verified = state?.step === 'verified';
   const listingApproved = !!state?.listing_approved;
+  // M18.1 Phase D — Fast Verification no longer waits for listing moderation.
+  // Only a terminal/blocked listing (rejected/suspended/archived) is ineligible.
+  const fastEligible = state ? (state.requirements?.listing_eligible ?? state.step !== 'ineligible') : true;
 
   if (verified) {
     return (
@@ -167,20 +170,26 @@ export default function VerifyClient({
           </p>
           <ul className="mt-4 space-y-1.5 text-sm flex-1" data-testid="fast-compare">
             <Compare label="No second manual review" />
+            <Compare label="Starts immediately — no listing-approval wait" />
             <Compare label="Identity + payout + payment" />
             <Compare label="Fastest route to Owner Verified" />
           </ul>
-          <Button className="mt-5" onClick={() => setView('fast')} disabled={!listingApproved} data-testid="choose-fast-verification">
+          <Button className="mt-5" onClick={() => setView('fast')} disabled={!fastEligible} data-testid="choose-fast-verification">
             Start Fast Verification — $1
           </Button>
-          {!listingApproved && (
+          {!fastEligible && (
             <p className="mt-2 text-xs text-amber-700" data-testid="fast-locked-note">
-              Opens as soon as WaveLead approves your channel listing.
+              This listing is rejected, suspended or archived, so Fast Verification is closed. Contact support if that looks wrong.
+            </p>
+          )}
+          {fastEligible && !listingApproved && (
+            <p className="mt-2 text-xs text-muted-foreground" data-testid="fast-approves-listing-note">
+              No need to wait for listing review — successful Fast Verification publishes your listing too.
             </p>
           )}
           {req && (
             <ul className="mt-4 space-y-1.5 text-xs" data-testid="fast-requirements">
-              <Step done={!!req.listing_approved} label="Channel listing approved" />
+              <Step done={!!req.identity_complete && !!req.payout_configured && !!req.payment_finalized} label="Listing published on completion (no separate approval wait)" />
               <Step done={!!req.identity_complete} label="Owner details completed" />
               <Step done={!!req.payout_configured} label="Payout destination configured" />
               <Step done={!!req.payment_finalized} label="$1 verification payment confirmed" />

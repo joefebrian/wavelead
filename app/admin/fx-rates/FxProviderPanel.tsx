@@ -6,10 +6,12 @@
 // no value exists we say so.
 import { providerFxService } from '@/lib/services/fx/providerFxService';
 import { detectQuoteCapability } from '@/lib/services/payments/paypalFx';
+import { FX_UNAVAILABLE_LABEL } from '@/lib/services/fx/manualRate';
 import { SectionCard, StatCard, StatusBadge, DataTable, InfoBanner, EmptyState, type Tone } from '@/components/appkit';
 
 const STATUS_TONE: Record<string, Tone> = {
   fresh: 'success', expired: 'warning', manual_fallback: 'info', provider_unavailable: 'warning',
+  unavailable: 'danger',
 };
 const CAP_TONE: Record<string, Tone> = {
   available: 'success', provider_limitation: 'warning', provider_unavailable: 'warning', not_configured: 'neutral',
@@ -22,8 +24,13 @@ export default async function FxProviderPanel() {
     detectQuoteCapability('USD', 'IDR').catch(() => null),
   ]);
 
-  const rate = reference.rate_value;
-  const display = rate ? `1 ${reference.base_currency} = ${Number(rate).toLocaleString('en-US', { maximumFractionDigits: 4 })} ${reference.quote_currency}` : 'No rate available';
+  // M18.1 — a non-finite/non-positive value is NEVER rendered (this is where
+  // "1 USD = ∞ IDR" used to surface). It degrades to the unavailable label.
+  const rateNum = reference.rate_value === null ? NaN : Number(reference.rate_value);
+  const usable = Number.isFinite(rateNum) && rateNum > 0;
+  const display = usable
+    ? `1 ${reference.base_currency} = ${rateNum.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${reference.quote_currency}`
+    : FX_UNAVAILABLE_LABEL;
 
   return (
     <div className="mb-8 space-y-4" data-testid="fx-provider-panel">

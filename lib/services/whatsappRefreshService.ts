@@ -32,6 +32,9 @@ interface RefreshCandidate {
 
 const SHORT_DESC_MAX = 180;
 
+// M18.1 Phase E — weekly refresh cadence for approved/live channels.
+export const WEEKLY_STALE_DAYS = 7;
+
 // Core: run one refresh against a stored channel doc. Pure at the fetch/parse
 // layer; only writes when we have concrete new values. Never blanks existing
 // data on failure.
@@ -116,9 +119,16 @@ export const whatsappRefreshService = {
   // Weekly batch. Bounded/conservative: caps the number of channels processed
   // per invocation and enforces an inter-request delay to avoid hammering
   // WhatsApp. Only refreshes approved public channels with a valid URL.
-  async refreshBatch(opts: { limit?: number; delayMs?: number } = {}): Promise<{ processed: number; ok: number; skipped: number; failed: number; details: RefreshResult[] }> {
+  //
+  // M18.1 Phase E — WEEKLY semantics + failure isolation:
+  //   • a channel observed within `staleAfterDays` (default 7) is skipped, so
+  //     the job is idempotent and safe to retry/run more often than weekly;
+  //   • one channel failing can never abort the batch.
+  async refreshBatch(opts: { limit?: number; delayMs?: number; staleAfterDays?: number } = {}): Promise<{ processed: number; ok: number; skipped: number; failed: number; skipped_fresh: number; details: RefreshResult[] }> {
     const limit = Math.max(1, Math.min(500, opts.limit ?? 100));
     const delayMs = Math.max(0, Math.min(30_000, opts.delayMs ?? 1_000));
+    const staleAfterDays = Math.max(0, Math.min(365, opts.staleAfterDays ?? WEEKLY_STALE_DAYS));
+    const staleBefore = Date.now() - staleAfterDays * 24 * 60 * 60 * 1000;
     // Prefer the least-recently observed public metadata first, then by created_at.
     const items = await channelRepo.list({
       filter: { status: 'approved' as const },
@@ -126,21 +136,31 @@ export const whatsappRefreshService = {
       limit,
     });
     const details: RefreshResult[] = [];
-    let okc = 0, skc = 0, fc = 0;
+    let okc = 0, skc = 0, fc = 0, freshSkipped = 0, processed = 0;
     for (const c of items) {
       if (!c.whatsapp_url) { skc++; continue; }
-      const r = await refreshChannelFromPublicMetadata({
-        id: c.id,
-        whatsapp_url: c.whatsapp_url,
-        logo_url: c.logo_url,
-        description: c.description,
-        short_description: c.short_description,
-        public_followers_count: c.public_followers_count ?? null,
-      });
-      details.push(r);
-      if (r.ok) okc++; else fc++;
+      // Weekly cadence: skip anything already observed inside the window.
+      const observed = c.public_followers_observed_at ? new Date(c.public_followers_observed_at).getTime() : 0;
+      if (staleAfterDays > 0 && observed && observed > staleBefore) { skc++; freshSkipped++; continue; }
+      processed += 1;
+      try {
+        const r = await refreshChannelFromPublicMetadata({
+          id: c.id,
+          whatsapp_url: c.whatsapp_url,
+          logo_url: c.logo_url,
+          description: c.description,
+          short_description: c.short_description,
+          public_followers_count: c.public_followers_count ?? null,
+        });
+        details.push(r);
+        if (r.ok) okc++; else fc++;
+      } catch {
+        // Failure isolation: never let one channel abort the weekly run.
+        fc++;
+        details.push({ channel_id: c.id, ok: false, updated_fields: [], observed_at: null, reason: 'refresh_threw' });
+      }
       if (delayMs > 0) await new Promise((res) => setTimeout(res, delayMs));
     }
-    return { processed: items.length, ok: okc, skipped: skc, failed: fc, details };
+    return { processed, ok: okc, skipped: skc, failed: fc, skipped_fresh: freshSkipped, details };
   },
 };

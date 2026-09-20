@@ -211,24 +211,11 @@ export default async function DashboardPage() {
           );
         })()}
 
-        <div className="mt-8 flex flex-wrap gap-2">
-          <Link href="/dashboard/channels"><Button variant="outline">My channels</Button></Link>
-          <Link href="/dashboard/promotions"><Button variant="outline">Campaigns</Button></Link>
-          <Link href="/dashboard/sponsorships"><Button variant="outline">Active Sponsorships</Button></Link>
-          <Link href="/dashboard/sponsorship-requests"><Button variant="outline">Incoming Requests</Button></Link>
-          <Link href="/dashboard/sent-requests"><Button variant="outline">Sent Requests</Button></Link>
-          <Link href="/dashboard/sponsorships/pipeline" data-testid="nav-pipeline-button">
-            <Button variant="outline" className="gap-1.5">
-              <Kanban className="h-4 w-4" />
-              Pipeline
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">Pro</span>
-            </Button>
-          </Link>
-          <Link href="/dashboard/earnings"><Button variant="outline">Earnings</Button></Link>
-          <Link href="/dashboard/billing"><Button variant="outline">Billing</Button></Link>
-          <Link href="/dashboard/claims"><Button variant="outline">My claims</Button></Link>
-          <Link href="/submit"><Button>Submit a channel</Button></Link>
-        </div>
+        {/* M18.1 Phase C — the redundant bottom quick-link pills were removed:
+            every destination (My Channels, Campaigns, Active Sponsorships,
+            Incoming/Sent Requests, Pipeline, Earnings, Billing, Claims, Submit
+            a Channel) already lives in the AppShell sidebar. The PUBLIC footer
+            and its legal links are untouched (they are not rendered here). */}
       </section>
     </>
   );

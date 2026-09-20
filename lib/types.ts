@@ -905,6 +905,22 @@ export interface RateCardPackage {
   created_at: Date;
   updated_at: Date;
 }
+// M18.1 Phase H — Sample Work / portfolio entry. No file hosting: the creator
+// links to already-public content so brands can evaluate the channel.
+export interface ChannelSampleWork {
+  id: string;
+  channel_id: string;
+  created_by: string;
+  title: string;
+  work_type: 'sponsored_post' | 'product_feature' | 'affiliate_promotion' | 'campaign_announcement' | 'other';
+  description: string | null;
+  content_url: string;              // public https:// link
+  brand_name: string | null;        // optional
+  published_on: string | null;      // optional YYYY-MM-DD
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface ChannelRateCard {
   id: string;
   channel_id: string;               // unique per channel

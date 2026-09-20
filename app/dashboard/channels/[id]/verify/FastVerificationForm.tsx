@@ -50,6 +50,7 @@ export default function FastVerificationForm({
 }: {
   channelId: string;
   channelSlug: string;
+  /** M18.1: eligibility (NOT listing approval) — fast path starts pre-moderation. */
   listingApproved: boolean;
   payoutConfigured: boolean;
   paymentFinalized: boolean;
@@ -133,7 +134,7 @@ export default function FastVerificationForm({
 
         {!listingApproved && (
           <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" data-testid="fast-listing-pending">
-            Your channel listing is still in the WaveLead moderation queue. Fast Verification opens as soon as the listing is approved — Manual Verification is available now.
+            This listing is rejected, suspended or archived, so Fast Verification is closed. Contact support if that looks wrong.
           </div>
         )}
 

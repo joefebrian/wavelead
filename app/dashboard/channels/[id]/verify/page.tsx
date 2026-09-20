@@ -36,8 +36,10 @@ export default async function OwnerVerifyPage({ params, searchParams }: {
           Choose how you&apos;d like to verify and activate ownership.
         </p>
         {!state?.listing_approved && (
-          <p className="mt-2 text-sm text-amber-700" data-testid="listing-not-approved">
-            Your channel listing is still being reviewed. Fast Verification opens once the listing is approved — Manual Verification is available now.
+          <p className="mt-2 text-sm text-muted-foreground" data-testid="listing-not-approved">
+            Your listing is still in the review queue — you do <strong>not</strong> have to wait. Completing Fast Verification
+            ($1, with your owner details, payout destination and declaration) publishes the listing and verifies ownership in one step.
+            Manual Verification remains free.
           </p>
         )}
         <VerifyClient

@@ -38,6 +38,8 @@ export const COLLECTIONS = {
   SECURITY_AUDIT_EVENTS: 'security_audit_events',
   COMMERCIAL_LEADS: 'commercial_leads',
   CHANNEL_RATE_CARDS: 'channel_rate_cards',
+  // M18.1 Phase H — lightweight creator portfolio (public https links only).
+  CHANNEL_SAMPLE_WORKS: 'channel_sample_works',
   MARKETPLACE_ORDERS: 'marketplace_orders',
   MARKETPLACE_FINANCIAL_EVENTS: 'marketplace_financial_events',
   MARKETPLACE_OWNER_PAYOUTS: 'marketplace_owner_payouts',

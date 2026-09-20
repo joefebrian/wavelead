@@ -16,6 +16,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { providerFxSnapshotRepo } from '@/lib/repositories/providerFxSnapshotRepo';
 import { fundingFxRateRepo } from '@/lib/repositories/fundingFxRateRepo';
 import type { ProviderFxObservation } from '@/lib/services/payments/paypalFx';
+import { canonicalManualRateString, resolveLatestValidManualRate, FX_UNAVAILABLE_LABEL } from '@/lib/services/fx/manualRate';
 
 export const FX_SOURCES = ['provider_quote', 'provider_settlement', 'manual_reference'] as const;
 export type FxSource = typeof FX_SOURCES[number];
@@ -26,13 +27,15 @@ export const FX_SOURCE_LABELS: Record<FxSource, string> = {
   manual_reference: 'Manual Admin Reference Rate',
 };
 
-export type FxStatus = 'fresh' | 'expired' | 'manual_fallback' | 'provider_unavailable';
+export type FxStatus = 'fresh' | 'expired' | 'manual_fallback' | 'provider_unavailable' | 'unavailable';
 
 export const FX_STATUS_LABELS: Record<FxStatus, string> = {
   fresh: 'Fresh',
   expired: 'Expired',
   manual_fallback: 'Manual Fallback',
   provider_unavailable: 'Provider Unavailable',
+  // M18.1 — no provider value AND no valid manual row: admin action required.
+  unavailable: FX_UNAVAILABLE_LABEL,
 };
 
 /** Label helper — the ONLY place a source string becomes display text. */
@@ -141,9 +144,14 @@ export const providerFxService = {
       };
     }
 
-    const manual = await fundingFxRateRepo.findActive(base, quote);
-    if (manual) {
-      const rate = (manual.rate_scaled / manual.rate_scale).toString();
+    // M18.1 hotfix — canonical_rate = rate_scaled / 10^rate_scale (previously
+    // divided by rate_scale, so scale 0 produced Infinity → "1 USD = ∞ IDR").
+    // An unusable row never becomes a displayed value: we resolve the latest
+    // VALID row from existing history instead, and never rewrite history.
+    const rows = await fundingFxRateRepo.listAll();
+    const resolved = resolveLatestValidManualRate(rows, base, quote);
+    if (resolved) {
+      const manual = resolved.row;
       return {
         source: 'manual_reference',
         source_label: FX_SOURCE_LABELS.manual_reference,
@@ -151,21 +159,23 @@ export const providerFxService = {
         status_label: FX_STATUS_LABELS.manual_fallback,
         base_currency: manual.base_currency,
         quote_currency: manual.quote_currency,
-        rate_value: rate,
+        rate_value: canonicalManualRateString(manual),
         effective_at: manual.effective_from ? new Date(manual.effective_from) : null,
         expires_at: null,
         provider: null,
         provider_environment: null,
         provider_reference_masked: null,
-        note: 'Administrator-entered reference rate. This is NOT a PayPal rate and is for planning/display only.',
+        note: resolved.from_active
+          ? 'Administrator-entered reference rate. This is NOT a PayPal rate and is for planning/display only.'
+          : 'The currently active admin rate row is invalid, so the latest VALID historical admin rate is shown. This is NOT a PayPal rate — please activate a corrected rate.',
       };
     }
 
     return {
       source: 'manual_reference',
       source_label: FX_SOURCE_LABELS.manual_reference,
-      status: 'provider_unavailable',
-      status_label: FX_STATUS_LABELS.provider_unavailable,
+      status: 'unavailable',
+      status_label: FX_STATUS_LABELS.unavailable,
       base_currency: base,
       quote_currency: quote,
       rate_value: null,
@@ -174,7 +184,7 @@ export const providerFxService = {
       provider: null,
       provider_environment: null,
       provider_reference_masked: null,
-      note: 'No provider FX value and no manual reference rate is configured. No value has been fabricated.',
+      note: 'No provider FX value and no valid manual reference rate exists. No value has been fabricated — an administrator must activate a valid rate.',
     };
   },
 };
