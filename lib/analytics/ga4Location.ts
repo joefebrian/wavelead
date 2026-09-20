@@ -7,7 +7,8 @@
 // founding_lifetime, funding). None of those may reach GA4.
 //
 // Policy: ALLOWLIST. Only non-sensitive, analytics-relevant query keys survive;
-// everything else is dropped. The path itself is preserved unchanged.
+// everything else is dropped. Identifier-shaped PATH segments are normalized to
+// `[id]` (analytics data only — real application routes are never changed).
 export const GA4_SAFE_QUERY_KEYS = [
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
   'page', 'tab', 'sort', 'category', 'status',

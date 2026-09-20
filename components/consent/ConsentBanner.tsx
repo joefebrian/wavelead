@@ -140,7 +140,7 @@ export default function ConsentBanner() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="font-semibold">Analytics</div>
-                    <p className="text-xs text-muted-foreground mt-0.5">First-party, aggregated understanding of how people discover and use WaveLead. Off by default.</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Aggregated understanding of how people discover and use WaveLead. Off by default. Includes Google Analytics 4 (measurement only) — advertising storage stays off either way.</p>
                   </div>
                   <label className="inline-flex items-center gap-2 cursor-pointer">
                     <input

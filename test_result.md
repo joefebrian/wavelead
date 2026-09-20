@@ -6976,3 +6976,33 @@ agent_communication:
       m17_1 (10), m11_batch3 (12), m18 (17) → 57/57 PASS.
       tsc --noEmit clean (once); yarn build clean (once).
       DEPLOY: NOT EXECUTED. M18 remains frozen.
+
+## M18 PRE-DEPLOY PRIVACY CLOSEOUT (URL path ids + consent copy)
+  - agent: "main"
+    comment: |
+      1) URL PATH ID NORMALIZATION — PASS. Reused the existing sanitizer
+         (lib/analytics/ga4Location.ts → normalizeGa4Pathname), no new module,
+         no route/redirect change: identifier-shaped segments (uuid, >=16 hex,
+         >=4-digit numeric, >=20-char opaque) become `[id]` ONLY in the
+         page_path/page_location handed to GA4 (pinned for all hits via
+         gtag('set')). Browser URL unchanged. Public slugs preserved.
+      2) CONSENT COPY — MINIMAL FIX APPLIED. Since GA4 landed in M17, the
+         Analytics category was still described as purely "first-party", which
+         was materially misleading (accepting Analytics also loads gtag.js and
+         _ga/_ga_* cookies). Copy-only corrections, no UI redesign:
+           app/cookies/page.tsx  — GA4 (measurement only) + _ga/_ga_* disclosed,
+             "nothing loaded/sent to Google before you accept", and an explicit
+             statement that accepting enables analytics storage ONLY while
+             ad_storage / ad_user_data / ad_personalization stay denied always.
+           app/privacy/page.tsx  — same two facts, one sentence.
+           components/consent/ConsentBanner.tsx — one clause in the Analytics
+             row ("Includes Google Analytics 4 (measurement only) — advertising
+             storage stays off either way"). All data-testids/controls intact.
+      DEFERRED (unchanged): campaign handoff polish, category landing depth,
+      campaign deposit, campaign funding/wallet, PayPal recurring, campaign
+      conversation, consent audit log.
+      TESTS: tests/m18_ga4_consent.test.ts 27/27 PASS; regression m11_batch3
+      (12), m17 (18), m17_1 (10), m18 (17) → 57/57 PASS.
+      tsc --noEmit clean (once); yarn build clean (once); /cookies visually
+      verified after nextjs restart.
+      DEPLOY: NOT EXECUTED.

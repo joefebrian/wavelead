@@ -37,10 +37,23 @@ export default function CookiesPage() {
                 <code className="mx-1 rounded bg-muted px-1 text-xs">wl_consent</code> (your saved preference).
               </li>
               <li>
-                <strong className="text-foreground">Analytics</strong> — first-party, aggregated understanding of
+                <strong className="text-foreground">Analytics</strong> — aggregated understanding of
                 how people discover and use WaveLead. Off by default; only activated with your explicit consent.
+                This category covers WaveLead&apos;s own first-party events and Google Analytics 4
+                (measurement only), which sets its own
+                <code className="mx-1 rounded bg-muted px-1 text-xs">_ga</code> /
+                <code className="mx-1 rounded bg-muted px-1 text-xs">_ga_*</code> cookies. Nothing is loaded from
+                or sent to Google before you accept Analytics.
               </li>
             </ul>
+            <p className="mt-3 text-muted-foreground">
+              Accepting Analytics enables analytics storage <strong>only</strong>. WaveLead never asks for
+              advertising consent: Google&apos;s advertising signals
+              (<code className="rounded bg-muted px-1 text-xs">ad_storage</code>,
+              <code className="mx-1 rounded bg-muted px-1 text-xs">ad_user_data</code>,
+              <code className="rounded bg-muted px-1 text-xs">ad_personalization</code>) stay
+              <strong> denied</strong> at all times, whatever you choose.
+            </p>
             <p className="mt-3 text-muted-foreground">
               We do <strong>not</strong> use marketing / retargeting cookies, browser fingerprinting, session replay,
               third-party advertising trackers, canvas fingerprinting, font fingerprinting, hardware fingerprinting,

@@ -247,3 +247,45 @@ describe('M18-GA4 §5 no PII or sensitive identifiers reach GA4', () => {
     }
   });
 });
+
+// ------------------------------------------------------------- 6. CONSENT COPY
+describe('M18-GA4 §6 consent copy accuracy (no UI redesign)', () => {
+  const COOKIES = src('app/cookies/page.tsx');
+  const PRIVACY = src('app/privacy/page.tsx');
+
+  it('6.1 copy states analytics is optional and off by default', () => {
+    expect(COOKIES).toContain('Off by default');
+    expect(COOKIES).toContain('only activated with your explicit consent');
+    expect(PRIVACY).toContain('Optional analytics (off by default)');
+    expect(BANNER).toContain('Off by default');
+    expect(BANNER).toContain('with your permission');
+  });
+
+  it('6.2 copy discloses GA4 and that accepting enables analytics storage ONLY', () => {
+    for (const s of [COOKIES, PRIVACY, BANNER]) expect(s).toContain('Google Analytics 4');
+    expect(COOKIES).toContain('measurement only');
+    expect(COOKIES).toContain('Nothing is loaded from');
+    expect(COOKIES).toContain('enables analytics storage');
+  });
+
+  it('6.3 copy states the three advertising signals stay denied at all times', () => {
+    for (const k of ['ad_storage', 'ad_user_data', 'ad_personalization']) {
+      expect(COOKIES).toContain(k);
+      expect(PRIVACY).toContain(k);
+    }
+    expect(COOKIES).toContain('denied');
+    expect(PRIVACY).toContain('remain denied at all times');
+    expect(BANNER).toContain('advertising storage stays off');
+    // Existing anti-tracking claims preserved and still true.
+    expect(COOKIES).toContain('retargeting');
+    expect(COOKIES).toContain('fingerprinting');
+  });
+
+  it('6.4 banner/preferences UI structure untouched (copy-only change)', () => {
+    for (const t of ['consent-banner', 'consent-accept-all', 'consent-reject-non-essential',
+      'consent-manage', 'consent-manager', 'consent-analytics-toggle', 'consent-manager-save']) {
+      expect(BANNER).toContain(`data-testid="${t}"`);
+    }
+    expect(BANNER).toContain('const [analyticsPref, setAnalyticsPref] = useState(false)'); // not pre-checked
+  });
+});

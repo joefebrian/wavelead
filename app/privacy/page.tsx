@@ -35,7 +35,10 @@ export default function PrivacyPage() {
               If, and only if, you turn Analytics on in <Link href="/cookies" className="text-primary underline">Cookie Preferences</Link>,
               WaveLead records a small allow-listed set of product-usage events (page views, searches by count,
               category and country views, sponsor click intent, pricing views, sign-up funnel). Consent is enforced
-              server-side — the analytics endpoint drops any event when your saved preference is Off. You can
+              server-side — the analytics endpoint drops any event when your saved preference is Off. Turning
+              Analytics on also enables Google Analytics 4 (measurement only); accepting it grants analytics
+              storage only, and Google&apos;s advertising signals (ad_storage, ad_user_data, ad_personalization)
+              remain denied at all times. You can
               withdraw consent at any time in Cookie Preferences.
             </p>
           </div>
