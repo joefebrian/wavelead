@@ -7006,3 +7006,41 @@ agent_communication:
       tsc --noEmit clean (once); yarn build clean (once); /cookies visually
       verified after nextjs restart.
       DEPLOY: NOT EXECUTED.
+
+## M18 CONSENT BANNER RECHECK (visual/content review, live browser evidence)
+  - agent: "main"
+    comment: |
+      LIVE VERIFICATION (Playwright, real browser, fresh cookie jar):
+        BEFORE CONSENT: dataLayer undefined, gtag undefined, 0 googletagmanager
+          scripts, 0 _ga cookies, 0 GA4 network requests.
+        ACCEPT ALL: dataLayer order observed exactly as required —
+          consent default {ad_storage:denied, ad_user_data:denied,
+          ad_personalization:denied, analytics_storage:denied} →
+          consent update {analytics_storage:granted} →
+          config G-MYGZLGH4SR {send_page_view:false, anonymize_ip:true} →
+          set {page_path,page_location sanitized} → 1 page_view.
+        SPA NAVIGATION: page_view paths ['/', '/pricing'] → exactly one per
+          navigation, no duplicates.
+        REVOKE (no reload): consent update {analytics_storage:denied} fires
+          immediately; a further SPA navigation produced NO new page_view
+          (total stayed 2). After reload: banner hidden (choice persisted),
+          gtag undefined, 0 GA scripts → GA4 fully blocked.
+      COPY VERDICT: accurate after the earlier minimal correction. Necessary is
+        a separate always-on row; Analytics is optional and off by default;
+        panel states "Includes Google Analytics 4 (measurement only) —
+        advertising storage stays off either way"; no advertising/marketing
+        consent category is offered anywhere.
+      ONE FUNCTIONAL DEFECT FOUND AND FIXED (1 line, no redesign):
+        components/consent/ConsentBanner.tsx — after "Accept All", re-opening
+        the preferences panel in the same session still showed Analytics "Off"
+        (stale local state), misrepresenting the granted consent and silently
+        revoking it if the user pressed Save. commit() now syncs
+        setAnalyticsPref() to the persisted decision. Verified: toggle reads
+        "On" after accept, "Off" after revoke + reload.
+      DEFERRED (unchanged): analytics health view, category landing depth,
+        campaign handoff polish, campaign deposit, campaign funding/wallet,
+        PayPal recurring, campaign conversation, consent audit log.
+      TESTS: tests/m18_ga4_consent.test.ts 28/28 PASS; regression m11_batch3
+        (12), m17 (18), m17_1 (10), m18 (17) → 57/57 PASS.
+        tsc --noEmit clean (once); yarn build clean (once).
+      DEPLOY: NOT EXECUTED.

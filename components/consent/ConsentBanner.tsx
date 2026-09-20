@@ -64,6 +64,10 @@ export default function ConsentBanner() {
       const next = await saveConsent(analytics);
       // M17 — let GA4 (consent-gated) react immediately to the decision.
       try { window.dispatchEvent(new Event('wl-consent-changed')); } catch { /* noop */ }
+      // M18 audit — keep the toggle in sync with the persisted decision, so
+      // re-opening the panel in the same session shows the real consent state
+      // (Accept All previously left the toggle reading "Off").
+      setAnalyticsPref(next ? !!next.analytics : analytics);
       if (next) setState(next);
       setManagerOpen(false);
     } finally { setBusy(false); }

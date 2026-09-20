@@ -288,4 +288,11 @@ describe('M18-GA4 §6 consent copy accuracy (no UI redesign)', () => {
     }
     expect(BANNER).toContain('const [analyticsPref, setAnalyticsPref] = useState(false)'); // not pre-checked
   });
+
+  it('6.5 the toggle reflects the persisted decision in the same session', () => {
+    // Accept All previously left the panel reading "Off" while consent was
+    // granted — re-saving would then have silently revoked analytics.
+    expect(BANNER).toContain('setAnalyticsPref(next ? !!next.analytics : analytics)');
+    expect(BANNER).toContain('if (r.consent) setAnalyticsPref(!!r.consent.analytics)'); // restore on load
+  });
 });
