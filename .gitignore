@@ -91,3 +91,4 @@ credentials.json
 memory/qa_credentials_ephemeral.txt
 .next/cache/webpack/server-production/4.pack
 .next/cache/webpack/server-production/1.pack
+.next/cache/webpack/client-production/0.pack

@@ -11,8 +11,15 @@
 import { useEffect, useRef, useState, Suspense } from 'react';
 import Script from 'next/script';
 import { usePathname, useSearchParams } from 'next/navigation';
+import { safeGa4Path } from '@/lib/analytics/ga4Location';
 
 export const GA4_MEASUREMENT_ID = 'G-MYGZLGH4SR';
+
+// M18 audit — live consent mirror. gtag.js stays resident in the page once it
+// has loaded, so a revocation must also gate every event helper: with the tag
+// resident, a post-revocation gtag('event', …) would still reach Google as a
+// cookieless ping, which WaveLead's BASIC Consent Mode policy forbids.
+let ga4Granted = false;
 
 declare global {
   interface Window {
@@ -28,10 +35,17 @@ function PageViews({ enabled }: { enabled: boolean }) {
   useEffect(() => {
     if (!enabled || typeof window === 'undefined' || !window.gtag) return;
     const qs = search?.toString();
-    const url = `${pathname}${qs ? `?${qs}` : ''}`;
+    // M18 audit — strip provider/internal identifiers (PayPal token & PayerID,
+    // brand_pro, activation, order, attempt, founding_lifetime, funding, …).
+    const url = safeGa4Path(pathname || '/', qs);
     if (last.current === url) return;      // de-dupe: one view per navigation
     last.current = url;
-    window.gtag('event', 'page_view', { page_path: url, page_location: window.location.origin + url });
+    const loc = window.location.origin + url;
+    // gtag('set') makes the sanitized location authoritative for EVERY later
+    // hit (page_view, custom events, automatic user_engagement), overriding
+    // GA4's automatic document.location collection.
+    window.gtag('set', { page_path: url, page_location: loc });
+    window.gtag('event', 'page_view', { page_path: url, page_location: loc });
   }, [enabled, pathname, search]);
   return null;
 }
@@ -58,6 +72,7 @@ export default function GoogleAnalytics() {
 
   // Flip Consent Mode when consent changes after the tag is already present.
   useEffect(() => {
+    ga4Granted = granted;            // gate the event helper immediately
     if (typeof window === 'undefined' || !window.gtag) return;
     window.gtag('consent', 'update', { analytics_storage: granted ? 'granted' : 'denied' });
   }, [granted]);
@@ -99,6 +114,7 @@ const BLOCKED_KEYS = /(email|phone|mobile|name|paypal|capture|order_id|token|pas
 
 export function ga4Track(event: Ga4SafeEvent, params: Record<string, string | number | boolean> = {}): void {
   if (typeof window === 'undefined' || !window.gtag) return;
+  if (!ga4Granted) return;                             // revoked/never granted → nothing is sent
   if (!(GA4_SAFE_EVENTS as readonly string[]).includes(event)) return;
   const safe: Record<string, string | number | boolean> = {};
   for (const [k, v] of Object.entries(params)) {
@@ -106,5 +122,10 @@ export function ga4Track(event: Ga4SafeEvent, params: Record<string, string | nu
     if (typeof v === 'string' && v.length > 60) continue;
     safe[k] = v;
   }
+  // Many of these events fire on PayPal return URLs. Pin the sanitized location
+  // so GA4 cannot auto-collect provider/internal identifiers from the live URL.
+  const url = safeGa4Path(window.location.pathname, window.location.search);
+  safe.page_path = url;
+  safe.page_location = window.location.origin + url;
   window.gtag('event', event, safe);
 }

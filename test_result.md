@@ -6901,3 +6901,55 @@ agent_communication:
                  tsc --noEmit clean; yarn build clean.
           NOT DONE deliberately: no deploy, no frontend testing agent, no
                  real-money transaction, no new payment provider.
+
+## M18 GA4 CONSENT MODE V2 PRODUCTION AUDIT (read-only audit + minimal fix)
+  - agent: "main"
+    comment: |
+      SCOPE: read-only audit of the EXISTING GA4/consent implementation against
+      WaveLead's BASIC Consent Mode v2 policy (G-MYGZLGH4SR, wavelead.org).
+      No GTM, no second GA4 loader, no banner redesign, no analytics refactor.
+
+      ARCHITECTURE (single path):
+        components/analytics/GoogleAnalytics.tsx (mounted once in app/layout.tsx)
+        → gate `if (!granted) return null` → inline consent-default script
+        → gtag/js loader → config(send_page_view:false) → <PageViews> manual
+        page_view. Consent source of truth: GET /api/consent (HttpOnly
+        first-party cookie `wl_consent`, versioned CONSENT_POLICY_VERSION=1).
+        ConsentBanner dispatches `wl-consent-changed` → GA re-reads consent.
+        Separate first-party pipeline (AnalyticsAutoPageView → /api/analytics/
+        events) is server-side consent-gated and never touches gtag.
+
+      DEFECTS FOUND (2, both genuine privacy defects):
+        D1 Sensitive query parameters reached GA4. page_view sent
+           page_path/page_location with the RAW query string, and GA4
+           auto-collects document.location for custom events + user_engagement.
+           PayPal return_urls therefore leaked provider identifiers
+           (?token=<PayPal order id>&PayerID=<payer id>) plus internal
+           commercial ids (brand_pro, activation, order, attempt,
+           founding_lifetime, funding).
+        D2 Post-revocation events could still be sent. gtag.js stays resident
+           after the component unmounts, and ga4Track() had no consent gate, so
+           a product event fired after revocation (no reload) would still reach
+           Google as a cookieless ping — forbidden by WaveLead's BASIC policy.
+
+      MINIMAL FIX:
+        NEW lib/analytics/ga4Location.ts — pure allowlist URL sanitizer
+            (utm_*, page, tab, sort, category, status only).
+        components/analytics/GoogleAnalytics.tsx —
+            (a) page_view uses safeGa4Path + gtag('set',{page_path,page_location})
+                so the sanitized location is authoritative for every later hit;
+            (b) module-level `ga4Granted` mirror; ga4Track() returns early when
+                consent is not granted and pins sanitized page params.
+        Nothing else touched. Default all-four-denied, single loader/init/config,
+        single page_view, banner UX and consent storage unchanged.
+
+      PASS/FAIL: default all denied PASS · accept (analytics only) PASS ·
+        reject PASS · immediate revocation PASS (after fix) · persistence PASS ·
+        4 consent params PASS · GA4 request before consent NONE ·
+        duplicate init NO · duplicate page_view NO · PII/sensitive payload
+        NONE (after fix).
+
+      TESTS: tests/m18_ga4_consent.test.ts 22/22 PASS. Regression: m17 (18),
+        m11_batch3_consent_analytics (12), m18 (17) → 47/47 PASS.
+        npx tsc --noEmit clean (once). yarn build clean (once).
+      DEPLOY: NOT EXECUTED.
