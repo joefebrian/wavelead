@@ -1,8 +1,6 @@
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Button } from '@/components/ui/button';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { channelRepo } from '@/lib/repositories/channelRepo';
@@ -28,8 +26,7 @@ export default async function PromotePage({ params }: { params: Promise<Params> 
     && ['verified', 'official'].includes((channel as unknown as { verification_status?: string }).verification_status || '');
   return (
     <>
-      <Header />
-      <main className="container py-8 md:py-12 max-w-3xl">
+      <section className="w-full">
         <Link href={`/dashboard/channels/${id}`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4">
           <ArrowLeft className="h-4 w-4" /> Back to channel
         </Link>
@@ -56,8 +53,7 @@ export default async function PromotePage({ params }: { params: Promise<Params> 
             countries={COUNTRIES.map((c) => ({ code: c.code, name: c.name, flag: c.flag }))}
           />
         )}
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

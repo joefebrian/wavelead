@@ -81,6 +81,23 @@ export const marketplaceOrderRepo = {
    * "Active" = anything not terminated (owner_rejected / cancelled), so a
    * repeated "Continue to Booking" resumes instead of duplicating.
    */
+  /**
+   * M18 — campaign handoff duplicate protection: repeated "Continue to
+   * Booking" for the same approved application resolves the SAME order.
+   */
+  async findActiveBySourceCampaignApplication(source_brand_campaign_application_id: string): Promise<MarketplaceOrder | null> {
+    const c = await getCollection<MarketplaceOrder>(COLLECTIONS.MARKETPLACE_ORDERS);
+    const row = await c.find({
+      source_brand_campaign_application_id,
+      status: { $nin: ['owner_rejected', 'cancelled'] as unknown as MarketplaceOrderStatus[] },
+    }).sort({ created_at: -1 }).limit(1).toArray();
+    return row.length ? (stripId(row[0]) as MarketplaceOrder) : null;
+  },
+  async listBySourceCampaign(source_brand_campaign_id: string): Promise<MarketplaceOrder[]> {
+    const c = await getCollection<MarketplaceOrder>(COLLECTIONS.MARKETPLACE_ORDERS);
+    const rows = await c.find({ source_brand_campaign_id }).sort({ created_at: -1 }).toArray();
+    return rows.map((r) => stripId(r) as MarketplaceOrder);
+  },
   async findActiveBySourceLead(source_sponsorship_lead_id: string): Promise<MarketplaceOrder | null> {
     const c = await getCollection<MarketplaceOrder>(COLLECTIONS.MARKETPLACE_ORDERS);
     const row = await c.find({

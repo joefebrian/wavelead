@@ -1,9 +1,6 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
-import AdminNav from '@/components/layout/AdminNav';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies, rankOf, ROLES } from '@/lib/auth/rbac';
 import { channelActivationService } from '@/lib/services/channelActivationService';
@@ -44,9 +41,7 @@ export default async function AdminActivationPaymentsPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header />
-      <main className="container mx-auto px-4 py-6 max-w-6xl flex-1">
-        <AdminNav active="/admin/activation-payments" />
+      <section className="w-full">
         <div className="flex items-center gap-2 mb-1">
           <ShieldCheck className="h-5 w-5 text-primary" />
           <h1 className="text-2xl font-bold">Owner Activation</h1>
@@ -122,8 +117,7 @@ export default async function AdminActivationPaymentsPage() {
           Read-only reporting. This surface intentionally has no payout, edit, or payment-mutation controls.
           Provider order/capture references are masked. The $1.00 charge is server-authoritative and not editable from Admin.
         </p>
-      </main>
-      <Footer />
+      </section>
     </div>
   );
 }

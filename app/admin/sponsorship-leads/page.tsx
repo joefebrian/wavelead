@@ -1,9 +1,6 @@
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
-import AdminNav from '@/components/layout/AdminNav';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
 import { sponsorshipLeadService } from '@/lib/services/sponsorshipLeadService';
@@ -35,9 +32,7 @@ export default async function AdminSponsorshipLeadsPage({ searchParams }: { sear
 
   return (
     <>
-      <Header />
-      <main className="container py-8 md:py-12 max-w-6xl">
-        <AdminNav active="/admin/sponsorship-leads" />
+      <section className="w-full">
         <h1 className="text-3xl font-bold tracking-tight">Sponsorship Leads</h1>
         <p className="mt-1 text-muted-foreground">Sales-assisted brand → channel sponsorship funnel. Reach out to brands, coordinate manually.</p>
 
@@ -86,8 +81,7 @@ export default async function AdminSponsorshipLeadsPage({ searchParams }: { sear
             </tbody>
           </table>
         </div>
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }
@@ -108,13 +102,11 @@ function Kpi({ label, value, tone, hint }: { label: string; value: number | stri
 function ForbiddenShell({ email, role }: { email: string; role: string }) {
   return (
     <>
-      <Header />
-      <main className="container py-20 text-center">
+      <section className="w-full">
         <h1 className="text-3xl font-bold">403 — Forbidden</h1>
         <p className="text-muted-foreground mt-2">You need moderator access or higher to view sponsorship leads.</p>
         <p className="text-xs text-muted-foreground mt-6">Signed in as {email} · role {role}</p>
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

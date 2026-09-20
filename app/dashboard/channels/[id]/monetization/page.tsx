@@ -1,7 +1,5 @@
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { channelRepo } from '@/lib/repositories/channelRepo';
 import { channelRateCardRepo, marketplaceOrderRepo } from '@/lib/repositories/marketplaceRepo';
@@ -28,14 +26,12 @@ export default async function OwnerMonetizationPage({ params }: { params: Promis
   ]);
   return (
     <>
-      <Header />
-      <main className="container py-10 max-w-5xl">
+      <section className="w-full">
         <div className="text-xs text-muted-foreground">Channel monetization</div>
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight">{channel.name}</h1>
         <p className="mt-1 text-sm text-muted-foreground">Manage your rate card, incoming sponsorship requests, and active sponsorships.</p>
         <MonetizationClient channelId={id} channelName={channel.name} channelSlug={channel.slug} isVerified={isVerified} verificationStatus={vs || null} initialCard={card} initialOrders={orders} initialLeads={leads} />
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

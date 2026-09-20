@@ -92,6 +92,11 @@ export const brandBookingSchema = z.object({
   // brand is continuing from. The server validates ownership + acceptance;
   // the client can never use this to influence price, seller or commission.
   source_sponsorship_lead_id: z.string().trim().min(1).max(64).optional().nullable(),
+  // M18 — optional origin reference: the Brand Launch Campaign application the
+  // brand is continuing from. Association only: it can never influence price,
+  // seller, commission or Payment Protection (all still derived server-side).
+  source_brand_campaign_id: z.string().trim().min(1).max(64).optional().nullable(),
+  source_brand_campaign_application_id: z.string().trim().min(1).max(64).optional().nullable(),
 });
 
 export const ownerRejectSchema = z.object({
@@ -519,12 +524,35 @@ export const marketplaceService = {
       sourceLeadId = lead.id;
     }
 
+    // ── M18 — optional continuation from an APPROVED campaign application ──
+    // Association only. Duplicate protection resumes the existing booking.
+    let sourceCampaignId: string | null = null;
+    let sourceCampaignApplicationId: string | null = null;
+    if (d.source_brand_campaign_application_id) {
+      const { brandCampaignRepo } = await import('../repositories/brandCampaignRepo');
+      const app = await brandCampaignRepo.findApplication(d.source_brand_campaign_application_id);
+      if (!app) throw new HttpError(404, 'Campaign application not found');
+      const campaign = await brandCampaignRepo.findById(app.campaign_id);
+      if (!campaign) throw new HttpError(404, 'Campaign not found');
+      if (campaign.brand_user_id !== actor.user.id) {
+        throw new HttpError(403, 'Only the brand that owns this campaign can continue to booking');
+      }
+      if (app.channel_id !== channel.id) throw new HttpError(400, 'This campaign application belongs to a different channel');
+      if (app.status !== 'approved') throw new HttpError(409, 'This campaign applicant has not been approved yet');
+      const existingCampaignOrder = await marketplaceOrderRepo.findActiveBySourceCampaignApplication(app.id);
+      if (existingCampaignOrder) return existingCampaignOrder;
+      sourceCampaignId = campaign.id;
+      sourceCampaignApplicationId = app.id;
+    }
+
     const now = new Date();
     const order: MarketplaceOrder = {
       id: uuidv4(),
       status: 'requested',
       economics_status: 'pre_acceptance',
       source_sponsorship_lead_id: sourceLeadId,
+      source_brand_campaign_id: sourceCampaignId,
+      source_brand_campaign_application_id: sourceCampaignApplicationId,
       buyer_user_id: actor.user.id,   // server-derived; never trusted from payload
       brief: {
         company_name: d.company_name,

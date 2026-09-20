@@ -1,9 +1,6 @@
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
-import AdminNav from '@/components/layout/AdminNav';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
@@ -46,12 +43,10 @@ export default async function AdminChannelsPage({ searchParams }: { searchParams
   if (!hasAtLeastRole(actor.user, ROLES.MODERATOR)) {
     return (
       <>
-        <Header />
-        <main className="container py-20 text-center">
+        <section className="w-full">
           <h1 className="text-3xl font-bold">403 — Forbidden</h1>
           <p className="text-muted-foreground mt-2">You need moderator access or higher.</p>
-        </main>
-        <Footer />
+        </section>
       </>
     );
   }
@@ -62,9 +57,7 @@ export default async function AdminChannelsPage({ searchParams }: { searchParams
 
   return (
     <>
-      <Header />
-      <main className="container py-8">
-        <AdminNav active="/admin/channels" />
+      <section className="w-full">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold">Moderation Queue</h1>
@@ -126,8 +119,7 @@ export default async function AdminChannelsPage({ searchParams }: { searchParams
             })}
           </div>
         )}
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

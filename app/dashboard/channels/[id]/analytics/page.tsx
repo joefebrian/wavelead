@@ -1,8 +1,6 @@
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Button } from '@/components/ui/button';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { channelRepo } from '@/lib/repositories/channelRepo';
@@ -24,13 +22,11 @@ export default async function ChannelAnalyticsPage({ params }: { params: Promise
   if (!channel) {
     return (
       <>
-        <Header />
-        <main className="container py-20 text-center">
+        <section className="w-full">
           <h1 className="text-3xl font-bold">404 — Not found</h1>
           <p className="text-muted-foreground mt-2">This channel does not exist.</p>
           <div className="mt-6"><Link href="/dashboard/channels"><Button variant="outline">Back to my channels</Button></Link></div>
-        </main>
-        <Footer />
+        </section>
       </>
     );
   }
@@ -38,13 +34,11 @@ export default async function ChannelAnalyticsPage({ params }: { params: Promise
   if (!isOwner && !isAdmin) {
     return (
       <>
-        <Header />
-        <main className="container py-20 text-center">
+        <section className="w-full">
           <h1 className="text-3xl font-bold">403 — Forbidden</h1>
           <p className="text-muted-foreground mt-2">You do not have access to this channel&apos;s analytics.</p>
           <div className="mt-6"><Link href="/dashboard/channels"><Button variant="outline">Back to my channels</Button></Link></div>
-        </main>
-        <Footer />
+        </section>
       </>
     );
   }
@@ -54,8 +48,7 @@ export default async function ChannelAnalyticsPage({ params }: { params: Promise
 
   return (
     <>
-      <Header />
-      <main className="container py-6 md:py-8">
+      <section className="w-full">
         <Link href={`/dashboard/channels/${channel.id}`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
           <ArrowLeft className="h-4 w-4" /> Manage channel
         </Link>
@@ -73,8 +66,7 @@ export default async function ChannelAnalyticsPage({ params }: { params: Promise
           myChannels={myChannels.map((c) => ({ id: c.id, name: c.name, slug: c.slug }))}
           isAdminViewingOtherChannel={!isOwner && isAdmin}
         />
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

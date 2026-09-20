@@ -1,8 +1,5 @@
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
-import AdminNav from '@/components/layout/AdminNav';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
 import { curationService } from '@/lib/services/curationService';
 import { channelRepo } from '@/lib/repositories/channelRepo';
@@ -21,12 +18,10 @@ export default async function HomepageCurationPage() {
   if (!hasAtLeastRole(actor.user, ROLES.MODERATOR)) {
     return (
       <>
-        <Header />
-        <main className="container py-20 text-center">
+        <section className="w-full">
           <h1 className="text-3xl font-bold">403 — Forbidden</h1>
           <p className="text-muted-foreground mt-2">You need moderator access or higher.</p>
-        </main>
-        <Footer />
+        </section>
       </>
     );
   }
@@ -43,9 +38,7 @@ export default async function HomepageCurationPage() {
 
   return (
     <>
-      <Header />
-      <main className="container py-8 max-w-5xl">
-        <AdminNav active="/admin/homepage" />
+      <section className="w-full">
         <h1 className="text-2xl md:text-3xl font-bold">Homepage Curation</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Curate the <span className="font-semibold">Popular</span>, <span className="font-semibold">New &amp; Noteworthy</span> and <span className="font-semibold">Featured</span> homepage sections. Curated slots render first (in priority order), with algorithmic fallback filling remaining positions. <span className="font-semibold">Trending</span> stays algorithmic.
@@ -64,8 +57,7 @@ export default async function HomepageCurationPage() {
           }))}
           approved={approvedOpts}
         />
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

@@ -1,8 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { sponsorshipLeadService } from '@/lib/services/sponsorshipLeadService';
 import { OBJECTIVE_LABEL, BUDGET_LABEL } from '@/lib/validation/sponsorshipSchemas';
@@ -59,8 +57,7 @@ export default async function OwnerSponsorshipRequestDetail({ params }: Props) {
 
   return (
     <>
-      <Header />
-      <main>
+      <section className="w-full">
         <section className="container py-8">
           <Link href={backHref} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3.5 w-3.5" /> {backLabel}</Link>
           <div className="mt-3 flex flex-wrap gap-3 items-start justify-between">
@@ -185,8 +182,7 @@ export default async function OwnerSponsorshipRequestDetail({ params }: Props) {
             initialMessages={messages}
           />
         </section>
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

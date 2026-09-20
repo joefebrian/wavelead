@@ -1,8 +1,6 @@
 import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
@@ -34,9 +32,7 @@ export default async function AdminClaimDetailPage({ params }: { params: Promise
   if (!hasAtLeastRole(actor.user, ROLES.MODERATOR)) {
     return (
       <>
-        <Header />
-        <main className="container py-20 text-center"><h1 className="text-3xl font-bold">403</h1></main>
-        <Footer />
+        <section className="w-full"><h1 className="text-3xl font-bold">403</h1></section>
       </>
     );
   }
@@ -52,8 +48,7 @@ export default async function AdminClaimDetailPage({ params }: { params: Promise
 
   return (
     <>
-      <Header />
-      <main className="container py-8 max-w-5xl">
+      <section className="w-full">
         <Link href="/admin/claims" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Back to queue</Link>
 
         <div className="mt-4 flex items-start gap-4">
@@ -184,8 +179,7 @@ export default async function AdminClaimDetailPage({ params }: { params: Promise
             showVerifyCurrentOwner={claimantIsCurrentOwner && !alreadyVerified}
           />
         </div>
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

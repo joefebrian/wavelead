@@ -190,6 +190,19 @@ export class PayPalPaymentProvider implements PaymentProvider {
       name?: string;
       details?: Array<{ issue?: string; description?: string }>;
     };
+    // M18 — snapshot the ACTUAL settlement FX PayPal applied, when it returns
+    // one (absent for same-currency captures, which is not an error). Audit
+    // only: it never changes the commercial amounts of this payment.
+    if (res.ok) {
+      try {
+        const { parseCaptureResponseFx } = await import('./paypalFx');
+        const obs = parseCaptureResponseFx(j, c.mode);
+        if (obs.length) {
+          const { providerFxService } = await import('../fx/providerFxService');
+          await providerFxService.recordObservations(obs, { payment_id: input.provider_order_id, purpose: 'order_capture' });
+        }
+      } catch { /* FX audit must never break a capture */ }
+    }
     if (!res.ok) {
       // ORDER_ALREADY_CAPTURED (422) — either the return callback and the webhook
       // both raced to capture, or a retry hit an already-captured order. Fall back

@@ -6830,3 +6830,74 @@ agent_communication:
                  PayPal approve_url. NOT changed — awaiting user authorization.
           NOT DONE deliberately: no deploy, no frontend testing agent, no
                  real-money capture, no recurring billing, no reminder UI.
+
+  - task: "M18 — Category visual polish, unified authenticated AppShell + admin sidebar, PayPal FX transparency, Brand Launch Campaigns (non-financial), exact local logo replacement"
+    implemented: true
+    working: true
+    file: "components/layout/AppShell.tsx, components/appkit/index.tsx, lib/constants/navigation.ts, lib/constants/categoryIcons.ts, components/brand/BrandLogo.tsx, app/dashboard/layout.tsx, app/admin/layout.tsx, app/categories/page.tsx, lib/services/payments/paypalFx.ts, lib/services/fx/providerFxService.ts, lib/repositories/providerFxSnapshotRepo.ts, app/admin/fx-rates/FxProviderPanel.tsx, lib/services/brandCampaignService.ts, lib/repositories/brandCampaignRepo.ts, app/dashboard/campaigns/**, app/dashboard/opportunities/**, app/dashboard/applications/**, app/admin/campaigns/page.tsx, lib/services/marketplaceService.ts, lib/repositories/marketplaceRepo.ts, app/api/[[...path]]/route.ts, public/brand/wavelead-logo.png"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          DEFERRED BY OPERATOR, NOT BUILT: campaign commitment deposit / 5%,
+          campaign funding balance, top-up, deposit refund accounting, PayPal
+          recurring subscriptions / Billing Plans. Brand Pro remains $15 / 30
+          days / manual renewal (untouched, asserted by tests).
+          1. CATEGORIES — Lucide icon + subtle accent per category with keyword
+             inference and a neutral default (never throws). Slugs, URLs, SEO
+             metadata and taxonomy unchanged; no per-category imagery.
+          2. APP SHELL — new AppShell (desktop sidebar + top utility bar +
+             single max-w-6xl content column; mobile drawer) mounted via NEW
+             app/dashboard/layout.tsx and app/admin/layout.tsx. A scripted pass
+             removed per-page <Header/> <Footer/> <AdminNav/> from 65 files and
+             normalized <main> → <section>, so User/Owner/Brand/Admin share one
+             design language. Admin nav is grouped (Overview/Channels/
+             Marketplace/Finance/Commercial/System), filtered with the same
+             hasAtLeastRole helper (RBAC unchanged, server guards still
+             authoritative); every href is an existing route (asserted).
+          3. NAV TERMINOLOGY — Incoming Requests / Sent Requests / Active
+             Sponsorships preserved; Campaigns is its own group.
+          4. FX — PayPal-specific code isolated in the adapter layer
+             (lib/services/payments/paypalFx.ts): capability probe + parsers for
+             capture, capture-lookup, refund (seller_payable_breakdown path) and
+             payout (currency_conversion) + webhook dispatcher. Provider-neutral
+             lib/services/fx/providerFxService.ts owns the three source labels
+             (provider_quote / provider_settlement / manual_reference) and the
+             fresh/expired/manual_fallback/provider_unavailable status. Snapshots
+             are append-only (no update/delete path) and idempotent on replay;
+             the capture path in the adapter records real settlement FX and can
+             never break a capture. /admin/fx-rates redesigned with the provider
+             panel; manual rates are labelled "Manual Admin Reference Rate" and
+             never as a PayPal rate.
+             LIVE PROBE RESULT (sandbox, read-only): HTTP 422 issue
+             CONTRACT_NOT_FOUND → PROVIDER LIMITATION (no FXaaS contract). No
+             value fabricated.
+          5. CAMPAIGNS — isolated brand_campaigns / brand_campaign_applications
+             collections (promotion_campaigns untouched). draft→open→
+             in_selection→active→completed/cancelled; applications applied→
+             shortlisted→approved/rejected/withdrawn. Ownership-checked apply
+             (403 for strangers), duplicate guard, budget history + commitment
+             safety (cannot fall below committed marketplace value), brand
+             applicant management, admin oversight (no approval gate).
+             Approval creates NO payment; "Continue to Booking" reuses the
+             existing marketplace flow via optional
+             source_brand_campaign_id / source_brand_campaign_application_id
+             with findActiveBySourceCampaignApplication duplicate protection.
+             The campaign service imports NO provider code at all.
+             CAMPAIGN CONVERSATION: DEFERRED (would require reworking the
+             sponsorship-request message domain; reported, not built).
+          6. LOGO — operator-supplied PNG persisted at
+             public/brand/wavelead-logo.png (2172x724, 3:1), rendered via
+             BrandLogo with width:auto (never stretched) in public header,
+             footer, login, signup and both shells + OpenGraph/icons. No
+             external/temporary asset URL anywhere.
+          TESTS: tests/m18.test.ts 17/17 PASS (covers the requested UI, FX,
+                 campaign and logo checks incl. "no deposit/wallet collection
+                 exists"). Re-ran m17 (18), m17_1 (10), m16 comms (19),
+                 m03_ownership_verification (23), m141 pricing (6) → 93/93 PASS.
+                 tsc --noEmit clean; yarn build clean.
+          NOT DONE deliberately: no deploy, no frontend testing agent, no
+                 real-money transaction, no new payment provider.

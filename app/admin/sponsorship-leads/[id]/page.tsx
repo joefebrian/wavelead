@@ -1,9 +1,6 @@
 import { redirect, notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
-import AdminNav from '@/components/layout/AdminNav';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
 import { sponsorshipLeadService } from '@/lib/services/sponsorshipLeadService';
@@ -27,9 +24,7 @@ export default async function AdminSponsorshipLeadDetailPage({ params }: { param
 
   return (
     <>
-      <Header />
-      <main className="container py-8 md:py-12 max-w-4xl">
-        <AdminNav active="/admin/sponsorship-leads" />
+      <section className="w-full">
         <Link href="/admin/sponsorship-leads" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Back to leads</Link>
         <div className="mt-4 flex items-start justify-between gap-4 flex-wrap">
           <div>
@@ -63,8 +58,7 @@ export default async function AdminSponsorshipLeadDetailPage({ params }: { param
         </div>
 
         <SponsorshipLeadActions id={lead.id} currentStatus={lead.status} currentNotes={lead.admin_notes || ''} />
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

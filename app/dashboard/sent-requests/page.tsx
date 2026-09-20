@@ -1,8 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { sponsorshipLeadService } from '@/lib/services/sponsorshipLeadService';
 import { OBJECTIVE_LABEL, BUDGET_LABEL } from '@/lib/validation/sponsorshipSchemas';
@@ -42,8 +40,7 @@ export default async function BrandSentRequestsPage() {
 
   return (
     <>
-      <Header />
-      <main>
+      <section className="w-full">
         <section className="wh-gradient-hero border-b border-border/60">
           <div className="container py-8">
             <div className="text-xs font-semibold uppercase tracking-widest text-primary">Brand</div>
@@ -87,8 +84,7 @@ export default async function BrandSentRequestsPage() {
             </ul>
           )}
         </section>
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

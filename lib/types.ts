@@ -992,6 +992,10 @@ export interface MarketplaceOrder {
   // the brand explicitly continued from an accepted request. The lead is
   // never duplicated — this is the single canonical association.
   source_sponsorship_lead_id?: string | null;
+  /** M18 — optional Brand Launch Campaign origin (association only; never
+   *  affects price, seller, commission or Payment Protection). */
+  source_brand_campaign_id?: string | null;
+  source_brand_campaign_application_id?: string | null;
 
   // Buyer side
   buyer_user_id: string | null;      // authenticated brand user (if any)

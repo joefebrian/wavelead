@@ -1,8 +1,6 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { redirect, notFound } from 'next/navigation';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { paymentFundingOrderRepo } from '@/lib/repositories/paymentRepo';
@@ -24,8 +22,7 @@ export default async function OwnerPaymentDetail({ params }: { params: Promise<{
   const refunds = await paymentRefundRepo.list({ funding_order_id: f.id });
   return (
     <div className="min-h-screen flex flex-col">
-      <Header />
-      <main className="container mx-auto px-4 py-6 max-w-3xl flex-1">
+      <section className="w-full">
         <Link href="/dashboard/billing" className="text-sm text-primary hover:underline">← Billing</Link>
         <h1 className="text-2xl font-bold mt-2 mb-1">{camp?.name || 'Payment'}</h1>
         <div className="text-sm text-muted-foreground mb-6">Payment reference {f.provider_order_id?.slice(0, 12)}…</div>
@@ -54,8 +51,7 @@ export default async function OwnerPaymentDetail({ params }: { params: Promise<{
         <section className="mt-6 text-xs text-muted-foreground">
           <p>Payment Receipt — this is not a tax invoice.</p>
         </section>
-      </main>
-      <Footer />
+      </section>
     </div>
   );
 }

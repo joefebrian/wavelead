@@ -1,7 +1,5 @@
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { hasEntitlement } from '@/lib/entitlements';
 import { marketplaceService, PIPELINE_STAGES } from '@/lib/services/marketplaceService';
@@ -19,13 +17,11 @@ export default async function PipelinePage() {
   if (!canSee) {
     return (
       <>
-        <Header />
-        <main className="container py-10 max-w-5xl">
+        <section className="w-full">
           <h1 className="text-2xl md:text-3xl font-bold">Sponsorship Pipeline</h1>
           <p className="mt-1 text-sm text-muted-foreground">Manage active sponsorship opportunities from request to completion in one workflow.</p>
           <PipelineUpgrade userEmail={actor.user.email} />
-        </main>
-        <Footer />
+        </section>
       </>
     );
   }
@@ -34,15 +30,13 @@ export default async function PipelinePage() {
 
   return (
     <>
-      <Header />
-      <main className="container py-10">
+      <section className="w-full">
         <h1 className="text-2xl md:text-3xl font-bold">Sponsorship Pipeline</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Every active sponsorship request across your channels — from request to completion. Actions link to the existing workflow pages so nothing is duplicated.
         </p>
         <PipelineClient initial={data} stages={PIPELINE_STAGES} />
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

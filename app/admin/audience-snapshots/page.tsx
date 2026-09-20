@@ -1,9 +1,6 @@
 import { redirect, notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
-import AdminNav from '@/components/layout/AdminNav';
 import { Button } from '@/components/ui/button';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
 import { audienceSnapshotService } from '@/lib/services/audienceSnapshotService';
@@ -17,11 +14,9 @@ export default async function AdminAudienceSnapshotsPage() {
   if (!hasAtLeastRole(actor.user, ROLES.MODERATOR)) {
     return (
       <>
-        <Header />
-        <main className="container py-20 text-center">
+        <section className="w-full">
           <h1 className="text-3xl font-bold">403 — Moderator access required</h1>
-        </main>
-        <Footer />
+        </section>
       </>
     );
   }
@@ -30,9 +25,7 @@ export default async function AdminAudienceSnapshotsPage() {
 
   return (
     <>
-      <Header />
-      <main className="container py-8">
-        <AdminNav active="/admin/audience-snapshots" />
+      <section className="w-full">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold">Follower Evidence Queue</h1>
@@ -66,8 +59,7 @@ export default async function AdminAudienceSnapshotsPage() {
             ))}
           </ul>
         )}
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

@@ -5,7 +5,7 @@
 // no nested Company block. Bottom legal row keeps P2P Labs attribution +
 // consent trigger.
 import Link from 'next/link';
-import { Radio } from 'lucide-react';
+import BrandLogo from '@/components/brand/BrandLogo';
 import CookiePreferencesTrigger from '@/components/consent/CookiePreferencesTrigger';
 
 const DISCOVER = [
@@ -45,9 +45,8 @@ export default function Footer() {
       <div className="container py-10 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
         {/* COL 1 — WaveLead brand */}
         <div>
-          <Link href="/" className="inline-flex items-center gap-2 font-semibold">
-            <Radio className="h-5 w-5 text-primary" />
-            <span>WaveLead</span>
+          <Link href="/" className="inline-flex items-center gap-2 font-semibold" aria-label="WaveLead home">
+            <BrandLogo size="md" withWordmarkFallback />
           </Link>
           <p className="mt-2 text-xs font-medium text-muted-foreground" data-testid="footer-attribution">A product by P2P Labs</p>
           <p className="mt-3 text-sm text-muted-foreground">

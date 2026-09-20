@@ -1,8 +1,6 @@
 import { redirect, notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { promotionCampaignService } from '@/lib/services/promotion/campaignService';
@@ -47,8 +45,7 @@ export default async function PromotionDetailPage({ params }: { params: Promise<
 
   return (
     <>
-      <Header />
-      <main className="container py-8 md:py-12 max-w-4xl">
+      <section className="w-full">
         <Link href="/dashboard/promotions" className="text-sm text-muted-foreground hover:text-foreground">← All promotions</Link>
         <div className="mt-2 flex items-start justify-between gap-4 flex-wrap">
           <div>
@@ -110,8 +107,7 @@ export default async function PromotionDetailPage({ params }: { params: Promise<
           <div><span className="text-muted-foreground">Languages:</span> {camp.targeting.languages.join(', ').toUpperCase() || 'Any'}</div>
           <div><span className="text-muted-foreground">Categories:</span> {camp.targeting.categories.join(', ') || 'Any'}</div>
         </section>
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

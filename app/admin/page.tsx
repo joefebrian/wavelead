@@ -1,13 +1,10 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
 import { channelRepo } from '@/lib/repositories/channelRepo';
 import { Button } from '@/components/ui/button';
 import { Inbox, LayoutList, Users, Shield, Trophy, ClipboardCheck, KeyRound, ShieldAlert, Megaphone, Wallet, DollarSign, Activity, TrendingUp, Handshake, Cog } from 'lucide-react';
-import AdminNav from '@/components/layout/AdminNav';
 
 export const metadata: Metadata = { title: 'Admin', robots: { index: false, follow: false } };
 
@@ -19,13 +16,11 @@ export default async function AdminPage() {
   if (!hasAtLeastRole(actor.user, ROLES.MODERATOR)) {
     return (
       <>
-        <Header />
-        <main className="container py-20 text-center">
+        <section className="w-full">
           <h1 className="text-3xl font-bold">403 — Forbidden</h1>
           <p className="text-muted-foreground mt-2">You need moderator access or higher to view this page.</p>
           <p className="text-xs text-muted-foreground mt-6">Signed in as {actor.user.email} · role {actor.user.role}</p>
-        </main>
-        <Footer />
+        </section>
       </>
     );
   }
@@ -59,9 +54,7 @@ export default async function AdminPage() {
 
   return (
     <>
-      <Header />
-      <main className="container py-10">
-        <AdminNav active="/admin" />
+      <section className="w-full">
         <div className="flex items-baseline justify-between gap-3 flex-wrap">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold">Admin Console</h1>
@@ -84,8 +77,7 @@ export default async function AdminPage() {
           <Link href="/admin/channels?status=pending_review"><Button>Open moderation queue</Button></Link>
           <Link href="/admin/homepage"><Button variant="outline">Manage homepage</Button></Link>
         </div>
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

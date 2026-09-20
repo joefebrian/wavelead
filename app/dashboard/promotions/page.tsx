@@ -1,8 +1,6 @@
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
@@ -30,8 +28,7 @@ export default async function PromotionsListPage() {
   const items = await promotionCampaignService.listForOwner(actor);
   return (
     <>
-      <Header />
-      <main className="container py-8 md:py-12 max-w-4xl">
+      <section className="w-full">
         <div className="flex items-center justify-between">
           <h1 className="text-3xl font-bold tracking-tight">Promotions</h1>
           <Link href="/dashboard/channels"><Button variant="outline">Choose channel</Button></Link>
@@ -60,8 +57,7 @@ export default async function PromotionsListPage() {
             ))}
           </ul>
         )}
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

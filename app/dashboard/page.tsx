@@ -1,8 +1,6 @@
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Button } from '@/components/ui/button';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { ownerService } from '@/lib/services/ownerService';
@@ -36,8 +34,7 @@ export default async function DashboardPage() {
 
   return (
     <>
-      <Header />
-      <main className="container py-10 max-w-5xl">
+      <section className="w-full">
         <h1 className="text-2xl md:text-3xl font-bold">Dashboard</h1>
         <p className="text-muted-foreground mt-1">
           Signed in as <span className="font-medium text-foreground">{actor.user.display_name || actor.user.email}</span> · role <span className="font-mono text-primary">{actor.user.role}</span>
@@ -232,8 +229,7 @@ export default async function DashboardPage() {
           <Link href="/dashboard/claims"><Button variant="outline">My claims</Button></Link>
           <Link href="/submit"><Button>Submit a channel</Button></Link>
         </div>
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

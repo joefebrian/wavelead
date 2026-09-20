@@ -1,8 +1,6 @@
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import type { Metadata } from 'next';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies, rankOf, ROLES } from '@/lib/auth/rbac';
 import { paymentFundingOrderRepo } from '@/lib/repositories/paymentRepo';
@@ -29,8 +27,7 @@ export default async function AdminPaymentDetail({ params }: { params: Promise<{
   const balances = await ledgerService.campaignBalances(f.campaign_id);
   return (
     <div className="min-h-screen flex flex-col">
-      <Header />
-      <main className="container mx-auto px-4 py-6 max-w-4xl flex-1">
+      <section className="w-full">
         <Link href="/admin/payments" className="text-sm text-primary hover:underline">← Payments</Link>
         <h1 className="text-2xl font-bold mt-2 mb-1">{camp?.name || 'Payment'}</h1>
         <div className="text-sm text-muted-foreground mb-6">Owner {f.owner_user_id.slice(0, 8)}… · {f.provider.toUpperCase()}</div>
@@ -71,8 +68,7 @@ export default async function AdminPaymentDetail({ params }: { params: Promise<{
         </section>
 
         <AdminPaymentActions paymentId={f.id} refunds={refunds.map((r) => ({ id: r.id, status: r.status, requested_amount_minor: r.requested_amount_minor }))} refundable={refundability} />
-      </main>
-      <Footer />
+      </section>
     </div>
   );
 }

@@ -1,8 +1,6 @@
 import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
@@ -41,12 +39,10 @@ export default async function ReviewChannelPage({ params }: { params: Promise<Pa
   if (!hasAtLeastRole(actor.user, ROLES.MODERATOR)) {
     return (
       <>
-        <Header />
-        <main className="container py-20 text-center">
+        <section className="w-full">
           <h1 className="text-3xl font-bold">403 — Forbidden</h1>
           <p className="text-muted-foreground mt-2">You need moderator access or higher.</p>
-        </main>
-        <Footer />
+        </section>
       </>
     );
   }
@@ -68,8 +64,7 @@ export default async function ReviewChannelPage({ params }: { params: Promise<Pa
 
   return (
     <>
-      <Header />
-      <main className="container py-8 max-w-4xl">
+      <section className="w-full">
         <Link href="/admin/channels" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Back to queue</Link>
 
         <div className="mt-4 flex items-start gap-4">
@@ -251,8 +246,7 @@ export default async function ReviewChannelPage({ params }: { params: Promise<Pa
             </div>
           </div>
         )}
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

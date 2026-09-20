@@ -1533,6 +1533,111 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok({ identity: await ownerVerificationService.getIdentity(actor, path[2]) }), request);
     }
 
+    // ---------- M18 BRAND LAUNCH CAMPAIGNS (non-financial workflow) ----------
+    // No campaign deposit, wallet, funding balance or provider call exists in
+    // this domain: approval never creates or captures a payment. Money only
+    // ever moves through the existing marketplace order flow.
+    if (route === '/brand/campaigns' && method === 'GET') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      return applyCors(ok({ campaigns: await brandCampaignService.listMine(actor) }), request);
+    }
+    if (route === '/brand/campaigns' && method === 'POST') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      const body = await safeJson(request);
+      return applyCors(ok({ campaign: await brandCampaignService.createDraft(actor, body) }, { status: 201 }), request);
+    }
+    if (path[0] === 'brand' && path[1] === 'campaigns' && path.length === 3 && method === 'GET') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      return applyCors(ok(await brandCampaignService.getForBrand(actor, path[2])), request);
+    }
+    if (path[0] === 'brand' && path[1] === 'campaigns' && path.length === 3 && method === 'PUT') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      const body = await safeJson(request);
+      return applyCors(ok({ campaign: await brandCampaignService.update(actor, path[2], body) }), request);
+    }
+    if (path[0] === 'brand' && path[1] === 'campaigns' && path[3] === 'open' && method === 'POST') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      return applyCors(ok({ campaign: await brandCampaignService.open(actor, path[2]) }), request);
+    }
+    if (path[0] === 'brand' && path[1] === 'campaigns' && path[3] === 'status' && method === 'POST') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      const body = await safeJson(request) as { status?: string };
+      const next = (body?.status || '') as Parameters<typeof brandCampaignService.setStatus>[2];
+      return applyCors(ok({ campaign: await brandCampaignService.setStatus(actor, path[2], next) }), request);
+    }
+    if (path[0] === 'brand' && path[1] === 'campaigns' && path[3] === 'budget' && method === 'POST') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      const body = await safeJson(request);
+      return applyCors(ok({ campaign: await brandCampaignService.changeBudget(actor, path[2], body) }), request);
+    }
+    if (path[0] === 'brand' && path[1] === 'campaign-applications' && path.length === 4 && method === 'POST'
+        && ['shortlist', 'approve', 'reject'].includes(path[3])) {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      const map = { shortlist: 'shortlisted', approve: 'approved', reject: 'rejected' } as const;
+      const decision = map[path[3] as keyof typeof map];
+      return applyCors(ok({ application: await brandCampaignService.decide(actor, path[2], decision) }), request);
+    }
+    if (path[0] === 'brand' && path[1] === 'campaign-applications' && path[3] === 'continue-to-booking' && method === 'POST') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      return applyCors(ok(await brandCampaignService.continueToBooking(actor, path[2])), request);
+    }
+
+    // Creator-facing campaign opportunities + applications.
+    if (route === '/campaign-opportunities' && method === 'GET') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      return applyCors(ok({ campaigns: await brandCampaignService.listOpportunities() }), request);
+    }
+    if (path[0] === 'campaign-opportunities' && path.length === 2 && method === 'GET') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      return applyCors(ok({ campaign: await brandCampaignService.getOpportunity(path[1]) }), request);
+    }
+    if (path[0] === 'campaign-opportunities' && path[2] === 'apply' && method === 'POST') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      const body = await safeJson(request);
+      return applyCors(ok({ application: await brandCampaignService.apply(actor, path[1], body) }, { status: 201 }), request);
+    }
+    if (route === '/campaign-applications' && method === 'GET') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      return applyCors(ok({ applications: await brandCampaignService.listMyApplications(actor) }), request);
+    }
+    if (path[0] === 'campaign-applications' && path[2] === 'withdraw' && method === 'POST') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.USER);
+      return applyCors(ok({ application: await brandCampaignService.withdraw(actor, path[1]) }), request);
+    }
+    // Admin oversight only — no campaign approval gate exists.
+    if (route === '/admin/campaigns' && method === 'GET') {
+      const { brandCampaignService } = await import('@/lib/services/brandCampaignService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.MODERATOR);
+      return applyCors(ok({ campaigns: await brandCampaignService.adminOverview() }), request);
+    }
+
+    // ---------- M18 PROVIDER FX TRANSPARENCY (read-only) ----------
+    if (route === '/admin/fx/reference' && method === 'GET') {
+      const { providerFxService } = await import('@/lib/services/fx/providerFxService');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.ADMIN);
+      return applyCors(ok({
+        reference: await providerFxService.currentReference('USD', 'IDR'),
+        snapshots: await providerFxService.listSnapshots(25),
+      }), request);
+    }
+    if (route === '/admin/fx/provider-capability' && method === 'GET') {
+      const { detectQuoteCapability } = await import('@/lib/services/payments/paypalFx');
+      const actor = await resolveActor(request); requireRole(actor, ROLES.ADMIN);
+      return applyCors(ok({ capability: await detectQuoteCapability('USD', 'IDR') }), request);
+    }
+
     // ---------- M17 BRAND PRO FOUNDING BETA ($15 / 30 days, manual renewal) ----------
     if (route === '/brand-pro/state' && method === 'GET') {
       const { brandProService } = await import('@/lib/services/brandProService');

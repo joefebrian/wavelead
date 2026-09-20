@@ -2,8 +2,6 @@ import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { marketplaceOrderRepo } from '@/lib/repositories/marketplaceRepo';
@@ -21,8 +19,7 @@ export default async function BrandSponsorshipsPage() {
   const orders = await marketplaceOrderRepo.listByBuyer(actor.user.id);
   return (
     <>
-      <Header />
-      <main className="container py-10 max-w-4xl">
+      <section className="w-full">
         <h1 className="text-2xl md:text-3xl font-bold" data-testid="brand-active-sponsorships-heading">Active Sponsorships</h1>
         <p className="mt-1 text-sm text-muted-foreground">Confirmed sponsorship bookings in the WaveLead payment and delivery workflow. Requests you&apos;ve sent that are still awaiting an owner response live under <Link href="/dashboard/sent-requests" className="text-primary hover:underline">Sent Requests</Link>.</p>
         {/* B3 — banner that appears only after a PayPal return / cancel round-trip. */}
@@ -120,8 +117,7 @@ export default async function BrandSponsorshipsPage() {
             );
           })}
         </div>
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

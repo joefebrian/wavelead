@@ -1,7 +1,5 @@
 import type { Metadata } from 'next';
 import { redirect, notFound } from 'next/navigation';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { channelRepo } from '@/lib/repositories/channelRepo';
 import { ownerVerificationService } from '@/lib/services/ownerVerificationService';
@@ -31,8 +29,7 @@ export default async function OwnerVerifyPage({ params, searchParams }: {
 
   return (
     <>
-      <Header />
-      <main className="container py-10 max-w-3xl">
+      <section className="w-full">
         <div className="text-xs uppercase tracking-wide text-muted-foreground">Ownership verification</div>
         <h1 className="mt-1 text-2xl md:text-3xl font-bold tracking-tight">{channel.name}</h1>
         <p className="mt-1 text-sm text-muted-foreground" data-testid="verification-choice-subtitle">
@@ -51,8 +48,7 @@ export default async function OwnerVerifyPage({ params, searchParams }: {
           declarationText={ownerVerificationService.OWNER_DECLARATION_TEXT}
           initialView={initialView}
         />
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

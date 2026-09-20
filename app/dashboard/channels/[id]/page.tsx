@@ -1,8 +1,6 @@
 import { redirect, notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
@@ -37,13 +35,11 @@ export default async function OwnerChannelPage({ params, searchParams }: { param
     const code = (e as { statusCode?: number })?.statusCode;
     if (code === 403) return (
       <>
-        <Header />
-        <main className="container py-20 text-center">
+        <section className="w-full">
           <h1 className="text-3xl font-bold">403 — Forbidden</h1>
           <p className="text-muted-foreground mt-2">You do not own this channel.</p>
           <div className="mt-6"><Link href="/dashboard/channels"><Button variant="outline">Back to my channels</Button></Link></div>
-        </main>
-        <Footer />
+        </section>
       </>
     );
     if (code === 404) notFound();
@@ -70,8 +66,7 @@ export default async function OwnerChannelPage({ params, searchParams }: { param
 
   return (
     <>
-      <Header />
-      <main className="container py-8 max-w-4xl">
+      <section className="w-full">
         <Link href="/dashboard/channels" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" /> All my channels</Link>
 
         <div className="mt-4 flex items-start gap-4">
@@ -144,8 +139,7 @@ export default async function OwnerChannelPage({ params, searchParams }: { param
             categories={categories.map((c) => ({ slug: c.slug, name: c.name }))}
           />
         </div>
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

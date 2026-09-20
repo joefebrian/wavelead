@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import BrandLogo from '@/components/brand/BrandLogo';
 import { useEffect, useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { Radio, Menu, X, Search } from 'lucide-react';
@@ -47,11 +48,9 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border/60 bg-background/85 backdrop-blur">
       <div className="container flex h-16 items-center gap-4">
-        <Link href="/" className="flex items-center gap-2 shrink-0">
-          <span className="grid h-9 w-9 place-items-center rounded-lg bg-primary text-primary-foreground shadow-sm">
-            <Radio className="h-5 w-5" />
-          </span>
-          <span className="text-lg font-bold tracking-tight">WaveLead</span>
+        {/* M18 — exact operator-supplied logo, served from the local /public asset. */}
+        <Link href="/" className="flex items-center gap-2 shrink-0" aria-label="WaveLead home">
+          <BrandLogo size="md" priority withWordmarkFallback />
         </Link>
 
         <nav className="hidden md:flex items-center gap-5 text-sm font-medium text-muted-foreground">

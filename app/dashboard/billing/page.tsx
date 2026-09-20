@@ -1,8 +1,6 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { paymentFundingOrderRepo } from '@/lib/repositories/paymentRepo';
@@ -32,8 +30,7 @@ export default async function OwnerBillingPage() {
   }));
   return (
     <div className="min-h-screen flex flex-col">
-      <Header />
-      <main className="container mx-auto px-4 py-6 max-w-4xl flex-1">
+      <section className="w-full">
         <h1 className="text-2xl font-bold mb-1">Billing</h1>
         <p className="text-sm text-muted-foreground mb-6">Your campaign payments &amp; refunds.</p>
         {/* M17.1 — Brand Pro PayPal return lands here; capture is server-authoritative. */}
@@ -66,8 +63,7 @@ export default async function OwnerBillingPage() {
             </tbody>
           </table>
         </div>
-      </main>
-      <Footer />
+      </section>
     </div>
   );
 }

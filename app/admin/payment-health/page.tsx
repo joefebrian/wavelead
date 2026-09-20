@@ -1,9 +1,6 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
-import AdminNav from '@/components/layout/AdminNav';
 import { resolveActorFromCookies, rankOf, ROLES } from '@/lib/auth/rbac';
 import { paymentFundingOrderRepo } from '@/lib/repositories/paymentRepo';
 import { paymentRefundRepo } from '@/lib/repositories/paymentRefundRepo';
@@ -42,9 +39,7 @@ export default async function PaymentHealthPage() {
   ];
   return (
     <div className="min-h-screen flex flex-col">
-      <Header />
-      <main className="container mx-auto px-4 py-6 max-w-4xl flex-1">
-        <AdminNav active="/admin/payment-health" />
+      <section className="w-full">
         <h1 className="text-2xl font-bold mb-1">Payment Health</h1>
         <p className="text-sm text-muted-foreground mb-6">Operational visibility. Correction actions live on individual payment pages.</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
@@ -65,8 +60,7 @@ export default async function PaymentHealthPage() {
             </p>
           </section>
         )}
-      </main>
-      <Footer />
+      </section>
     </div>
   );
 }

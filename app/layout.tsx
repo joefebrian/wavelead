@@ -21,7 +21,11 @@ export const metadata: Metadata = {
     description: 'Discover, follow and grow public WhatsApp Channels. Independent platform.',
     type: 'website',
     siteName: 'WaveLead',
+    // M18 — default OpenGraph branding uses the local logo asset (never a
+    // temporary/signed external URL).
+    images: [{ url: '/brand/wavelead-logo.png', width: 2172, height: 724, alt: 'WaveLead' }],
   },
+  icons: { icon: '/brand/wavelead-logo.png', apple: '/brand/wavelead-logo.png' },
   robots: { index: true, follow: true },
 };
 

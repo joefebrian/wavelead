@@ -1,8 +1,6 @@
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
@@ -19,8 +17,7 @@ export default async function DashboardChannelsPage() {
   const items = await ownerService.listMine(actor);
   return (
     <>
-      <Header />
-      <main className="container py-8 max-w-4xl">
+      <section className="w-full">
         <div className="flex items-baseline justify-between gap-3 flex-wrap">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold">My channels</h1>
@@ -66,8 +63,7 @@ export default async function DashboardChannelsPage() {
             })}
           </div>
         )}
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

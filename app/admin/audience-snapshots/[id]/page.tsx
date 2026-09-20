@@ -1,9 +1,6 @@
 import { redirect, notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
-import AdminNav from '@/components/layout/AdminNav';
 import { resolveActorFromCookies, hasAtLeastRole, ROLES } from '@/lib/auth/rbac';
 import { audienceSnapshotService } from '@/lib/services/audienceSnapshotService';
 import ReviewActions from './ReviewActions';
@@ -20,9 +17,7 @@ export default async function AdminAudienceSnapshotDetailPage({ params }: { para
   if (!hasAtLeastRole(actor.user, ROLES.MODERATOR)) {
     return (
       <>
-        <Header />
-        <main className="container py-20 text-center"><h1 className="text-3xl font-bold">403 — Moderator access required</h1></main>
-        <Footer />
+        <section className="w-full"><h1 className="text-3xl font-bold">403 — Moderator access required</h1></section>
       </>
     );
   }
@@ -39,9 +34,7 @@ export default async function AdminAudienceSnapshotDetailPage({ params }: { para
 
   return (
     <>
-      <Header />
-      <main className="container py-8 max-w-3xl">
-        <AdminNav active="/admin/audience-snapshots" />
+      <section className="w-full">
         <Link href="/admin/audience-snapshots" className="text-sm text-muted-foreground hover:text-foreground">← Back to queue</Link>
         <h1 className="mt-3 text-2xl md:text-3xl font-bold">Follower Evidence Review</h1>
         <div className="mt-1 text-sm text-muted-foreground">Snapshot {snapshot.id.slice(0, 8)} · status: <span className="font-semibold uppercase">{snapshot.status}</span></div>
@@ -85,8 +78,7 @@ export default async function AdminAudienceSnapshotDetailPage({ params }: { para
         )}
 
         {canAct && <ReviewActions snapshotId={snapshot.id} />}
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }

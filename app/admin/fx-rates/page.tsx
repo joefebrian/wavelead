@@ -1,11 +1,10 @@
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
-import AdminNav from '@/components/layout/AdminNav';
 import { resolveActorFromCookies, rankOf, ROLES } from '@/lib/auth/rbac';
 import { redirect } from 'next/navigation';
 import { fxAdminService } from '@/lib/services/fx/fxAdminService';
 import { formatIdr } from '@/lib/utils/idrFormat';
 import AdminFxCreateForm from './AdminFxCreateForm';
+import FxProviderPanel from './FxProviderPanel';
+import { PageHeader } from '@/components/appkit';
 
 export const metadata = { title: 'FX Rates — Admin' };
 export const dynamic = 'force-dynamic';
@@ -24,11 +23,15 @@ export default async function AdminFxRatesPage() {
   const rows = await fxAdminService.list();
   const active = rows.find((r) => r.active) ?? null;
   return (
-    <div className="min-h-screen flex flex-col">
-      <Header />
-      <main className="container mx-auto px-4 py-6 max-w-4xl flex-1">
-        <AdminNav active="/admin/fx-rates" />
-        <h1 className="text-2xl font-bold mb-1">FX Rates</h1>
+    <div className="w-full">
+      <section className="w-full">
+        <PageHeader
+          title="FX Rates"
+          description="Provider FX is preferred when PayPal genuinely supplies it; the admin rate below is an explicitly-labelled manual fallback."
+        />
+        {/* M18 — provider FX transparency (capability, source labels, actual
+            settlement snapshots). Manual rates are never labelled as PayPal. */}
+        <FxProviderPanel />
         <p className="text-sm text-muted-foreground mb-6">
           Admin-managed USD → IDR conversion rate used for the Indonesian rupiah <em>equivalent display</em>. This rate does not perform any payment and does not affect campaign USD accounting. Existing locked quotes are never re-priced when a new rate becomes active.
         </p>
@@ -90,8 +93,7 @@ export default async function AdminFxRatesPage() {
             </div>
           )}
         </section>
-      </main>
-      <Footer />
+      </section>
     </div>
   );
 }

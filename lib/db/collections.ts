@@ -27,6 +27,11 @@ export const COLLECTIONS = {
   PAYMENT_REFUNDS: 'payment_refunds',
   FUNDING_FX_RATES: 'funding_fx_rates',
   FUNDING_FX_QUOTES: 'funding_fx_quotes',
+  // M18 — append-only provider FX observations (settlement/quote), provider-neutral.
+  PROVIDER_FX_SNAPSHOTS: 'provider_fx_snapshots',
+  // M18 — Brand Launch Campaigns (isolated from promotion_campaigns).
+  BRAND_CAMPAIGNS: 'brand_campaigns',
+  BRAND_CAMPAIGN_APPLICATIONS: 'brand_campaign_applications',
   SPONSORSHIP_LEADS: 'sponsorship_leads',
   INTEGRATION_CREDENTIALS: 'integration_credentials',
   INTEGRATION_PROVIDER_SETTINGS: 'integration_provider_settings',

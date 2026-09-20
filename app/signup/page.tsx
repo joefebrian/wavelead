@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import Header from '@/components/layout/Header';
+import BrandLogo from '@/components/brand/BrandLogo';
 import Footer from '@/components/layout/Footer';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -64,6 +65,7 @@ export default function SignupPage() {
     <>
       <Header />
       <main className="container py-16 max-w-md">
+        <BrandLogo size="lg" priority className="mb-4" />
         <h1 className="text-3xl font-bold">Create your WaveLead account</h1>
         <p className="text-muted-foreground mt-2">Free forever for discovery. Growth tools available for channel owners.</p>
         <div className="mt-8">

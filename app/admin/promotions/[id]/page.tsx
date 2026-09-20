@@ -1,8 +1,6 @@
 import { redirect, notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Badge } from '@/components/ui/badge';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { promotionCampaignService } from '@/lib/services/promotion/campaignService';
@@ -29,8 +27,7 @@ export default async function AdminCampaignDetail({ params }: { params: Promise<
 
   return (
     <>
-      <Header />
-      <main className="container py-8 md:py-12 max-w-4xl">
+      <section className="w-full">
         <Link href="/admin/promotions" className="text-sm text-muted-foreground hover:text-foreground">← All admin promotions</Link>
         <div className="mt-2 flex items-start justify-between gap-4 flex-wrap">
           <div>
@@ -57,8 +54,7 @@ export default async function AdminCampaignDetail({ params }: { params: Promise<
           <div><span className="text-muted-foreground">Resolved rates:</span> {(camp.rate_snapshot || []).map((s) => `${s.placement} @ $${(s.cpm_usd_minor / 100).toFixed(2)} CPM`).join(' · ') || '—'}</div>
           <div><span className="text-muted-foreground">Est. impressions:</span> ~ {estImpressions.toLocaleString()}</div>
         </section>
-      </main>
-      <Footer />
+      </section>
     </>
   );
 }
