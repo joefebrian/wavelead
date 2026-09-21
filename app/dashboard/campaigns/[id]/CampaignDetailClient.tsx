@@ -315,11 +315,62 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
                         <Button size="sm" variant="ghost" onClick={() => call(`/api/brand/campaign-applications/${a.id}/reject`, `r-${a.id}`)} data-testid={`reject-${a.id}`}>Reject</Button>
                       </>
                     )}
-                    {a.status === 'approved' && (
-                      <Button size="sm" onClick={() => continueToBooking(a.id)} disabled={busy === `booking-${a.id}`} data-testid={`continue-to-booking-${a.id}`}>
-                        {a.marketplace_order_id ? 'Open existing booking' : 'Continue to Booking'}
-                      </Button>
-                    )}
+                    {a.status === 'approved' && (() => {
+                      // M19.1 — pre-booking capacity indicator. DISPLAY ONLY.
+                      // The server-side funded-capacity gate in
+                      // brandCampaignService.assertNewObligationAllowed and the
+                      // marketplace order guard remain the sole authority.
+                      // Existing marketplace_order_id means the booking has
+                      // already been created; skip the preview to avoid noise.
+                      const price = a.proposed_rate_usd_minor;
+                      const available = commitment?.available_funded_capacity_minor ?? null;
+                      const knownPrice = typeof price === 'number' && price > 0;
+                      const knownCap = typeof available === 'number';
+                      const sufficient = knownPrice && knownCap && (price as number) <= (available as number);
+                      const shortfall = knownPrice && knownCap ? Math.max(0, (price as number) - (available as number)) : 0;
+                      const alreadyBooked = !!a.marketplace_order_id;
+                      return (
+                        <div className="flex flex-col gap-1.5">
+                          {!alreadyBooked && knownPrice && knownCap && (
+                            <div
+                              className={
+                                sufficient
+                                  ? 'rounded-md border border-emerald-300 bg-emerald-50 p-2 text-xs text-emerald-900'
+                                  : 'rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900'
+                              }
+                              data-testid={`capacity-preview-${a.id}`}
+                              data-capacity-state={sufficient ? 'sufficient' : 'shortfall'}
+                            >
+                              <div>Creator Booking Price: <strong>{usd(price)}</strong></div>
+                              <div>Available Funded Capacity: <strong>{usd(available)}</strong></div>
+                              {sufficient ? (
+                                <div className="mt-1">Available funded capacity is sufficient.</div>
+                              ) : (
+                                <>
+                                  <div className="mt-1">
+                                    Additional Campaign Commitment is required before this booking can be created.
+                                  </div>
+                                  <div>Additional Commitment / Capacity Needed: <strong data-testid={`capacity-needed-${a.id}`}>{usd(shortfall)}</strong></div>
+                                  <div className="mt-1 text-[11px] text-amber-800">
+                                    Server-side authority still applies at booking creation.
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          )}
+                          <div className="flex flex-wrap gap-1.5">
+                            <Button size="sm" onClick={() => continueToBooking(a.id)} disabled={busy === `booking-${a.id}`} data-testid={`continue-to-booking-${a.id}`}>
+                              {alreadyBooked ? 'Open existing booking' : 'Continue to Booking'}
+                            </Button>
+                            {!alreadyBooked && !sufficient && knownPrice && knownCap && (
+                              <Button size="sm" variant="outline" onClick={fundCommitment} disabled={busy === 'commitment'} data-testid={`topup-commitment-${a.id}`}>
+                                Top Up Commitment
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </td>
               </tr>

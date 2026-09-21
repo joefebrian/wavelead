@@ -1265,3 +1265,76 @@ describe('M19 §7 LEGACY pre-M19 campaigns — NO GRANDFATHERING', () => {
     expect(svc).not.toMatch(/legacy_(grant|waiver)|skip_commitment|grandfather(ed)?\s*=/i);
   });
 });
+
+describe('M19.1 §8 — CAPACITY WARNING (display-only pre-booking UX)', () => {
+  const ui = () => src('app/dashboard/campaigns/[id]/CampaignDetailClient.tsx');
+  const svc = () => src('lib/services/brandCampaignService.ts');
+
+  it('8.1 the per-applicant capacity preview markup exists on the approved-creator row', () => {
+    const s = ui();
+    expect(s).toContain('data-testid={`capacity-preview-${a.id}`}');
+    expect(s).toContain("data-capacity-state={sufficient ? 'sufficient' : 'shortfall'}");
+    expect(s).toContain('Creator Booking Price:');
+    expect(s).toContain('Available Funded Capacity:');
+  });
+
+  it('8.2 both branches (sufficient vs shortfall) render distinct copy', () => {
+    const s = ui();
+    expect(s).toContain('Available funded capacity is sufficient.');
+    expect(s).toContain('Additional Campaign Commitment is required before this booking can be created.');
+    expect(s).toContain('Additional Commitment / Capacity Needed:');
+    expect(s).toContain('data-testid={`capacity-needed-${a.id}`}');
+  });
+
+  it('8.3 the shortfall branch offers a Top Up Commitment CTA that reuses fundCommitment (no auto-payment)', () => {
+    const s = ui();
+    expect(s).toContain('data-testid={`topup-commitment-${a.id}`}');
+    // The button uses the EXISTING fundCommitment handler — no new payment path is introduced by the polish.
+    expect(s).toMatch(/onClick=\{fundCommitment\}/);
+    // No auto-top-up: the click is user-initiated only. No useEffect starts a payment.
+    expect(s).not.toMatch(/useEffect\([^)]*fundCommitment\s*\(\s*\)/);
+  });
+
+  it('8.4 the preview honours the display-only contract and reminds the operator the server is authoritative', () => {
+    const s = ui();
+    expect(s).toContain('DISPLAY ONLY');
+    expect(s).toContain('Server-side authority still applies at booking creation.');
+    // Enforcement still lives in the service, not the client.
+    expect(svc()).toContain('assertNewObligationAllowed');
+  });
+
+  it('8.5 the shortfall math is computed from server-supplied commitment fields — no client-side rule redefinition', () => {
+    const s = ui();
+    // Uses the same fields the /commitment endpoint returns.
+    expect(s).toContain('commitment?.available_funded_capacity_minor');
+    expect(s).toContain('a.proposed_rate_usd_minor');
+    // Does NOT hardcode the 5% rule, budget snapshot or funded_campaign_limit on the client.
+    expect(s).not.toMatch(/0\.05\b|\*\s*0\.05|\/\s*20\b/);
+    expect(s).not.toMatch(/commitment_percent\s*:\s*\d/);
+  });
+
+  it('8.6 the preview is suppressed for applicants that already have a marketplace booking', () => {
+    const s = ui();
+    expect(s).toContain('const alreadyBooked = !!a.marketplace_order_id;');
+    expect(s).toContain('!alreadyBooked && knownPrice && knownCap');
+  });
+
+  it('8.7 server-side funded-capacity gate remains the sole authority (unchanged surface)', () => {
+    const s = svc();
+    // The single gate that enforces the funded-capacity limit at booking creation.
+    expect(s).toContain('assertNewObligationAllowed');
+    // Neither the client polish nor a new bypass exists.
+    expect(s).not.toMatch(/skip_capacity_check|bypass_funded_limit|client_capacity_ok/i);
+  });
+
+  it('8.8 the polish does not touch financial constants (5% / 90-10 / provider abstraction)', () => {
+    const commitmentSvc = src('lib/services/payments/campaignCommitmentService.ts');
+    expect(commitmentSvc).toMatch(/COMMITMENT_PERCENT\s*=\s*5\b/);
+    const marketplace = src('lib/services/marketplaceService.ts');
+    // The 90/10 split lives in the marketplace fee service; the polish must not have redefined it here.
+    expect(marketplace).not.toMatch(/wavelead_fee_percent\s*[:=]\s*(?!10\b)\d+/i);
+    // Provider is still abstracted behind the factory.
+    expect(src('lib/services/payments/providerFactory.ts')).toContain('getPaymentProvider');
+  });
+});
+
