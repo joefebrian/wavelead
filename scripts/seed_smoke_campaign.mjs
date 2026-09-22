@@ -26,6 +26,18 @@ if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
   process.exit(2);
 }
 
+// M19.2 correction — mirror the canonical server-authoritative helper from
+// lib/services/payments/campaignCommitmentService.ts (COMMITMENT_PERCENT=5,
+// Math.ceil so we never under-collect). Copy of the exact formula, verified by
+// the regression test in tests/m19_2_polish.test.ts so the fixture and the
+// production helper can never drift.
+const COMMITMENT_PERCENT = 5;
+function requiredCommitmentMinor(budgetMinor) {
+  const b = Number(budgetMinor);
+  if (!Number.isFinite(b) || b <= 0) return 0;
+  return Math.ceil((b * COMMITMENT_PERCENT) / 100);
+}
+
 const LABEL = '[SMOKE-TEST · INTERNAL · DO NOT USE]';
 const BRAND_EMAIL = 'wl-smoke-brand@wavelead.dev';
 const CAMPAIGN_NAME = `${LABEL} M19.2 Smoke Campaign`;
@@ -80,6 +92,10 @@ if (!campaign) {
 // NO real money, NO fake capture id from PayPal). Marked provider='qa-fixture'.
 const already = await db.collection('brand_campaign_commitments').findOne({ campaign_id: campaign.id, status: 'captured' });
 if (!already) {
+  // Canonical (server-authoritative) commitment amount. Fixture and prod must
+  // never disagree — a regression test asserts $5,000 → $250 and the general
+  // integer-safe Math.ceil((budget × COMMITMENT_PERCENT) / 100) contract.
+  const requiredMinor = requiredCommitmentMinor(campaign.budget_total_usd_minor);
   await db.collection('brand_campaign_commitments').insertOne({
     id: randomUUID(),
     campaign_id: campaign.id,
@@ -90,10 +106,10 @@ if (!already) {
     provider_capture_id: `smoke-cap-${randomUUID()}`,
     currency: 'USD',
     campaign_budget_snapshot_minor: campaign.budget_total_usd_minor,
-    commitment_percent: 5,
-    required_commitment_amount_minor: Math.round(campaign.budget_total_usd_minor * 5 / 100),
-    amount_minor: Math.round(campaign.budget_total_usd_minor * 5 / 100),
-    captured_amount_minor: Math.round(campaign.budget_total_usd_minor * 5 / 100),
+    commitment_percent: COMMITMENT_PERCENT,
+    required_commitment_amount_minor: requiredMinor,
+    amount_minor: requiredMinor,
+    captured_amount_minor: requiredMinor,
     refunded_amount_minor: 0,
     refund_refs: [],
     finalization_mismatch: null,

@@ -1,16 +1,21 @@
 'use client';
-// M19.2 — Public support widget (bottom-right).
+// M19.2 correction — Public support widget (bottom-right).
 //
 // UX contract:
 //   • Launcher button at bottom-right (fixed). Clicking opens a compact panel.
-//   • If the visitor has no active ticket in localStorage, they see a start
-//     form (email + first message). Once created, the panel switches to the
-//     chat thread view.
-//   • Server replies land on the next poll (2s while panel is open). Messages
+//   • If the visitor has no active thread (no HttpOnly guest cookie present),
+//     they see the start form (email + first message). Once created, the
+//     panel switches to the chat thread view.
+//   • Server replies land on the next poll (3 s while panel is open). Messages
 //     are plain text.
-//   • No PII beyond what the visitor provides. No analytics ping from here.
-//   • Never rendered on /admin routes (root layout branches).
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+//   • PRIVACY (M19.2 correction §5):
+//       - The guest access token is stored ONLY in a server-managed HttpOnly
+//         cookie. It is never read by page JS, page URLs, logs or analytics.
+//       - No support content (email, name, body, ticket id, thread URL) is
+//         ever sent to GA4. The only optional signal is a coarse "widget
+//         opened" event, gated by explicit analytics consent.
+//   • Never rendered on /admin routes.
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { MessageCircle, X, Send, Loader2 } from 'lucide-react';
 
@@ -20,32 +25,12 @@ interface Message {
 }
 interface TicketSummary { id: string; status: string; subject: string | null; requester_email: string; }
 
-const STORAGE_KEY = 'wl_support_ticket_v1';
-type Stored = { id: string; token: string; email: string; created_at: string };
-
-function loadStored(): Stored | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const p = JSON.parse(raw) as Stored;
-    return (p && p.id && p.token) ? p : null;
-  } catch { return null; }
-}
-function saveStored(s: Stored | null): void {
-  if (typeof window === 'undefined') return;
-  try {
-    if (s) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
-    else window.localStorage.removeItem(STORAGE_KEY);
-  } catch { /* private-mode ignore */ }
-}
-
 export default function SupportWidget() {
   const pathname = usePathname() || '';
   // Never render inside admin.
   const shouldRender = !pathname.startsWith('/admin');
   const [open, setOpen] = useState(false);
-  const [stored, setStored] = useState<Stored | null>(null);
+  const [ticketId, setTicketId] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [firstMsg, setFirstMsg] = useState('');
   const [reply, setReply] = useState('');
@@ -57,37 +42,50 @@ export default function SupportWidget() {
   const [unread, setUnread] = useState(0);
   const listRef = useRef<HTMLDivElement | null>(null);
 
+  // Load: check whether the browser holds an active guest cookie.
   useEffect(() => {
     if (!shouldRender) return;
-    setStored(loadStored());
-    fetch('/api/auth/me', { credentials: 'include' })
-      .then((r) => r.ok ? r.json() : null)
-      .then((j) => setMeEmail(j?.data?.user?.email ?? null))
-      .catch(() => setMeEmail(null));
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/support/session', { credentials: 'include' });
+        const j = await r.json();
+        if (!cancelled && r.ok && j?.ok) setTicketId(j.data.ticket_id || null);
+      } catch { /* ignore */ }
+      try {
+        const rm = await fetch('/api/auth/me', { credentials: 'include' });
+        if (!cancelled && rm.ok) {
+          const jm = await rm.json();
+          setMeEmail(jm?.data?.user?.email ?? null);
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
   }, [shouldRender]);
 
-  const authQS = useMemo(() => (stored?.token ? `?token=${encodeURIComponent(stored.token)}` : ''), [stored?.token]);
-
   const fetchThread = useCallback(async () => {
-    if (!stored?.id) return;
+    if (!ticketId) return;
     try {
-      const r = await fetch(`/api/support/tickets/${stored.id}${authQS}`, { credentials: 'include' });
+      const r = await fetch(`/api/support/tickets/${ticketId}`, { credentials: 'include' });
       const j = await r.json();
-      if (!r.ok || !j?.ok) { if (r.status === 404 || r.status === 403) { saveStored(null); setStored(null); } return; }
+      if (!r.ok || !j?.ok) {
+        // Server auto-clears a stale cookie; drop the state so the start-form re-appears.
+        if (r.status === 403 || r.status === 404) setTicketId(null);
+        return;
+      }
       setTicket(j.data.ticket);
       setMessages(j.data.messages);
-      // Update unread indicator from server response.
       setUnread(0);
     } catch { /* swallow */ }
-  }, [stored?.id, authQS]);
+  }, [ticketId]);
 
-  // Lightweight unread poll when panel closed but ticket exists.
+  // Unread poll (open ⇒ 2.5 s, closed ⇒ 20 s).
   useEffect(() => {
-    if (!shouldRender || !stored?.id) return;
+    if (!shouldRender || !ticketId) return;
     let alive = true;
     async function tick() {
       try {
-        const r = await fetch(`/api/support/tickets/${stored!.id}/unread${authQS}`, { credentials: 'include' });
+        const r = await fetch(`/api/support/tickets/${ticketId}/unread`, { credentials: 'include' });
         const j = await r.json();
         if (alive && r.ok && j?.ok) setUnread(Number(j.data?.unread_by_user) || 0);
       } catch { /* ignore */ }
@@ -95,18 +93,20 @@ export default function SupportWidget() {
     void tick();
     const iv = window.setInterval(tick, open ? 2500 : 20_000);
     return () => { alive = false; window.clearInterval(iv); };
-  }, [shouldRender, stored?.id, authQS, open]);
+  }, [shouldRender, ticketId, open]);
 
-  // Load thread when panel opens.
-  useEffect(() => { if (open && stored?.id) void fetchThread(); }, [open, stored?.id, fetchThread]);
-  // Poll for new admin replies while panel open.
+  useEffect(() => { if (open && ticketId) void fetchThread(); }, [open, ticketId, fetchThread]);
   useEffect(() => {
-    if (!open || !stored?.id) return;
+    if (!open || !ticketId) return;
     const iv = window.setInterval(() => { void fetchThread(); }, 3000);
     return () => window.clearInterval(iv);
-  }, [open, stored?.id, fetchThread]);
-  // Scroll thread to bottom on new messages.
+  }, [open, ticketId, fetchThread]);
   useEffect(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages.length, open]);
+
+  // M19.2 correction §5 — No support content is ever sent to GA4. We do not
+  // emit any event from this widget: no email, no name, no ticket id, no
+  // access token, no thread URL, no body, no aggregate signal. GA4 stays
+  // untouched by the support surface.
 
   async function createTicket(e: React.FormEvent) {
     e.preventDefault(); setErr(null); setBusy(true);
@@ -120,17 +120,20 @@ export default function SupportWidget() {
       });
       const j = await r.json();
       if (!r.ok || !j?.ok) throw new Error(typeof j?.error === 'string' ? j.error : 'Could not open support ticket');
-      const s: Stored = { id: j.data.ticket.id, token: j.data.access_token, email: useEmail, created_at: j.data.ticket.created_at };
-      saveStored(s); setStored(s); setFirstMsg(''); setEmail('');
+      // The server has just set the HttpOnly guest cookie. The client only
+      // needs to know the (non-sensitive) ticket id so it can hit the read/
+      // write endpoints for THIS thread.
+      setTicketId(j.data.ticket.id);
+      setFirstMsg(''); setEmail('');
       setTicket(j.data.ticket); setMessages([j.data.message]);
     } catch (e2) { setErr((e2 as Error).message); } finally { setBusy(false); }
   }
 
   async function sendReply(e: React.FormEvent) {
-    e.preventDefault(); setErr(null); if (!stored?.id) return; const body = reply.trim(); if (!body) return;
+    e.preventDefault(); setErr(null); if (!ticketId) return; const body = reply.trim(); if (!body) return;
     setBusy(true);
     try {
-      const r = await fetch(`/api/support/tickets/${stored.id}/messages${authQS}`, {
+      const r = await fetch(`/api/support/tickets/${ticketId}/messages`, {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ body }),
       });
@@ -141,7 +144,11 @@ export default function SupportWidget() {
     } catch (e2) { setErr((e2 as Error).message); } finally { setBusy(false); }
   }
 
-  function startNew() { saveStored(null); setStored(null); setTicket(null); setMessages([]); setErr(null); }
+  async function startNew() {
+    // Clear the guest cookie server-side and reset local UI.
+    try { await fetch('/api/support/session', { method: 'DELETE', credentials: 'include' }); } catch { /* ignore */ }
+    setTicketId(null); setTicket(null); setMessages([]); setErr(null);
+  }
 
   if (!shouldRender) return null;
 
@@ -174,7 +181,7 @@ export default function SupportWidget() {
             <button className="text-muted-foreground hover:text-foreground" onClick={() => setOpen(false)} aria-label="Close"><X className="h-4 w-4" /></button>
           </div>
 
-          {!stored?.id ? (
+          {!ticketId ? (
             <form onSubmit={createTicket} className="p-4 space-y-3" data-testid="support-start-form">
               {!meEmail && (
                 <label className="block text-xs font-semibold">Your email
@@ -226,7 +233,7 @@ export default function SupportWidget() {
                     </button>
                   </div>
                   <div className="mt-2 flex items-center justify-between">
-                    <span className="text-[11px] text-muted-foreground">Ticket #{ticket?.id.slice(0, 8) || stored.id.slice(0, 8)} · {ticket?.status || 'awaiting_admin'}</span>
+                    <span className="text-[11px] text-muted-foreground">Ticket #{ticket?.id.slice(0, 8) || (ticketId || '').slice(0, 8)} · {ticket?.status || 'awaiting_admin'}</span>
                     <button type="button" onClick={startNew} className="text-[11px] text-muted-foreground underline">Start new</button>
                   </div>
                 </form>

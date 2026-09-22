@@ -2336,28 +2336,54 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const rl = rateLimit(clientKey(request, 'support-create'), 5, 60_000);
       if (!rl.allowed) return applyCors(fail(429, 'Too many support requests, please slow down', { retryAfter: rl.retryAfterSeconds }), request);
       const { supportService, stripInternal } = await import('@/lib/services/supportService');
+      const { setSupportGuestCookie } = await import('@/lib/auth/supportCookie');
       const actor = await resolveActor(request);
       const body = (await request.json().catch(() => ({}))) as { email?: string; name?: string; subject?: string; body?: string };
       const r = await supportService.createTicket(actor, { email: body.email, name: body.name, subject: body.subject, body: String(body.body || '') });
-      // Return the token exactly ONCE (creation response); it is never re-fetchable.
-      return applyCors(ok({ ticket: stripInternal(r.ticket), message: r.message, access_token: r.access_token }), request);
+      // Server-managed HttpOnly cookie for guest access. Token is NOT returned
+      // to the client — it must never appear in page JS, page URLs, logs or
+      // GA4. Authenticated users can reach the same thread via ownership.
+      const okResp = applyCors(ok({ ticket: stripInternal(r.ticket), message: r.message }), request);
+      return setSupportGuestCookie(okResp, r.ticket.id, r.access_token);
     }
-    // Requester read (token OR authed owner). GET only.
+    // Server-side session probe: does the browser hold an active guest cookie?
+    // Returns only the (non-sensitive) ticket id; never the token. Authenticated
+    // users are treated as anonymous here — they always know their own ticket
+    // via /api/support/tickets/:id direct access.
+    if (route === '/support/session' && method === 'GET') {
+      const { readSupportGuestCookie } = await import('@/lib/auth/supportCookie');
+      const c = readSupportGuestCookie(request);
+      return applyCors(ok({ ticket_id: c?.ticketId ?? null }), request);
+    }
+    // Requester read — cookie OR authed owner. GET only. No ?token= query.
     if (path.length === 3 && path[0] === 'support' && path[1] === 'tickets' && method === 'GET') {
       const { supportService, stripInternal } = await import('@/lib/services/supportService');
+      const { readSupportGuestCookie, clearSupportGuestCookie } = await import('@/lib/auth/supportCookie');
       const actor = await resolveActor(request);
-      const url = new URL(request.url);
-      const token = url.searchParams.get('token');
-      const { ticket, messages } = await supportService.getForRequester(path[2], actor, token);
-      return applyCors(ok({ ticket: stripInternal(ticket), messages }), request);
+      const c = readSupportGuestCookie(request);
+      // Only accept the cookie if it refers to THIS ticket id — no cross-ticket use.
+      const cookieToken = c && c.ticketId === path[2] ? c.token : null;
+      try {
+        const { ticket, messages } = await supportService.getForRequester(path[2], actor, cookieToken);
+        return applyCors(ok({ ticket: stripInternal(ticket), messages }), request);
+      } catch (e) {
+        // Auto-clear a stale cookie so the widget doesn't loop.
+        if (e instanceof (await import('@/lib/auth/rbac')).HttpError && (e.status === 403 || e.status === 404)) {
+          const failResp = applyCors(fail(e.status, e.message), request);
+          if (c && c.ticketId === path[2]) return clearSupportGuestCookie(failResp);
+          return failResp;
+        }
+        throw e;
+      }
     }
-    // Requester lightweight unread poll — same auth rules; returns only counters.
+    // Requester lightweight unread poll — same auth rules.
     if (path.length === 4 && path[0] === 'support' && path[1] === 'tickets' && path[3] === 'unread' && method === 'GET') {
       const { supportService } = await import('@/lib/services/supportService');
+      const { readSupportGuestCookie } = await import('@/lib/auth/supportCookie');
       const actor = await resolveActor(request);
-      const url = new URL(request.url);
-      const token = url.searchParams.get('token');
-      const { ticket } = await supportService.getForRequester(path[2], actor, token);
+      const c = readSupportGuestCookie(request);
+      const cookieToken = c && c.ticketId === path[2] ? c.token : null;
+      const { ticket } = await supportService.getForRequester(path[2], actor, cookieToken);
       return applyCors(ok({ unread_by_user: ticket.unread_by_user, status: ticket.status, last_message_at: ticket.last_message_at }), request);
     }
     // Requester append message.
@@ -2365,12 +2391,18 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const rl = rateLimit(clientKey(request, 'support-message'), 30, 60_000);
       if (!rl.allowed) return applyCors(fail(429, 'Too many messages, please slow down', { retryAfter: rl.retryAfterSeconds }), request);
       const { supportService } = await import('@/lib/services/supportService');
+      const { readSupportGuestCookie } = await import('@/lib/auth/supportCookie');
       const actor = await resolveActor(request);
-      const url = new URL(request.url);
-      const token = url.searchParams.get('token');
+      const c = readSupportGuestCookie(request);
+      const cookieToken = c && c.ticketId === path[2] ? c.token : null;
       const body = (await request.json().catch(() => ({}))) as { body?: string };
-      const message = await supportService.addRequesterMessage(path[2], actor, token, String(body.body || ''));
+      const message = await supportService.addRequesterMessage(path[2], actor, cookieToken, String(body.body || ''));
       return applyCors(ok({ message }), request);
+    }
+    // Requester ends their own thread — clears the HttpOnly cookie.
+    if (route === '/support/session' && method === 'DELETE') {
+      const { clearSupportGuestCookie } = await import('@/lib/auth/supportCookie');
+      return clearSupportGuestCookie(applyCors(ok({ cleared: true }), request));
     }
     // Admin surfaces.
     if (route === '/admin/support/tickets' && method === 'GET') {
