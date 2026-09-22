@@ -7,15 +7,20 @@
 // NEVER run against production. No payment provider is called: the captured
 // Campaign Commitment row is written directly into the LOCAL database.
 import { MongoClient } from 'mongodb';
-import { randomUUID } from 'node:crypto';
-import { writeFileSync, readFileSync } from 'node:fs';
+import { randomUUID, randomBytes } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 
 const BASE = 'http://localhost:3000';
 const MONGO = process.env.MONGO_URL || 'mongodb://localhost:27017';
 const DB = process.env.DB_NAME || 'wavelead';
 const STAMP = 'm19qa';
 
-const pw = (readFileSync('/dev/urandom').slice(0, 12).toString('base64').replace(/[^A-Za-z0-9]/g, '') + 'Aa1!').slice(0, 16);
+// QA-only credential generation. Uses crypto.randomBytes (finite read) instead
+// of readFileSync('/dev/urandom') which is a character device with no EOF and
+// therefore blocks the Node event loop indefinitely.
+const pw = (
+  randomBytes(12).toString('base64').replace(/[^A-Za-z0-9]/g, '') + 'Aa1!'
+).slice(0, 16);
 const brandEmail = `${STAMP}-brand@wavelead.dev`;
 const creatorEmail = `${STAMP}-creator@wavelead.dev`;
 const adminEmail = `${STAMP}-admin@wavelead.dev`;
@@ -25,6 +30,8 @@ async function api(path, body, cookie) {
     method: body ? 'POST' : 'GET',
     headers: { 'content-type': 'application/json', ...(cookie ? { cookie } : {}) },
     body: body ? JSON.stringify(body) : undefined,
+    // QA-only harness timeout so a single hung request cannot stall the fixture.
+    signal: AbortSignal.timeout(10_000),
   });
   const j = await r.json().catch(() => null);
   return { status: r.status, json: j, setCookie: r.headers.get('set-cookie') || '' };
