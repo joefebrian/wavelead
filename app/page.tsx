@@ -10,6 +10,7 @@ import SponsoredCard from '@/components/promo/SponsoredCard';
 import OwnerGrowthCta from '@/components/discovery/OwnerGrowthCta';
 import TopChannelsCountryPicker from '@/components/discovery/TopChannelsCountryPicker';
 import { discoveryService, type CategoryWithCount, type CountryWithCount } from '@/lib/services/discoveryService';
+import { categoryVisual } from '@/lib/constants/categoryIcons';
 import { COLLECTIONS as _NS } from '@/lib/db/collections';
 import { COLLECTIONS as EDITORIAL_COLLECTIONS } from '@/lib/constants/discovery-collections';
 import Link from 'next/link';
@@ -138,17 +139,22 @@ export default async function HomePage() {
             cta="View all categories"
           />
           <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
-            {topCategories.map((cat) => (
-              <Link key={cat.id} href={`/category/${cat.slug}`} className="wh-card p-4">
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 shrink-0 grid place-items-center rounded-lg bg-primary/10 text-primary text-lg font-bold">{cat.name.charAt(0)}</div>
-                  <div className="min-w-0">
-                    <div className="font-semibold text-sm truncate">{cat.name}</div>
-                    <div className="text-xs text-muted-foreground">{cat.channel_count} {cat.channel_count === 1 ? 'channel' : 'channels'}</div>
+            {topCategories.map((cat) => {
+              const { icon: Icon, accent } = categoryVisual(cat.slug, cat.name);
+              return (
+                <Link key={cat.id} href={`/category/${cat.slug}`} className="wh-card group p-4 transition-colors hover:border-primary/40" data-testid={`home-category-card-${cat.slug}`}>
+                  <div className="flex items-center gap-3">
+                    <div className={`h-10 w-10 shrink-0 grid place-items-center rounded-lg ${accent} transition-transform group-hover:scale-105`}>
+                      <Icon className="h-5 w-5" aria-hidden="true" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-semibold text-sm truncate group-hover:text-primary">{cat.name}</div>
+                      <div className="text-xs text-muted-foreground">{cat.channel_count} {cat.channel_count === 1 ? 'channel' : 'channels'}</div>
+                    </div>
                   </div>
-                </div>
-              </Link>
-            ))}
+                </Link>
+              );
+            })}
           </div>
         </section>
 

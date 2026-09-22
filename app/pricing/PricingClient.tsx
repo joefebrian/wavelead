@@ -353,38 +353,46 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
                 </li>
               ))}
             </ul>
-            <div className="mt-6">
+            <div className="mt-6 flex flex-col gap-2">
               {tier.kind === 'brand_free' && (
-                <Button className="w-full" variant="outline" onClick={handleFree} disabled={!meLoaded} data-testid="cta-brand-free">{tier.cta}</Button>
+                <Button className="w-full h-11 text-base font-semibold" variant="outline" onClick={handleFree} disabled={!meLoaded} data-testid="cta-brand-free">{tier.cta}</Button>
               )}
               {tier.kind === 'brand_pro' && (
-                <>
-                  <Button className="w-full" onClick={startBrandProCheckout} disabled={brandProBusy || !meLoaded} data-testid="cta-brand-pro">
-                    {brandProBusy ? 'Starting…' : tier.cta}
-                  </Button>
-                  {brandProErr && <div className="mt-2 text-xs text-rose-600" data-testid="brand-pro-error">{brandProErr}</div>}
-                  <p className="mt-2 text-[11px] text-muted-foreground" data-testid="brand-pro-renewal-note">
-                    One $15 payment gives 30 days of Brand Pro. Renewal is manual during Founding Beta — PayPal will not charge you automatically.
-                  </p>
-                </>
+                <Button className="w-full h-11 text-base font-semibold" onClick={startBrandProCheckout} disabled={brandProBusy || !meLoaded} data-testid="cta-brand-pro">
+                  {brandProBusy ? 'Starting…' : tier.cta}
+                </Button>
               )}
               {tier.kind === 'brand_founding_lifetime' && (
                 lifetimeAlreadyActive ? (
-                  <Button className="w-full" variant="outline" disabled data-testid="cta-brand-founding-lifetime-active">Founding Lifetime active</Button>
+                  <Button className="w-full h-11 text-base font-semibold" variant="outline" disabled data-testid="cta-brand-founding-lifetime-active">Founding Lifetime active</Button>
                 ) : (
                   /* M17.1 — ALWAYS the real purchase CTA. No reservation form,
                      no waitlist, no name/email lead capture in the purchase
                      path. If the server refuses (checkout not enabled for the
                      current environment) we surface that truthfully instead of
                      silently swapping in a lead form. */
-                  <Button className="w-full" onClick={startFoundingLifetimeCheckout} disabled={lifetimeBusy || !meLoaded} data-testid="cta-brand-founding-lifetime-checkout">
+                  <Button className="w-full h-11 text-base font-semibold" onClick={startFoundingLifetimeCheckout} disabled={lifetimeBusy || !meLoaded} data-testid="cta-brand-founding-lifetime-checkout">
                     {lifetimeBusy ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Opening PayPal…</> : tier.cta}
                   </Button>
                 )
               )}
               {tier.kind === 'enterprise' && (
-                <Button className="w-full" variant="outline" onClick={() => setEntOpen(true)} data-testid="cta-enterprise">{tier.cta}</Button>
+                <Button className="w-full h-11 text-base font-semibold" variant="outline" onClick={() => setEntOpen(true)} data-testid="cta-enterprise">{tier.cta}</Button>
               )}
+              {/* Footnote row — reserved height across ALL cards so the
+                  Start-Brand-Pro-$15 and Get-Founding-Lifetime-$100 CTA
+                  buttons align on the same horizontal baseline regardless of
+                  which cards carry a per-card note. */}
+              <div className="min-h-[64px] text-[11px] text-muted-foreground" data-testid={`pricing-footnote-${tier.kind}`}>
+                {tier.kind === 'brand_pro' && brandProErr && (
+                  <div className="mb-1 text-rose-600" data-testid="brand-pro-error">{brandProErr}</div>
+                )}
+                {tier.kind === 'brand_pro' && (
+                  <p data-testid="brand-pro-renewal-note">
+                    One $15 payment gives 30 days of Brand Pro. Renewal is manual during Founding Beta — PayPal will not charge you automatically.
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         ))}

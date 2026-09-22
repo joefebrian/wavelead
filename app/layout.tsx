@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import ConsentBanner from '@/components/consent/ConsentBanner';
 import AnalyticsAutoPageView from '@/components/consent/AnalyticsAutoPageView';
 import GoogleAnalytics from '@/components/analytics/GoogleAnalytics';
+import SupportWidget from '@/components/support/SupportWidget';
 import { JsonLd, organizationSchema, webSiteSchema } from '@/lib/seo/structuredData';
 
 export const metadata: Metadata = {
@@ -50,6 +51,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <AnalyticsAutoPageView />
           {/* M17 — GA4, mounted but inert until analytics consent is granted. */}
           <GoogleAnalytics />
+          {/* M19.2 — Support chat widget. Never renders inside /admin. */}
+          <SupportWidget />
           <Toaster richColors position="top-right" />
         </Providers>
       </body>

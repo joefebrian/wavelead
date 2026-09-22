@@ -1,0 +1,6 @@
+# PREVIEW ONLY — M19.2 smoke campaign fixture (never production, never a real payment)
+campaign_id: 2f506138-2fdd-43d2-b7ec-f8a29d21d5ad
+campaign_name: [SMOKE-TEST · INTERNAL · DO NOT USE] M19.2 Smoke Campaign
+brand_email: wl-smoke-brand@wavelead.dev
+brand_password: FfPe7CrhbSdok2wk
+provider_marker: qa-fixture (no real PayPal call)

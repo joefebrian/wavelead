@@ -86,6 +86,11 @@ export const COLLECTIONS = {
   BRAND_PRO_MEMBERSHIPS: 'brand_pro_memberships',
   // M17 — PRIVATE Owner Identity Profile (Fast Verification). Never public.
   OWNER_IDENTITY_PROFILES: 'owner_identity_profiles',
+  // M19.2 — In-product Support Inbox. Thread-based chat: one ticket per
+  //          conversation, append-only messages. Public visitors can open a
+  //          ticket via the widget; admins reply from /admin/support.
+  SUPPORT_TICKETS: 'support_tickets',
+  SUPPORT_MESSAGES: 'support_messages',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

@@ -124,6 +124,7 @@ export const ADMIN_NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/admin/commercial-leads', label: 'Commercial Leads', icon: 'Mails', min_role: 'admin' },
       { href: '/admin/pricing', label: 'Pricing', icon: 'Tag', min_role: 'admin' },
+      { href: '/admin/support', label: 'Support Inbox', icon: 'MessageCircle', min_role: 'admin' },
     ],
   },
   {

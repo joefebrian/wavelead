@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Inbox, KeyRound, ShieldAlert, LayoutList, Megaphone, DollarSign, Wallet, TrendingUp, Activity, Handshake, Users, Cog, Store, ImageIcon, Tag, ShieldCheck } from 'lucide-react';
+import { Inbox, KeyRound, ShieldAlert, LayoutList, Megaphone, DollarSign, Wallet, TrendingUp, Activity, Handshake, Users, Cog, Store, ImageIcon, Tag, ShieldCheck, MessageCircle } from 'lucide-react';
 
 interface Item { href: string; label: string; icon: React.ReactNode; }
 
@@ -22,6 +22,7 @@ const ITEMS: Item[] = [
   { href: '/admin/fx-rates', label: 'FX', icon: <DollarSign className="h-3.5 w-3.5" /> },
   { href: '/admin/users', label: 'Users', icon: <Users className="h-3.5 w-3.5" /> },
   { href: '/admin/settings/paypal', label: 'PayPal Settings', icon: <Cog className="h-3.5 w-3.5" /> },
+  { href: '/admin/support', label: 'Support', icon: <MessageCircle className="h-3.5 w-3.5" /> },
 ];
 
 export default function AdminNav({ active }: { active?: string }) {

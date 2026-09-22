@@ -2330,6 +2330,92 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok(r), request);
     }
 
+    // ---------- M19.2 SUPPORT INBOX ----------
+    // Public: open a ticket (auth optional). Rate-limited by IP/actor.
+    if (route === '/support/tickets' && method === 'POST') {
+      const rl = rateLimit(clientKey(request, 'support-create'), 5, 60_000);
+      if (!rl.allowed) return applyCors(fail(429, 'Too many support requests, please slow down', { retryAfter: rl.retryAfterSeconds }), request);
+      const { supportService, stripInternal } = await import('@/lib/services/supportService');
+      const actor = await resolveActor(request);
+      const body = (await request.json().catch(() => ({}))) as { email?: string; name?: string; subject?: string; body?: string };
+      const r = await supportService.createTicket(actor, { email: body.email, name: body.name, subject: body.subject, body: String(body.body || '') });
+      // Return the token exactly ONCE (creation response); it is never re-fetchable.
+      return applyCors(ok({ ticket: stripInternal(r.ticket), message: r.message, access_token: r.access_token }), request);
+    }
+    // Requester read (token OR authed owner). GET only.
+    if (path.length === 3 && path[0] === 'support' && path[1] === 'tickets' && method === 'GET') {
+      const { supportService, stripInternal } = await import('@/lib/services/supportService');
+      const actor = await resolveActor(request);
+      const url = new URL(request.url);
+      const token = url.searchParams.get('token');
+      const { ticket, messages } = await supportService.getForRequester(path[2], actor, token);
+      return applyCors(ok({ ticket: stripInternal(ticket), messages }), request);
+    }
+    // Requester lightweight unread poll — same auth rules; returns only counters.
+    if (path.length === 4 && path[0] === 'support' && path[1] === 'tickets' && path[3] === 'unread' && method === 'GET') {
+      const { supportService } = await import('@/lib/services/supportService');
+      const actor = await resolveActor(request);
+      const url = new URL(request.url);
+      const token = url.searchParams.get('token');
+      const { ticket } = await supportService.getForRequester(path[2], actor, token);
+      return applyCors(ok({ unread_by_user: ticket.unread_by_user, status: ticket.status, last_message_at: ticket.last_message_at }), request);
+    }
+    // Requester append message.
+    if (path.length === 4 && path[0] === 'support' && path[1] === 'tickets' && path[3] === 'messages' && method === 'POST') {
+      const rl = rateLimit(clientKey(request, 'support-message'), 30, 60_000);
+      if (!rl.allowed) return applyCors(fail(429, 'Too many messages, please slow down', { retryAfter: rl.retryAfterSeconds }), request);
+      const { supportService } = await import('@/lib/services/supportService');
+      const actor = await resolveActor(request);
+      const url = new URL(request.url);
+      const token = url.searchParams.get('token');
+      const body = (await request.json().catch(() => ({}))) as { body?: string };
+      const message = await supportService.addRequesterMessage(path[2], actor, token, String(body.body || ''));
+      return applyCors(ok({ message }), request);
+    }
+    // Admin surfaces.
+    if (route === '/admin/support/tickets' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const { rankOf, ROLES } = await import('@/lib/auth/rbac');
+      if (!actor || rankOf(actor.user.role) < rankOf(ROLES.ADMIN)) return applyCors(fail(403, 'Admin privileges required'), request);
+      const { supportService, stripInternal } = await import('@/lib/services/supportService');
+      const url = new URL(request.url);
+      const raw = (url.searchParams.get('status') || 'all') as 'all' | 'open' | 'awaiting_admin' | 'awaiting_user' | 'closed';
+      const items = await supportService.adminListTickets({ status: raw });
+      const stats = await supportService.adminStats();
+      return applyCors(ok({ items: items.map(stripInternal), stats }), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'support' && path[2] === 'tickets' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const { rankOf, ROLES } = await import('@/lib/auth/rbac');
+      if (!actor || rankOf(actor.user.role) < rankOf(ROLES.ADMIN)) return applyCors(fail(403, 'Admin privileges required'), request);
+      const { supportService, stripInternal } = await import('@/lib/services/supportService');
+      const { ticket, messages } = await supportService.adminGetTicket(path[3]);
+      return applyCors(ok({ ticket: stripInternal(ticket), messages }), request);
+    }
+    if (path.length === 5 && path[0] === 'admin' && path[1] === 'support' && path[2] === 'tickets' && path[4] === 'messages' && method === 'POST') {
+      const actor = await resolveActor(request);
+      const { rankOf, ROLES } = await import('@/lib/auth/rbac');
+      if (!actor || rankOf(actor.user.role) < rankOf(ROLES.ADMIN)) return applyCors(fail(403, 'Admin privileges required'), request);
+      const { supportService, stripInternal } = await import('@/lib/services/supportService');
+      const body = (await request.json().catch(() => ({}))) as { body?: string };
+      const message = await supportService.adminReply(actor, path[3], String(body.body || ''));
+      const { ticket } = await supportService.adminGetTicket(path[3]);
+      return applyCors(ok({ message, ticket: stripInternal(ticket) }), request);
+    }
+    if (path.length === 5 && path[0] === 'admin' && path[1] === 'support' && path[2] === 'tickets' && path[4] === 'status' && method === 'POST') {
+      const actor = await resolveActor(request);
+      const { rankOf, ROLES } = await import('@/lib/auth/rbac');
+      if (!actor || rankOf(actor.user.role) < rankOf(ROLES.ADMIN)) return applyCors(fail(403, 'Admin privileges required'), request);
+      const { supportService, stripInternal } = await import('@/lib/services/supportService');
+      const body = (await request.json().catch(() => ({}))) as { status?: string };
+      const next = body.status;
+      if (next !== 'open' && next !== 'awaiting_admin' && next !== 'awaiting_user' && next !== 'closed') {
+        return applyCors(fail(400, 'Unknown status'), request);
+      }
+      const ticket = await supportService.adminSetStatus(actor, path[3], next);
+      return applyCors(ok({ ticket: stripInternal(ticket) }), request);
+    }
+
     return applyCors(fail(404, `Route ${route} not found`), request);
   } catch (err) {
     return applyCors(handleServiceError(err), request);
