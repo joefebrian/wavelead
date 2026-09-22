@@ -89,6 +89,8 @@ credentials.json
 .credentials
 .next/cache/webpack/server-production/0.pack
 memory/qa_credentials_ephemeral.txt
+memory/smoke_campaign_ephemeral.txt
+memory/*_ephemeral.txt
 .next/cache/webpack/server-production/4.pack
 .next/cache/webpack/server-production/1.pack
 .next/cache/webpack/client-production/0.pack

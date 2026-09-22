@@ -184,10 +184,19 @@ describe('M18.1 Phase E weekly follower refresh', () => {
   });
   it('E5 the cron endpoint stays guarded and exposes the cadence', () => {
     const route = src('app/api/[[...path]]/route.ts');
+    const cronAuth = src('lib/auth/cronAuth.ts');
+    // Route still guards the cadence endpoint.
     expect(route).toContain("route === '/cron/whatsapp-refresh'");
-    expect(route).toContain('process.env.CRON_SECRET');
+    // SEC-005: guard moved to a constant-time helper. The route imports it,
+    // still reads the `x-cron-secret` header, and still emits the WEEKLY
+    // cadence in the response.
+    expect(route).toContain("verifyCronSecret");
     expect(route).toContain("request.headers.get('x-cron-secret')");
     expect(route).toContain('cadence_days: WEEKLY_STALE_DAYS');
+    // Helper is env-only, header-only, fail-closed on missing env, and uses
+    // crypto.timingSafeEqual — replaces the previous naive `!==` compare.
+    expect(cronAuth).toContain('process.env.CRON_SECRET');
+    expect(cronAuth).toContain('crypto.timingSafeEqual');
   });
 });
 

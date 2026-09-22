@@ -47,14 +47,42 @@ const nextConfig = {
   // IMPORTANT: no CORS wildcard here. The API layer (app/api/[[...path]]/route.ts)
   // applies a strict per-origin allowlist. Duplicating it here would either
   // conflict with, or override, that policy.
+  //
+  // Security hardening (SEC-002):
+  // - frame-ancestors 'none' + X-Frame-Options: DENY -> clickjacking protection
+  // - HSTS (no includeSubDomains, no preload) -> encrypted transport w/o forcing
+  //   unverified subdomains onto HTTPS
+  // - X-Content-Type-Options: nosniff -> disables MIME sniffing
+  // - Referrer-Policy: strict-origin-when-cross-origin -> minimum leakage
+  // - Permissions-Policy: conservative denies that do NOT break required
+  //   PayPal redirects, Google auth, GA4, support chat, or image loading.
   async headers() {
+    const securityHeaders = [
+      { key: 'X-Frame-Options', value: 'DENY' },
+      { key: 'Content-Security-Policy', value: "frame-ancestors 'none';" },
+      { key: 'Strict-Transport-Security', value: 'max-age=31536000' },
+      { key: 'X-Content-Type-Options', value: 'nosniff' },
+      { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+      {
+        key: 'Permissions-Policy',
+        value: [
+          'camera=()',
+          'microphone=()',
+          'geolocation=()',
+          'usb=()',
+          'magnetometer=()',
+          'gyroscope=()',
+          'accelerometer=()',
+          'payment=(self)',
+          'browsing-topics=()',
+          'interest-cohort=()',
+        ].join(', '),
+      },
+    ];
     return [
       {
         source: '/(.*)',
-        headers: [
-          { key: 'X-Frame-Options', value: 'ALLOWALL' },
-          { key: 'Content-Security-Policy', value: 'frame-ancestors *;' },
-        ],
+        headers: securityHeaders,
       },
     ];
   },

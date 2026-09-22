@@ -8,6 +8,7 @@ import { resolveActor, requireRole, ROLES } from '@/lib/auth/rbac';
 import { ok, fail, handleServiceError } from '@/lib/utils/response';
 import { applyCors } from '@/lib/utils/cors';
 import { rateLimit, clientKey } from '@/lib/auth/rateLimit';
+import { verifyCronSecret } from '@/lib/auth/cronAuth';
 import { getVersionInfo } from '@/lib/utils/version';
 
 async function safeJson(request: NextRequest): Promise<Record<string, unknown>> {
@@ -440,11 +441,11 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
     }
     // M14 — weekly auto-refresh entry point. Callable via platform scheduler.
     // Guarded by a shared secret header so a public HTTP hit cannot trigger it.
+    // SEC-005: constant-time comparison via lib/auth/cronAuth.verifyCronSecret.
     if (route === '/cron/whatsapp-refresh' && method === 'POST') {
-      const secret = process.env.CRON_SECRET;
-      if (!secret) return applyCors(fail(503, 'Scheduler not configured'), request);
-      const provided = request.headers.get('x-cron-secret') || '';
-      if (provided !== secret) return applyCors(fail(401, 'Unauthorized'), request);
+      const authz = verifyCronSecret(request.headers.get('x-cron-secret'));
+      if (authz === 'missing') return applyCors(fail(503, 'Scheduler not configured'), request);
+      if (authz !== 'ok') return applyCors(fail(401, 'Unauthorized'), request);
       const { whatsappRefreshService, WEEKLY_STALE_DAYS } = await import('@/lib/services/whatsappRefreshService');
       const body = await safeJson(request);
       // M18.1 Phase E — weekly cadence. Default staleAfterDays=7 makes the job
@@ -1750,9 +1751,10 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       return applyCors(ok(await brandProService.adminReport(actor)), request);
     }
     if (route === '/cron/brand-pro-maintenance' && method === 'POST') {
-      const secret = process.env.CRON_SECRET;
-      if (!secret) return applyCors(fail(503, 'Scheduler not configured'), request);
-      if ((request.headers.get('x-cron-secret') || '') !== secret) return applyCors(fail(401, 'Unauthorized'), request);
+      // SEC-005: constant-time comparison via lib/auth/cronAuth.verifyCronSecret.
+      const authz = verifyCronSecret(request.headers.get('x-cron-secret'));
+      if (authz === 'missing') return applyCors(fail(503, 'Scheduler not configured'), request);
+      if (authz !== 'ok') return applyCors(fail(401, 'Unauthorized'), request);
       const { brandProService } = await import('@/lib/services/brandProService');
       const expired = await brandProService.expireOverdue();
       const reminders = await brandProService.sendExpiryReminders();
