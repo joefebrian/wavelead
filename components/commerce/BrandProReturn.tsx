@@ -6,8 +6,12 @@
 // return. This component asks the server to capture. The BROWSER RETURN GRANTS
 // NOTHING: brandProService only grants a 30-day term when PayPal confirms the
 // capture (internal_status === 'paid').
+//
+// M19.3 — this handler intentionally emits NO GA4 payment-success event. GA4
+// is not the financial source of truth; revenue reconciliation stays in
+// WaveLead Reports / Admin. The pricing page still tracks the checkout INTENT
+// event (brand_pro_checkout_started).
 import { useEffect, useState } from 'react';
-import { ga4Track } from '@/components/analytics/GoogleAnalytics';
 
 export default function BrandProReturn() {
   const [phase, setPhase] = useState<'idle' | 'working' | 'active' | 'pending' | 'error'>('idle');
@@ -37,7 +41,6 @@ export default function BrandProReturn() {
         const plan = j?.data?.state?.membership?.plan;
         const end = j?.data?.state?.membership?.period_end_at;
         if (plan === 'brand_pro') {
-          ga4Track('brand_pro_activated');
           setPhase('active');
           setDetail(end ? `Brand Pro is active until ${new Date(end).toLocaleDateString()}. Renewal is manual — PayPal will not charge you automatically.` : 'Brand Pro is active.');
         } else {

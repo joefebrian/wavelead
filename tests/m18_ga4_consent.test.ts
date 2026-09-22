@@ -76,10 +76,14 @@ describe('M18-GA4 §2 accept, reject, revoke', () => {
     expect(GA).toContain("window.addEventListener('wl-consent-changed', onChange)");
     // Consent update fires on every change of `granted`, in the same tick.
     expect(GA).toContain("window.gtag('consent', 'update', { analytics_storage: granted ? 'granted' : 'denied' })");
-    // gtag.js stays resident after unmount → the event helper must also gate.
-    expect(GA).toContain('let ga4Granted = false');
-    expect(GA).toContain('ga4Granted = granted;');
-    expect(GA).toContain('if (!ga4Granted) return;');
+    // M19.3 — the module-level gate now lives in lib/analytics/events.ts; the
+    // loader flips it via setGa4ConsentGranted so every trackGa4Event() call
+    // sees the revoke on the same tick, without waiting for the tag to unmount.
+    expect(GA).toContain('setGa4ConsentGranted(granted)');
+    const EV = src('lib/analytics/events.ts');
+    expect(EV).toContain('let ga4Granted = false');
+    expect(EV).toContain('export function setGa4ConsentGranted');
+    expect(EV).toContain('if (!ga4Granted) return;');
   });
 
   it('2.4 page_view tracker stops firing once consent is not granted', () => {
@@ -146,11 +150,21 @@ describe('M18-GA4 §4 single initialization and single page_view', () => {
 
 // ------------------------------------------------ 5. PII / SENSITIVE PAYLOADS
 describe('M18-GA4 §5 no PII or sensitive identifiers reach GA4', () => {
-  it('5.1 sensitive event parameter keys are blocked', () => {
-    expect(GA).toContain('BLOCKED_KEYS');
-    for (const k of ['email', 'phone', 'mobile', 'name', 'paypal', 'capture', 'order_id', 'token', 'password', 'secret', 'message', 'evidence', 'drive']) {
-      expect(GA).toContain(k);
+  it('5.1 sensitive event parameter keys/values are blocked', () => {
+    // M19.3 — the guard moved to lib/analytics/events.ts and uses an
+    // allowlist for keys + a shape guard for values.
+    const EV = src('lib/analytics/events.ts');
+    // Parameter allowlist is present and small.
+    expect(EV).toContain('const PARAM_ALLOWLIST = new Set([');
+    for (const k of ['account_type', 'country_code', 'category_slug', 'verification_method', 'product_name', 'currency', 'trend_period']) {
+      expect(EV).toContain(`'${k}'`);
     }
+    // Shape guard rejects email / uuid / JWT / PayPal / long tokens.
+    for (const marker of ['SHAPE_EMAIL', 'SHAPE_UUID', 'SHAPE_JWT', 'SHAPE_PAYPAL', 'SHAPE_LONGHEX', 'SHAPE_LONGTOK', 'SHAPE_PHONE_CHARS']) {
+      expect(EV).toContain(marker);
+    }
+    // A whole event is hard-aborted the moment ANY value looks sensitive.
+    expect(EV).toContain('if (looksSensitive(v)) return;');
   });
 
   it('5.2 PayPal provider identifiers in the return URL never reach GA4', () => {
@@ -218,31 +232,55 @@ describe('M18-GA4 §5 no PII or sensitive identifiers reach GA4', () => {
   it('5.7 page_location/page_path are pinned to the sanitized URL for ALL hits', () => {
     expect(GA).toContain("window.gtag('set', { page_path: url, page_location: loc })");
     expect(GA).toContain('const url = safeGa4Path(pathname');
-    expect(GA).toContain('const url = safeGa4Path(window.location.pathname, window.location.search)');
-    expect(GA).toContain('safe.page_location = window.location.origin + url;');
+    // M19.3 — pinning for custom events now lives in lib/analytics/events.ts.
+    const EV = src('lib/analytics/events.ts');
+    expect(EV).toContain('const url = safeGa4Path(window.location.pathname, window.location.search)');
+    expect(EV).toContain('safe.page_location = window.location.origin + url;');
     // Raw, unsanitized URL is never handed to GA4 any more.
     expect(GA).not.toContain('window.location.href');
+    expect(EV).not.toContain('window.location.href');
     expect(GA).not.toContain('`${pathname}${qs ? `?${qs}` : \'\'}`');
   });
 
-  it('5.8 every emitted GA4 event is on the non-sensitive allowlist', () => {
-    const names = ['channel_submit_started', 'fast_verification_started', 'fast_verification_payment_completed',
-      'owner_identity_completed', 'manual_verification_submitted', 'brand_pro_checkout_started',
-      'brand_pro_activated', 'founding_lifetime_checkout_started'];
-    for (const n of names) expect(GA).toContain(`'${n}'`);
-    // Call sites only ever pass the public channel slug.
+  it('5.8 every emitted GA4 event is on the M19.3 canonical allowlist', () => {
+    // M19.3 canonical event names.
+    const canonical = [
+      'sign_up', 'login',
+      'channel_submission_started', 'channel_submitted', 'verification_started',
+      'fast_verification_checkout_started', 'channel_verified',
+      'rate_card_created', 'sample_work_added',
+      'channel_profile_viewed', 'sponsorship_request_started', 'sponsorship_request_sent',
+      'booking_started', 'booking_created', 'delivery_submitted', 'booking_completed',
+      'campaign_created', 'campaign_commitment_started', 'campaign_opened', 'campaign_viewed',
+      'campaign_application_started', 'campaign_application_submitted',
+      'campaign_application_shortlisted', 'campaign_application_approved',
+      'campaign_booking_started',
+      'brand_pro_checkout_started', 'founding_lifetime_checkout_started',
+      'owner_activation_checkout_started',
+      'support_widget_opened', 'support_conversation_started',
+      'category_viewed', 'country_viewed', 'trending_viewed', 'search_used',
+    ];
+    const EV = src('lib/analytics/events.ts');
+    for (const n of canonical) expect(EV).toContain(`'${n}'`);
+    // Explicitly ensure no "purchase" / "checkout_completed" revenue event.
+    expect(EV).not.toMatch(/'purchase'|'checkout_completed'|'booking_paid'/);
+    // Every call site imports the canonical helper — not the legacy path.
     for (const f of [
       'app/dashboard/channels/[id]/verify/VerifyClient.tsx',
       'app/dashboard/channels/[id]/verify/FastVerificationForm.tsx',
       'app/dashboard/channels/[id]/verify/ManualVerificationForm.tsx',
       'app/pricing/PricingClient.tsx',
-      'components/commerce/BrandProReturn.tsx',
+      'app/dashboard/campaigns/CampaignsClient.tsx',
+      'app/dashboard/opportunities/OpportunitiesClient.tsx',
+      'app/signup/page.tsx',
+      'app/login/page.tsx',
+      'components/support/SupportWidget.tsx',
     ]) {
       const s = src(f);
-      const calls = s.match(/ga4Track\([^)]*\)/g) || [];
+      const calls = s.match(/trackGa4Event(?:Once)?\([^)]*\)/g) || [];
       expect(calls.length).toBeGreaterThan(0);
       for (const c of calls) {
-        expect(c).not.toMatch(/email|phone|whatsapp|legal_name|payout|paypal|capture|order_id|token|message|evidence/i);
+        expect(c).not.toMatch(/email|phone|whatsapp|legal_name|payout|paypal|capture|order_id|token|message|evidence|channel_id|campaign_id|application_id|user_id/i);
       }
     }
   });

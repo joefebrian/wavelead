@@ -14,7 +14,7 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { CheckCircle2, Circle, Loader2, AlertTriangle, ShieldCheck, Zap, FileSearch } from 'lucide-react';
-import { ga4Track } from '@/components/analytics/GoogleAnalytics';
+import { trackGa4EventOnce } from '@/lib/analytics/events';
 import FastVerificationForm, { type IdentityForm } from './FastVerificationForm';
 import ManualVerificationForm from './ManualVerificationForm';
 
@@ -85,7 +85,10 @@ export default function VerifyClient({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ payment_id: pid }),
         });
-        ga4Track('fast_verification_payment_completed', { channel: channelSlug });
+        // M19.3 — server-authoritative capture confirmation. Use once-per-page
+        // so browser-return re-runs (Strict-mode, back button, replay) can't
+        // fire duplicates for the same channel/payment tuple.
+        trackGa4EventOnce(`channel_verified:${channelId}:${pid || 'na'}`, 'channel_verified', { verification_method: 'fast' });
         await refresh();
         const url = new URL(window.location.href);
         url.searchParams.delete('activation');

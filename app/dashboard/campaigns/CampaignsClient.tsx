@@ -59,6 +59,13 @@ export default function CampaignsClient() {
       });
       const j = await r.json();
       if (!r.ok || !j?.ok) throw new Error(typeof j?.error === 'string' ? j.error : 'Could not create the campaign');
+      // M19.3 — canonical GA4 event on server-confirmed create. Safe params
+      // only (no campaign id, no brand id, no budget). Fires once — parent
+      // reload will re-render but this callback runs on submit only.
+      try {
+        const { trackGa4Event } = await import('@/lib/analytics/events');
+        trackGa4Event('campaign_created', { objective: form.objective.trim().slice(0, 40) || undefined });
+      } catch { /* ignore */ }
       setCreating(false);
       setForm({ ...form, name: '', objective: '', brief: '', budget: '' });
       await load();

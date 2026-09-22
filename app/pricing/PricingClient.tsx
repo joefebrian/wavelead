@@ -9,7 +9,7 @@ import { Check, Loader2, CheckCircle2, AlertTriangle, Sparkles, Info } from 'luc
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import type { PublicUser } from '@/lib/types';
 import { rememberCommercialIntent, clearCommercialIntent, readCommercialIntent, consumeIntentResumeOnce, INTENT_DESTINATION, type CommercialIntent } from '@/lib/utils/commercialIntent';
-import { ga4Track } from '@/components/analytics/GoogleAnalytics';
+import { trackGa4Event } from '@/lib/analytics/events';
 import type { PublicPricing } from '@/lib/services/pricingConfigTypes';
 import { formatMinorUSD } from '@/lib/services/pricingConfigTypes';
 
@@ -215,7 +215,7 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
         router.push('/signup?next=' + encodeURIComponent(INTENT_DESTINATION.brand_pro));
         return;
       }
-      ga4Track('brand_pro_checkout_started');
+      trackGa4Event('brand_pro_checkout_started', { product_name: 'brand_pro_30_day', currency: 'USD' });
       const r = await fetch('/api/brand-pro/checkout', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
@@ -245,7 +245,7 @@ export default function PricingClient({ pricing }: { pricing: PublicPricing }) {
         router.push('/signup?next=' + encodeURIComponent(INTENT_DESTINATION.founding_lifetime));
         return;
       }
-      ga4Track('founding_lifetime_checkout_started');
+      trackGa4Event('founding_lifetime_checkout_started', { product_name: 'founding_lifetime', currency: 'USD' });
       const r = await fetch('/api/brand/founding-lifetime/checkout', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },

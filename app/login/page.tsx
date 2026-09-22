@@ -38,6 +38,11 @@ function LoginForm() {
       const json = await res.json();
       if (!res.ok || !json.ok) throw new Error(json.error || 'Login failed');
       toast.success(`Welcome back, ${json.data.user.display_name}`);
+      // M19.3 — canonical GA4 login (server-confirmed). No email / user id.
+      try {
+        const { trackGa4Event } = await import('@/lib/analytics/events');
+        trackGa4Event('login', { account_type: 'unknown' });
+      } catch { /* ignore */ }
       // Trust ONLY the server-computed redirect target.
       const dest = typeof json.data?.redirect_to === 'string' && json.data.redirect_to.startsWith('/')
         ? json.data.redirect_to

@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Loader2, AlertTriangle, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import CountryCombobox from '@/components/forms/CountryCombobox';
-import { ga4Track } from '@/components/analytics/GoogleAnalytics';
+import { trackGa4Event } from '@/lib/analytics/events';
 import { ROLE_OPTIONS, identityIncompleteReason, type IdentityForm } from './FastVerificationForm';
 
 const inputCls = 'mt-1 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40';
@@ -103,7 +103,7 @@ export default function ManualVerificationForm({
           body: JSON.stringify({ ...form, company_name: form.company_name || '' }),
         }).catch(() => null);
       }
-      ga4Track('manual_verification_submitted', { channel: channelSlug });
+      trackGa4Event('verification_started', { verification_method: 'manual' });
       setDone(true);
     } catch (e) {
       setErr((e as Error).message);

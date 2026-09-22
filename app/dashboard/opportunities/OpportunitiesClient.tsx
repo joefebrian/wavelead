@@ -55,6 +55,12 @@ export default function OpportunitiesClient() {
       });
       const j = await r.json();
       if (!r.ok || !j?.ok) throw new Error(typeof j?.error === 'string' ? j.error : 'Could not submit your application');
+      // M19.3 — canonical GA4 event on server-confirmed application. No
+      // campaign id, no application id, no user id, no rate. currency only.
+      try {
+        const { trackGa4Event } = await import('@/lib/analytics/events');
+        trackGa4Event('campaign_application_submitted', { currency: 'USD' });
+      } catch { /* ignore */ }
       setDone(campaignId); setOpenId(null);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }

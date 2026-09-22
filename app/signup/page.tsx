@@ -38,6 +38,11 @@ function SignupForm() {
       const json = await res.json();
       if (!res.ok || !json.ok) throw new Error(json.error || 'Signup failed');
       toast.success('Account created!');
+      // M19.3 — canonical GA4 sign_up (server-confirmed). No email / user id.
+      try {
+        const { trackGa4Event } = await import('@/lib/analytics/events');
+        trackGa4Event('sign_up', { account_type: 'unknown' });
+      } catch { /* ignore */ }
       // Trust ONLY the server-computed redirect target.
       const dest = typeof json.data?.redirect_to === 'string' && json.data.redirect_to.startsWith('/')
         ? json.data.redirect_to

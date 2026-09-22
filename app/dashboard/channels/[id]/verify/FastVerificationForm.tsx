@@ -13,7 +13,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Loader2, AlertTriangle, ArrowLeft, ShieldCheck } from 'lucide-react';
 import CountryCombobox from '@/components/forms/CountryCombobox';
-import { ga4Track } from '@/components/analytics/GoogleAnalytics';
+import { trackGa4Event } from '@/lib/analytics/events';
 
 export interface IdentityForm {
   full_legal_name: string;
@@ -92,7 +92,7 @@ export default function FastVerificationForm({
       });
       const ji = await ri.json();
       if (!ri.ok || !ji?.ok) throw new Error(typeof ji?.error === 'string' ? ji.error : 'Could not save your owner information');
-      ga4Track('owner_identity_completed', { channel: channelSlug });
+      trackGa4Event('verification_started', { verification_method: 'fast' });
 
       // Already paid (e.g. resumed flow) — identity submission finalizes
       // server-side, so just refresh.
@@ -107,7 +107,7 @@ export default function FastVerificationForm({
       });
       const js = await rs.json();
       if (!rs.ok || !js?.ok) throw new Error(typeof js?.error === 'string' ? js.error : 'Could not start the $1 verification payment');
-      ga4Track('fast_verification_started', { channel: channelSlug });
+      trackGa4Event('fast_verification_checkout_started', { verification_method: 'fast' });
       const url = js.data?.payment?.approve_url as string | undefined;
       if (url) { window.location.href = url; return; }   // PayPal approval — user authorizes
       await onRefresh();

@@ -103,10 +103,19 @@ export default function SupportWidget() {
   }, [open, ticketId, fetchThread]);
   useEffect(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages.length, open]);
 
-  // M19.2 correction §5 — No support content is ever sent to GA4. We do not
-  // emit any event from this widget: no email, no name, no ticket id, no
-  // access token, no thread URL, no body, no aggregate signal. GA4 stays
-  // untouched by the support surface.
+  // M19.3 — Canonical GA4 events emitted ONLY through the shared helper.
+  // Aggregate signals only: no email, no ticket id, no body, no token.
+  const openedAnalyticsOnce = useRef(false);
+  useEffect(() => {
+    if (!open || openedAnalyticsOnce.current) return;
+    openedAnalyticsOnce.current = true;
+    (async () => {
+      try {
+        const { trackGa4Event } = await import('@/lib/analytics/events');
+        trackGa4Event('support_widget_opened');
+      } catch { /* ignore */ }
+    })();
+  }, [open]);
 
   async function createTicket(e: React.FormEvent) {
     e.preventDefault(); setErr(null); setBusy(true);
@@ -126,6 +135,11 @@ export default function SupportWidget() {
       setTicketId(j.data.ticket.id);
       setFirstMsg(''); setEmail('');
       setTicket(j.data.ticket); setMessages([j.data.message]);
+      // M19.3 — canonical GA4 aggregate signal. No email/name/id/body sent.
+      try {
+        const { trackGa4Event } = await import('@/lib/analytics/events');
+        trackGa4Event('support_conversation_started');
+      } catch { /* ignore */ }
     } catch (e2) { setErr((e2 as Error).message); } finally { setBusy(false); }
   }
 
