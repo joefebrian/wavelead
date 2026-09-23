@@ -9,6 +9,7 @@ import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { CheckCircle2, ShieldCheck } from 'lucide-react';
+import { resolveChannelAvatar } from '@/lib/seo/channelAvatar';
 
 export interface SponsoredCardData {
   campaign_id: string;
@@ -61,9 +62,13 @@ export default function SponsoredCard({ data, sourcePath }: { data: SponsoredCar
         <Badge className="text-[10px] font-semibold uppercase tracking-wide bg-primary/10 text-primary border border-primary/30">Sponsored</Badge>
       </div>
       <div className="flex items-start gap-3">
-        {ch.logo_url
-          ? <img src={ch.logo_url} alt={ch.name} className="h-12 w-12 rounded-full object-cover border" />
-          : <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center font-semibold">{ch.name[0]}</div>}
+        {(() => {
+          // SEO — never emit an <img> for a known-volatile (WhatsApp CDN) URL.
+          const safe = resolveChannelAvatar(ch.logo_url);
+          return safe
+            ? <img src={safe} alt={ch.name} className="h-12 w-12 rounded-full object-cover border" loading="lazy" />
+            : <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center font-semibold">{ch.name[0]}</div>;
+        })()}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 flex-wrap">
             <Link href={`/channel/${ch.slug}`} onClick={onProfileClick} className="font-semibold hover:underline truncate">{ch.name}</Link>

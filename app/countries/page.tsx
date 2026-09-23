@@ -4,8 +4,14 @@ import Footer from '@/components/layout/Footer';
 import SectionHeader from '@/components/discovery/SectionHeader';
 import { discoveryService } from '@/lib/services/discoveryService';
 import type { Metadata } from 'next';
+import { buildMetadata } from '@/lib/seo/metadata';
 
-export const metadata: Metadata = { title: 'Countries', alternates: { canonical: '/countries' } };
+export const metadata: Metadata = buildMetadata({
+  title: 'WhatsApp Channels by Country',
+  description:
+    'Explore public WhatsApp Channels by country on WaveLead. Discover creators and communities across supported markets, with real audience information where available.',
+  path: '/countries',
+});
 export const dynamic = 'force-dynamic';
 
 export default async function CountriesPage() {
@@ -22,6 +28,11 @@ export default async function CountriesPage() {
             <div className="text-xs font-semibold uppercase tracking-widest text-primary">Countries</div>
             <h1 className="mt-2 text-2xl md:text-3xl font-bold">Explore WhatsApp Channels by country</h1>
             <p className="text-sm text-muted-foreground mt-1">{withChannels.length} countries with active WaveLead listings.</p>
+            <p className="mt-4 max-w-3xl text-sm text-muted-foreground">
+              Discover public WhatsApp Channels in specific countries. Every listing is reviewed before it goes
+              live. Reach numbers come from real public observations on WhatsApp and, where available, verified
+              owner evidence.
+            </p>
           </div>
         </div>
 

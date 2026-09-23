@@ -9,13 +9,23 @@ import EmptyState from '@/components/discovery/EmptyState';
 import SponsoredCard from '@/components/promo/SponsoredCard';
 import { loadOneSponsored, shouldRenderSponsored } from '@/lib/services/promotion/deliveryHelpers';
 import type { Metadata } from 'next';
+import { buildMetadata } from '@/lib/seo/metadata';
 
 interface SP { q?: string; category?: string; country?: string; sort?: string; }
 
+// SEO — search result pages must not be indexed (infinite crawl surface).
+// The route stays public and functional; canonical points at /search so
+// unrelated query variants collapse under a single unindexed resource.
 export async function generateMetadata({ searchParams }: { searchParams: Promise<SP> }): Promise<Metadata> {
   const sp = await searchParams;
-  const title = sp.q ? `"${sp.q}" — Search WhatsApp Channels` : 'Search Channels';
-  return { title };
+  const title = sp.q ? `Search: "${sp.q}"` : 'Search WhatsApp Channels';
+  return buildMetadata({
+    title,
+    description:
+      'Search public WhatsApp Channels on WaveLead by keyword, category and country. Every listing is reviewed before it goes live.',
+    path: '/search',
+    robots: 'noindex,follow',
+  });
 }
 
 export const dynamic = 'force-dynamic';

@@ -8,14 +8,18 @@ import { discoveryService } from '@/lib/services/discoveryService';
 import { COUNTRIES } from '@/lib/constants/countries';
 import { Trophy } from 'lucide-react';
 import type { Metadata } from 'next';
+import { buildMetadata } from '@/lib/seo/metadata';
 
 interface SP { country?: string; }
 
-export const metadata: Metadata = {
-  title: 'Top Channels',
-  description: 'Highest-reach WhatsApp Channels on WaveLead.',
-  alternates: { canonical: '/top' },
-};
+// SEO — Top channels page canonicalizes to /top; ?country=… variants share the
+// same indexable resource. Country-specific discovery lives on /country/[slug].
+export const metadata: Metadata = buildMetadata({
+  title: 'Top WhatsApp Channels',
+  description:
+    'The highest-reach public WhatsApp Channels on WaveLead, ranked by observed follower audience across supported countries.',
+  path: '/top',
+});
 
 export const dynamic = 'force-dynamic';
 
@@ -34,10 +38,15 @@ export default async function TopPage({ searchParams }: { searchParams: Promise<
             <div className="flex items-center gap-3">
               <span className="h-10 w-10 grid place-items-center rounded-lg bg-primary/10 text-primary"><Trophy className="h-5 w-5" /></span>
               <div>
-                <h1 className="text-2xl md:text-3xl font-bold">Top Channels in {activeCountry.name} <span aria-hidden>{activeCountry.flag}</span></h1>
-                <p className="text-sm text-muted-foreground mt-1">Ranked by reach on WaveLead. WaveScore ranking arrives in a later milestone.</p>
+                <h1 className="text-2xl md:text-3xl font-bold">Top WhatsApp Channels in {activeCountry.name} <span aria-hidden>{activeCountry.flag}</span></h1>
+                <p className="text-sm text-muted-foreground mt-1">Ranked by observed public audience on WaveLead.</p>
               </div>
             </div>
+            <p className="mt-4 max-w-3xl text-sm text-muted-foreground">
+              WaveLead orders these channels by the most recent public follower observation collected for each
+              channel. Verified owner-submitted evidence takes precedence when available. WaveLead does not track
+              individual WhatsApp identities.
+            </p>
             <div className="mt-5 flex gap-2 overflow-x-auto no-scrollbar">
               {COUNTRIES.map((c) => (
                 <Link key={c.code} href={`/top?country=${c.code}`}
@@ -49,7 +58,7 @@ export default async function TopPage({ searchParams }: { searchParams: Promise<
           </div>
         </div>
         <section className="container py-8">
-          <SectionHeader title={`Top in ${activeCountry.name}`} />
+          <SectionHeader title={`Top channels in ${activeCountry.name}`} />
           {items.length === 0 ? (
             <EmptyState title="No ranking yet" message="No approved channels ranked in this country yet." ctaHref="/channels" />
           ) : (

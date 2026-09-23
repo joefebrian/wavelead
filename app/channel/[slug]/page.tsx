@@ -17,22 +17,40 @@ import { sampleWorkService, SAMPLE_WORK_TYPE_LABELS } from '@/lib/services/sampl
 import { trackingService, normalizeReferrerDomain, normalizeSource } from '@/lib/services/trackingService';
 import { cookies, headers } from 'next/headers';
 import { ShieldCheck, Users, Share2, ArrowUpRight, Sparkles, BadgeCheck, Flag, KeyRound, Handshake, Package, Clock } from 'lucide-react';
+import { resolveChannelAvatar, CHANNEL_FALLBACK_AVATAR } from '@/lib/seo/channelAvatar';
 import type { Metadata } from 'next';
+import { buildMetadata } from '@/lib/seo/metadata';
+import { channelMetaTitle } from '@/lib/seo/channelTitle';
 
 interface Params { slug: string; }
 
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
   const { slug } = await params;
   const c = await channelService.getPublicBySlug(slug);
-  if (!c) return { title: 'Channel not found' };
+  if (!c) return { title: 'Channel not found | WaveLead', robots: { index: false, follow: true } };
   const { displayCleanWhatsAppDescription } = await import('@/lib/services/enrichment/whatsappMetadataParser');
   const cleanedShort = displayCleanWhatsAppDescription(c.short_description) || c.short_description || '';
   const cleanedFull = displayCleanWhatsAppDescription(c.description) || c.description || '';
+  // Route-specific description prefers the channel's own bio (short → long), then
+  // falls back to a WaveLead-authored template that names the channel.
+  const cat = c.category_id ? await categoryRepo.listActive().then((cs) => cs.find((x) => x.id === c.category_id) || null).catch(() => null) : null;
+  const country = countryByCode(c.country_code);
+  const parts: string[] = [];
+  if (cat?.name) parts.push(`a ${cat.name} WhatsApp Channel`);
+  else parts.push('a public WhatsApp Channel');
+  if (country?.name) parts.push(`in ${country.name}`);
+  const fallback = `Explore ${c.name} on WaveLead — ${parts.join(' ')}. View audience information, rate card availability and sponsorship opportunities.`;
+  const description = (cleanedShort || cleanedFull || fallback).slice(0, 280);
+  // Title uses fitTitle to keep <= 60 chars (SERP display width).
   return {
-    title: `${c.name} — WhatsApp Channel`,
-    description: cleanedShort || cleanedFull || `Discover the ${c.name} channel on WaveLead.`,
-    alternates: { canonical: `/channel/${c.slug}` },
-    openGraph: { title: c.name, description: cleanedShort || cleanedFull, type: 'website' },
+    ...buildMetadata({
+      title: c.name,
+      description,
+      path: `/channel/${c.slug}`,
+    }),
+    // Override title with channel-specific helper. `absolute` bypasses the
+    // layout template so the suffix is applied exactly once.
+    title: { absolute: channelMetaTitle(c.name) },
   };
 }
 
@@ -141,18 +159,40 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
           <div className="container py-10 md:py-14">
             <div className="flex flex-col md:flex-row md:items-center gap-6">
               <div className="h-20 w-20 md:h-24 md:w-24 rounded-2xl bg-gradient-to-br from-primary/80 to-primary grid place-items-center text-primary-foreground text-4xl font-extrabold shrink-0 overflow-hidden" aria-hidden>
-                {channel.logo_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={channel.logo_url}
-                    alt=""
-                    className="h-full w-full object-cover"
-                    referrerPolicy="no-referrer"
-                    data-testid="channel-avatar-image"
-                  />
-                ) : (
-                  (channel.name || 'W').charAt(0).toUpperCase()
-                )}
+                {(() => {
+                  // SEO — never emit an <img> pointing at a known-volatile
+                  // (WhatsApp CDN) URL. Volatile URLs expire and were
+                  // responsible for the 20 broken external images flagged by
+                  // the audit. Fall back to the local WaveLead SVG so
+                  // crawlers only see a 200-OK asset.
+                  const safe = resolveChannelAvatar(channel.logo_url);
+                  if (safe) {
+                    return (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={safe}
+                        alt={`${channel.name} logo`}
+                        className="h-full w-full object-cover"
+                        referrerPolicy="no-referrer"
+                        loading="lazy"
+                        data-testid="channel-avatar-image"
+                      />
+                    );
+                  }
+                  if (channel.logo_url) {
+                    return (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={CHANNEL_FALLBACK_AVATAR}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                        data-testid="channel-avatar-fallback"
+                      />
+                    );
+                  }
+                  return (channel.name || 'W').charAt(0).toUpperCase();
+                })()}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">

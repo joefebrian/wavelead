@@ -1,8 +1,14 @@
 import type { Metadata } from 'next';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
+import { buildMetadata } from '@/lib/seo/metadata';
 
-export const metadata: Metadata = { title: 'Terms' };
+export const metadata: Metadata = buildMetadata({
+  title: 'Terms of Service',
+  description:
+    'WaveLead Terms of Service. WaveLead is an independent directory and growth platform for public WhatsApp Channels, developed by P2P Labs.',
+  path: '/terms',
+});
 
 export default function TermsPage() {
   return (

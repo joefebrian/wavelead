@@ -2,11 +2,14 @@ import type { Metadata } from 'next';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import CookiePreferencesTrigger from '@/components/consent/CookiePreferencesTrigger';
+import { buildMetadata } from '@/lib/seo/metadata';
 
-export const metadata: Metadata = {
-  title: 'Cookie Policy — WaveLead',
-  description: 'How WaveLead uses cookies. A product by P2P Labs.',
-};
+export const metadata: Metadata = buildMetadata({
+  title: 'Cookie Policy',
+  description:
+    'How WaveLead uses cookies. Necessary cookies keep the site working; Analytics is off by default and enables Google Analytics 4 measurement only, never advertising signals.',
+  path: '/cookies',
+});
 
 export default function CookiesPage() {
   return (

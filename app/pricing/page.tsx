@@ -3,8 +3,14 @@ import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import PricingClient from './PricingClient';
 import { pricingConfigService } from '@/lib/services/pricingConfigService';
+import { buildMetadata } from '@/lib/seo/metadata';
 
-export const metadata: Metadata = { title: 'Pricing' };
+export const metadata: Metadata = buildMetadata({
+  title: 'Pricing',
+  description:
+    'WaveLead pricing for brands and channel owners. Brand Free is free forever, Brand Pro adds campaign intelligence for $15 per 30 days, Founding Lifetime is a one-time $100 offer, and channel owners list and earn for free.',
+  path: '/pricing',
+});
 export const dynamic = 'force-dynamic';
 
 export default async function PricingPage() {

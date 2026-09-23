@@ -11,18 +11,19 @@ import { channelService } from '@/lib/services/channelService';
 import { categoryRepo } from '@/lib/repositories/categoryRepo';
 import { discoveryService } from '@/lib/services/discoveryService';
 import type { Metadata } from 'next';
+import { buildMetadata } from '@/lib/seo/metadata';
 
 interface Params { slug: string; }
 
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
   const { slug } = await params;
   const cat = await categoryRepo.findBySlug(slug);
-  if (!cat) return { title: 'Category not found' };
-  return {
-    title: `${cat.name} channels`,
-    description: `Discover ${cat.name.toLowerCase()} WhatsApp Channels on WaveLead.`,
-    alternates: { canonical: `/category/${cat.slug}` },
-  };
+  if (!cat) return { title: 'Category not found | WaveLead', robots: { index: false, follow: true } };
+  return buildMetadata({
+    title: `${cat.name} WhatsApp Channels`,
+    description: `Discover ${cat.name} WhatsApp Channels on WaveLead. Explore creators, audience data and sponsorship opportunities in ${cat.name}.`,
+    path: `/category/${cat.slug}`,
+  });
 }
 
 export const dynamic = 'force-dynamic';
@@ -48,8 +49,13 @@ export default async function CategoryPage({ params }: { params: Promise<Params>
         <div className="wh-gradient-hero border-b border-border/60">
           <div className="container py-8">
             <div className="text-xs font-semibold uppercase tracking-widest text-primary">Category</div>
-            <h1 className="mt-2 text-2xl md:text-3xl font-bold">{cat.name} channels</h1>
+            <h1 className="mt-2 text-2xl md:text-3xl font-bold">{cat.name} WhatsApp Channels</h1>
             <p className="text-sm text-muted-foreground mt-1">{result.total} channels approved on WaveLead.</p>
+            <p className="mt-4 max-w-3xl text-sm text-muted-foreground">
+              Browse public WhatsApp Channels approved on WaveLead in the <strong>{cat.name}</strong> category.
+              Every listing is reviewed before it goes live. Open a channel profile to review its audience
+              information, rate card, sample work and sponsorship packages.
+            </p>
           </div>
         </div>
         <CategoryPills categories={cats} active={cat.slug} />

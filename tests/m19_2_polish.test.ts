@@ -61,7 +61,8 @@ describe('M19.2 §1 — Category icons', () => {
   it('1.2 /categories still uses categoryVisual and canonical metadata is intact', () => {
     const cats = src('app/categories/page.tsx');
     expect(cats).toContain('categoryVisual(cat.slug, cat.name)');
-    expect(cats).toContain("alternates: { canonical: '/categories' }");
+    // SEO remediation: canonical now routes through buildMetadata(path:'/categories').
+    expect(cats).toMatch(/buildMetadata\(\{[\s\S]*path: '\/categories'/);
   });
 });
 
@@ -98,7 +99,8 @@ describe('M19.2 §2 — Pricing CTA polish + button alignment', () => {
 describe('M19.2 §3 — Refund policy (corrected wording)', () => {
   const R = () => src('app/refund-policy/page.tsx');
   it('3.1 page exists, canonical is /refund-policy', () => {
-    expect(R()).toContain("alternates: { canonical: '/refund-policy' }");
+    // SEO remediation: canonical now routes through buildMetadata(path:'/refund-policy').
+    expect(R()).toMatch(/buildMetadata\(\{[\s\S]*path: '\/refund-policy'/);
     expect(R()).toContain('Refund Policy');
   });
   it('3.2 uses "applicable / documented / non-recoverable" consistently', () => {

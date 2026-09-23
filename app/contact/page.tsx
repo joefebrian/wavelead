@@ -3,12 +3,14 @@ import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import ContactForm from './ContactForm';
 import { contactService } from '@/lib/services/contactService';
+import { buildMetadata } from '@/lib/seo/metadata';
 
-export const metadata: Metadata = {
-  title: 'Contact — WaveLead',
-  description: 'Get in touch with the WaveLead team. Enterprise, partnerships, support and press.',
-  alternates: { canonical: '/contact' },
-};
+export const metadata: Metadata = buildMetadata({
+  title: 'Contact WaveLead',
+  description:
+    'Talk to the WaveLead team about enterprise, agency partnerships, sponsorship help, ownership questions or press. WaveLead is a product by P2P Labs.',
+  path: '/contact',
+});
 
 export const dynamic = 'force-dynamic';
 

@@ -3,11 +3,14 @@ import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { buildMetadata } from '@/lib/seo/metadata';
 
-export const metadata: Metadata = {
-  title: 'About WaveLead — a product by P2P Labs',
-  description: 'WaveLead is the growth and monetization infrastructure for WhatsApp Channels. A product by P2P Labs — independent from WhatsApp and Meta.',
-};
+export const metadata: Metadata = buildMetadata({
+  title: 'About WaveLead',
+  description:
+    'WaveLead is the independent growth and monetization infrastructure for public WhatsApp Channels, developed by P2P Labs. Not affiliated with WhatsApp or Meta.',
+  path: '/about',
+});
 
 export default function AboutPage() {
   return (

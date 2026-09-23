@@ -5,8 +5,14 @@ import SectionHeader from '@/components/discovery/SectionHeader';
 import { categoryVisual } from '@/lib/constants/categoryIcons';
 import { discoveryService } from '@/lib/services/discoveryService';
 import type { Metadata } from 'next';
+import { buildMetadata } from '@/lib/seo/metadata';
 
-export const metadata: Metadata = { title: 'Categories', alternates: { canonical: '/categories' } };
+export const metadata: Metadata = buildMetadata({
+  title: 'WhatsApp Channel Categories',
+  description:
+    'Browse public WhatsApp Channels by category on WaveLead — from technology and finance to sports, travel, entertainment, education and more.',
+  path: '/categories',
+});
 export const dynamic = 'force-dynamic';
 
 export default async function CategoriesPage() {
@@ -18,8 +24,12 @@ export default async function CategoriesPage() {
         <div className="wh-gradient-hero border-b border-border/60">
           <div className="container py-8">
             <div className="text-xs font-semibold uppercase tracking-widest text-primary">Categories</div>
-            <h1 className="mt-2 text-2xl md:text-3xl font-bold">Explore all categories</h1>
+            <h1 className="mt-2 text-2xl md:text-3xl font-bold">Explore all WhatsApp Channel categories</h1>
             <p className="text-sm text-muted-foreground mt-1">{cats.length} categories on WaveLead.</p>
+            <p className="mt-4 max-w-3xl text-sm text-muted-foreground">
+              Every category groups public WhatsApp Channels approved by WaveLead. Open a category to see the
+              highest-reach channels in that topic, discover creators, and open sponsorship conversations.
+            </p>
           </div>
         </div>
         <section className="container py-8">

@@ -4,12 +4,14 @@ import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import { Button } from '@/components/ui/button';
 import { Radio, Target, Compass, HandshakeIcon, ShieldCheck } from 'lucide-react';
+import { buildMetadata } from '@/lib/seo/metadata';
 
-export const metadata: Metadata = {
-  title: 'For Brands — WaveLead',
-  description: 'Reach real audiences through WhatsApp Channels. Discover relevant creators and request a sponsorship — WaveLead helps coordinate the partnership.',
-  alternates: { canonical: '/for-brands' },
-};
+export const metadata: Metadata = buildMetadata({
+  title: 'WhatsApp Channel Marketing for Brands',
+  description:
+    'WaveLead helps brands and agencies reach real audiences through public WhatsApp Channels. Discover relevant creators, request sponsorships and coordinate campaigns with WaveLead support.',
+  path: '/for-brands',
+});
 
 export default function ForBrandsPage() {
   return (

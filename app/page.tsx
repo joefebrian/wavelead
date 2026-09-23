@@ -15,19 +15,16 @@ import { COLLECTIONS as _NS } from '@/lib/db/collections';
 import { COLLECTIONS as EDITORIAL_COLLECTIONS } from '@/lib/constants/discovery-collections';
 import Link from 'next/link';
 import type { Metadata } from 'next';
+import { buildMetadata } from '@/lib/seo/metadata';
 
 void _NS;
 
-export const metadata: Metadata = {
-  title: 'WaveLead — The Growth & Monetization Platform for WhatsApp Channels',
-  description: 'Discover WhatsApp Channels, grow audiences, manage sponsorships and measure what drives results — all in one place. Public Beta.',
-  alternates: { canonical: '/' },
-  openGraph: {
-    title: 'WaveLead — The Growth & Monetization Platform for WhatsApp Channels',
-    description: 'Discover WhatsApp Channels, grow audiences, manage sponsorships and measure what drives results — all in one place.',
-    type: 'website',
-  },
-};
+export const metadata: Metadata = buildMetadata({
+  title: 'WaveLead — Growth for WhatsApp Channels',
+  description:
+    'Discover, grow and monetize public WhatsApp Channels with WaveLead. Connect channel owners and brands through sponsorships, campaigns and honest performance insights.',
+  path: '/',
+});
 
 export const dynamic = 'force-dynamic';
 

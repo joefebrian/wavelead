@@ -7,10 +7,17 @@ import EmptyState from '@/components/discovery/EmptyState';
 import { channelService } from '@/lib/services/channelService';
 import { discoveryService } from '@/lib/services/discoveryService';
 import type { Metadata } from 'next';
+import { buildMetadata } from '@/lib/seo/metadata';
 
 interface SP { sort?: string; }
 
-export const metadata: Metadata = { title: 'Discover Channels', alternates: { canonical: '/channels' } };
+// SEO — unique title/description + explicit canonical (strips any ?sort=... query).
+export const metadata: Metadata = buildMetadata({
+  title: 'Discover WhatsApp Channels',
+  description:
+    'Discover public WhatsApp Channels across categories and countries on WaveLead. Compare audience size, creator profiles, rate cards and sponsorship opportunities.',
+  path: '/channels',
+});
 
 export const dynamic = 'force-dynamic';
 
@@ -29,8 +36,14 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Pro
         <div className="wh-gradient-hero border-b border-border/60">
           <div className="container py-8">
             <div className="text-xs font-semibold uppercase tracking-widest text-primary">Discover</div>
-            <h1 className="mt-2 text-2xl md:text-3xl font-bold">All approved channels</h1>
+            <h1 className="mt-2 text-2xl md:text-3xl font-bold">All approved WhatsApp Channels</h1>
             <p className="text-sm text-muted-foreground mt-1">{result.total} channels across {cats.length}+ categories.</p>
+            {/* SEO — server-rendered explanatory copy (no keyword filler). */}
+            <p className="mt-4 max-w-3xl text-sm text-muted-foreground">
+              Browse every public WhatsApp Channel approved on WaveLead. Filter by category and country, compare
+              reach and creator profiles, and open sponsorship or growth conversations directly with the channel
+              owner. Every listing is reviewed before it goes live.
+            </p>
           </div>
         </div>
         <CategoryPills categories={cats} />

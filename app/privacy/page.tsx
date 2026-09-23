@@ -2,8 +2,14 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
+import { buildMetadata } from '@/lib/seo/metadata';
 
-export const metadata: Metadata = { title: 'Privacy', description: 'WaveLead privacy notice — a product by P2P Labs.' };
+export const metadata: Metadata = buildMetadata({
+  title: 'Privacy Policy',
+  description:
+    'How WaveLead handles account data, first-party analytics with Consent Mode v2, and what we deliberately never collect. A product by P2P Labs.',
+  path: '/privacy',
+});
 
 export default function PrivacyPage() {
   return (

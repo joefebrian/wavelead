@@ -9,13 +9,14 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
+import { buildMetadata } from '@/lib/seo/metadata';
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildMetadata({
   title: 'Refund Policy',
   description:
-    'How refunds work on WaveLead. Where a refund applies, it is returned net of applicable processing fees, provider fees and other non-recoverable costs.',
-  alternates: { canonical: '/refund-policy' },
-};
+    'How refunds work on WaveLead. Where a refund applies, it is returned net of applicable, documented, non-recoverable third-party transaction costs.',
+  path: '/refund-policy',
+});
 
 export default function RefundPolicyPage() {
   return (

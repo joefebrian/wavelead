@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ShieldCheck, Users, Sparkles } from 'lucide-react';
 import { countryByCode } from '@/lib/constants/countries';
+import { resolveChannelAvatar } from '@/lib/seo/channelAvatar';
 import type { PublicChannel } from '@/lib/types';
 
 export type ChannelCardVariant = 'standard' | 'compact' | 'ranking' | 'horizontal';
@@ -13,12 +14,16 @@ interface Props {
 }
 
 function Avatar({ channel, size = 'h-12 w-12 text-lg' }: { channel: PublicChannel; size?: string }) {
+  // SEO — resolveChannelAvatar returns null for volatile WhatsApp CDN URLs
+  // (which expire and were counted as broken images). Fall back to initials
+  // so crawlers never see a broken <img src>.
+  const safe = resolveChannelAvatar(channel.logo_url);
   return (
     <div className={`${size} shrink-0 rounded-xl bg-gradient-to-br from-primary/80 to-primary grid place-items-center text-primary-foreground font-bold overflow-hidden`}
       aria-hidden>
-      {channel.logo_url ? (
+      {safe ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={channel.logo_url} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+        <img src={safe} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" loading="lazy" />
       ) : (
         (channel.name || 'W').charAt(0).toUpperCase()
       )}

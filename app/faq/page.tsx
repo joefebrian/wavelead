@@ -2,12 +2,14 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
+import { buildMetadata } from '@/lib/seo/metadata';
 
-export const metadata: Metadata = {
-  title: 'FAQ — WaveLead',
-  description: 'Frequently asked questions about WaveLead, WhatsApp Channel discovery, ownership verification, activation, sponsorships and follower information.',
-  alternates: { canonical: '/faq' },
-};
+export const metadata: Metadata = buildMetadata({
+  title: 'WaveLead FAQ',
+  description:
+    'Answers about WhatsApp Channel discovery, ownership verification, Verified Owner Activation, sponsorships, follower information and Payment Protection on WaveLead.',
+  path: '/faq',
+});
 
 interface QA { q: string; a: React.ReactNode; }
 

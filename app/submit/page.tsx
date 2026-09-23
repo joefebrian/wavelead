@@ -7,11 +7,14 @@ import { categoryRepo } from '@/lib/repositories/categoryRepo';
 import { COUNTRIES } from '@/lib/constants/countries';
 import { resolveActorFromCookies } from '@/lib/auth/rbac';
 import { Button } from '@/components/ui/button';
+import { buildMetadata } from '@/lib/seo/metadata';
 
-export const metadata: Metadata = {
-  title: 'Submit a WhatsApp Channel — WaveLead',
-  description: 'Add your WhatsApp Channel to WaveLead. Submissions go through moderation before appearing publicly.',
-};
+export const metadata: Metadata = buildMetadata({
+  title: 'Submit a WhatsApp Channel',
+  description:
+    'Add your public WhatsApp Channel to WaveLead. Submissions are reviewed by moderators before going live. Owner verification and monetization tools follow after approval.',
+  path: '/submit',
+});
 
 export const dynamic = 'force-dynamic';
 
