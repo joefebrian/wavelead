@@ -129,6 +129,12 @@ export const submissionService = {
       published_at: null,
     };
     await channelRepo.insert(channel);
+    // Best-effort thank-you email. Never blocks the submission on mail failure
+    // and never re-sends thanks to the idempotency marker on the channel row.
+    try {
+      const { notifyChannelSubmitted } = await import('./channelSubmissionNotification');
+      await notifyChannelSubmitted(channel, user.email);
+    } catch { /* ignore: submission is already persisted */ }
     return { channel: { id: channel.id, slug: channel.slug, status: channel.status, name: channel.name } };
   },
 };
