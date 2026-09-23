@@ -83,6 +83,8 @@ node_modules/@next/swc-linux-arm64-musl/next-swc.linux-arm64-musl.node
 node_modules/@next/swc-linux-arm64-gnu/next-swc.linux-arm64-gnu.node
 .env
 .env.*
+# Allow the committed public template through the .env.* wildcard above.
+!.env.example
 *.env
 credentials.json
 *.key
