@@ -4,6 +4,7 @@ import Footer from '@/components/layout/Footer';
 import ChannelCard from '@/components/discovery/ChannelCard';
 import SectionHeader from '@/components/discovery/SectionHeader';
 import EmptyState from '@/components/discovery/EmptyState';
+import LoadMoreChannels from '@/components/discovery/LoadMoreChannels';
 import SponsoredCard from '@/components/promo/SponsoredCard';
 import { loadOneSponsored, shouldRenderSponsored } from '@/lib/services/promotion/deliveryHelpers';
 import { channelService } from '@/lib/services/channelService';
@@ -12,6 +13,7 @@ import type { Metadata } from 'next';
 import { buildMetadata } from '@/lib/seo/metadata';
 
 interface Params { slug: string; }
+interface SP { page?: string; }
 
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
   const { slug } = await params;
@@ -26,11 +28,19 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
 
 export const dynamic = 'force-dynamic';
 
-export default async function CountryPage({ params }: { params: Promise<Params> }) {
+const PAGE_SIZE = 30;
+
+export default async function CountryPage({
+  params, searchParams,
+}: { params: Promise<Params>; searchParams: Promise<SP> }) {
   const { slug } = await params;
+  const sp = await searchParams;
+  const page = Math.max(1, parseInt(sp.page || '1', 10) || 1);
   const country = countryBySlug(slug);
   if (!country) notFound();
-  const result = await channelService.listPublic({ country: country.code, sort: 'top', limit: 30 });
+  const result = await channelService.listPublic({
+    country: country.code, sort: 'top', limit: PAGE_SIZE, skip: (page - 1) * PAGE_SIZE,
+  });
   const sponsored = await loadOneSponsored({ placement: 'sponsored_country', country_code: country.code });
 
   return (
@@ -43,7 +53,7 @@ export default async function CountryPage({ params }: { params: Promise<Params> 
             <h1 className="mt-2 text-2xl md:text-3xl font-bold flex items-center gap-3">
               <span aria-hidden className="text-3xl">{country.flag}</span> WhatsApp Channels in {country.name}
             </h1>
-            <p className="text-sm text-muted-foreground mt-1">{result.total} channels approved on WaveLead.</p>
+            <p className="text-sm text-muted-foreground mt-1">{result.total.toLocaleString()} approved {result.total === 1 ? 'channel' : 'channels'} on WaveLead.</p>
             <p className="mt-4 max-w-3xl text-sm text-muted-foreground">
               Discover public WhatsApp Channels based in <strong>{country.name}</strong>. Every listing is
               reviewed before it goes live. Reach numbers come from real public observations on WhatsApp and,
@@ -57,10 +67,21 @@ export default async function CountryPage({ params }: { params: Promise<Params> 
           {result.items.length === 0 ? (
             <EmptyState title="No channels here yet" message="Be the first to submit a channel from this country." ctaHref="/submit" ctaLabel="Submit a Channel" />
           ) : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {sponsored[0] && shouldRenderSponsored(result.items.length) && <SponsoredCard data={sponsored[0]} sourcePath={`/country/${slug}`} />}
-              {result.items.map((c) => <ChannelCard key={c.id} channel={c} />)}
-            </div>
+            <>
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {sponsored[0] && shouldRenderSponsored(result.items.length) && <SponsoredCard data={sponsored[0]} sourcePath={`/country/${slug}`} />}
+                {result.items.map((c) => <ChannelCard key={c.id} channel={c} />)}
+              </div>
+              <LoadMoreChannels
+                initialCount={result.items.length}
+                total={result.total}
+                pageSize={PAGE_SIZE}
+                page={page}
+                query={{ country: country.code, sort: 'top' }}
+                hrefQuery={{}}
+                basePath={`/country/${slug}`}
+              />
+            </>
           )}
         </section>
       </main>

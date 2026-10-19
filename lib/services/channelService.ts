@@ -21,8 +21,9 @@ export const channelService = {
   async listPublic({ category, country, q, sort = 'newest', limit = 24, skip = 0 }: ListArgs = {}): Promise<{ items: PublicChannel[]; total: number }> {
     if (q && q.trim()) {
       // Route text queries through the weighted search service, which
-      // itself applies the same buildPublicChannelFilter policy.
-      return searchService.searchApproved({ q, category, country, limit });
+      // itself applies the same buildPublicChannelFilter policy. `skip` is
+      // forwarded so search results paginate like every other listing.
+      return searchService.searchApproved({ q, category, country, limit, skip });
     }
     const filter: Filter<Channel> = buildPublicChannelMongoFilter({ status: 'approved' });
     if (category) {
@@ -43,7 +44,10 @@ export const channelService = {
       ]);
       return { items: items.map(sanitize), total };
     }
-    const sortSpec: Sort = { created_at: -1 };
+    // `newest` needs a unique final sort key too, otherwise rows sharing a
+    // created_at timestamp (bulk approvals do this) can swap places between
+    // page requests and be duplicated or skipped while paginating.
+    const sortSpec: Sort = { created_at: -1, id: 1 };
     const [items, total] = await Promise.all([
       channelRepo.list({ filter, sort: sortSpec, limit, skip }),
       channelRepo.count(filter),

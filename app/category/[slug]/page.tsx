@@ -5,6 +5,7 @@ import ChannelCard from '@/components/discovery/ChannelCard';
 import CategoryPills from '@/components/discovery/CategoryPills';
 import SectionHeader from '@/components/discovery/SectionHeader';
 import EmptyState from '@/components/discovery/EmptyState';
+import LoadMoreChannels from '@/components/discovery/LoadMoreChannels';
 import SponsoredCard from '@/components/promo/SponsoredCard';
 import { loadOneSponsored, shouldRenderSponsored } from '@/lib/services/promotion/deliveryHelpers';
 import { channelService } from '@/lib/services/channelService';
@@ -14,6 +15,7 @@ import type { Metadata } from 'next';
 import { buildMetadata } from '@/lib/seo/metadata';
 
 interface Params { slug: string; }
+interface SP { page?: string; }
 
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
   const { slug } = await params;
@@ -28,13 +30,19 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
 
 export const dynamic = 'force-dynamic';
 
-export default async function CategoryPage({ params }: { params: Promise<Params> }) {
+const PAGE_SIZE = 30;
+
+export default async function CategoryPage({
+  params, searchParams,
+}: { params: Promise<Params>; searchParams: Promise<SP> }) {
   const { slug } = await params;
+  const sp = await searchParams;
+  const page = Math.max(1, parseInt(sp.page || '1', 10) || 1);
   const cat = await categoryRepo.findBySlug(slug);
   if (!cat) notFound();
 
   const [result, cats] = await Promise.all([
-    channelService.listPublic({ category: slug, sort: 'top', limit: 30 }),
+    channelService.listPublic({ category: slug, sort: 'top', limit: PAGE_SIZE, skip: (page - 1) * PAGE_SIZE }),
     discoveryService.getCategoryCounts().then((rows) => rows.slice(0, 12)),
   ]);
   // Note: sort='top' means organic top ranking within THIS category. Sponsored
@@ -50,7 +58,7 @@ export default async function CategoryPage({ params }: { params: Promise<Params>
           <div className="container py-8">
             <div className="text-xs font-semibold uppercase tracking-widest text-primary">Category</div>
             <h1 className="mt-2 text-2xl md:text-3xl font-bold">{cat.name} WhatsApp Channels</h1>
-            <p className="text-sm text-muted-foreground mt-1">{result.total} channels approved on WaveLead.</p>
+            <p className="text-sm text-muted-foreground mt-1">{result.total.toLocaleString()} approved {result.total === 1 ? 'channel' : 'channels'} on WaveLead.</p>
             <p className="mt-4 max-w-3xl text-sm text-muted-foreground">
               Browse public WhatsApp Channels approved on WaveLead in the <strong>{cat.name}</strong> category.
               Every listing is reviewed before it goes live. Open a channel profile to review its audience
@@ -65,10 +73,21 @@ export default async function CategoryPage({ params }: { params: Promise<Params>
           {result.items.length === 0 ? (
             <EmptyState title="No channels here yet" message="Be the first to submit a channel to this category." ctaHref="/submit" ctaLabel="Submit a Channel" />
           ) : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {sponsored[0] && shouldRenderSponsored(result.items.length) && <SponsoredCard data={sponsored[0]} sourcePath={`/category/${slug}`} />}
-              {result.items.map((c) => <ChannelCard key={c.id} channel={c} />)}
-            </div>
+            <>
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {sponsored[0] && shouldRenderSponsored(result.items.length) && <SponsoredCard data={sponsored[0]} sourcePath={`/category/${slug}`} />}
+                {result.items.map((c) => <ChannelCard key={c.id} channel={c} />)}
+              </div>
+              <LoadMoreChannels
+                initialCount={result.items.length}
+                total={result.total}
+                pageSize={PAGE_SIZE}
+                page={page}
+                query={{ category: slug, sort: 'top' }}
+                hrefQuery={{}}
+                basePath={`/category/${slug}`}
+              />
+            </>
           )}
         </section>
       </main>
