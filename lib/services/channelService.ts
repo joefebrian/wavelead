@@ -31,9 +31,19 @@ export const channelService = {
       filter.category_id = cat.id;
     }
     if (country) filter.country_code = country.toUpperCase();
-    let sortSpec: Sort = { created_at: -1 };
-    if (sort === 'top') sortSpec = { follower_count: -1 };
-    if (sort === 'trending') sortSpec = { is_featured: -1, follower_count: -1 };
+    // Finalist hotfix: 'top' / 'trending' rank on the EFFECTIVE follower count
+    // (max of owner-submitted and publicly-observed), which is the number the
+    // cards actually display. Ranking on `follower_count` alone left every
+    // real submitted channel tied at 0. Category/country scoping is already
+    // applied to `filter`, so it is honoured BEFORE ranking.
+    if (sort === 'top' || sort === 'trending') {
+      const [items, total] = await Promise.all([
+        channelRepo.listRanked({ filter, limit, skip, featuredFirst: sort === 'trending' }),
+        channelRepo.count(filter),
+      ]);
+      return { items: items.map(sanitize), total };
+    }
+    const sortSpec: Sort = { created_at: -1 };
     const [items, total] = await Promise.all([
       channelRepo.list({ filter, sort: sortSpec, limit, skip }),
       channelRepo.count(filter),
@@ -53,9 +63,8 @@ export const channelService = {
   },
 
   async getFeatured(limit = 6): Promise<PublicChannel[]> {
-    const items = await channelRepo.list({
+    const items = await channelRepo.listRanked({
       filter: buildPublicChannelMongoFilter({ status: 'approved', is_featured: true }),
-      sort: { follower_count: -1 },
       limit,
     });
     return items.map(sanitize);

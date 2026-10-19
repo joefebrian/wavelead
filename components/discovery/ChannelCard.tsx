@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { ShieldCheck, Users, Sparkles } from 'lucide-react';
 import { countryByCode } from '@/lib/constants/countries';
 import { resolveChannelAvatar } from '@/lib/seo/channelAvatar';
+import { effectiveFollowerCount } from '@/lib/utils/followerCount';
 import type { PublicChannel } from '@/lib/types';
 
 export type ChannelCardVariant = 'standard' | 'compact' | 'ranking' | 'horizontal';
@@ -14,10 +15,11 @@ interface Props {
 }
 
 function Avatar({ channel, size = 'h-12 w-12 text-lg' }: { channel: PublicChannel; size?: string }) {
-  // SEO — resolveChannelAvatar returns null for volatile WhatsApp CDN URLs
-  // (which expire and were counted as broken images). Fall back to initials
-  // so crawlers never see a broken <img src>.
-  const safe = resolveChannelAvatar(channel.logo_url);
+  // resolveChannelAvatar swaps volatile WhatsApp CDN URLs for WaveLead's
+  // stable /api/channels/<slug>/avatar cache URL, so the real avatar renders
+  // and crawlers never see an expiring link. Initials only when there is no
+  // usable avatar at all.
+  const safe = resolveChannelAvatar(channel.logo_url, channel.slug);
   return (
     <div className={`${size} shrink-0 rounded-xl bg-gradient-to-br from-primary/80 to-primary grid place-items-center text-primary-foreground font-bold overflow-hidden`}
       aria-hidden>
@@ -47,11 +49,10 @@ export default function ChannelCard({ channel, variant = 'standard', rank, spons
   const href = `/channel/${channel.slug}`;
   // M13 — verified > owner-submitted > WhatsApp public/observed. The public
   // count is never labelled "Verified"; it's just an observed number that
-  // helps discovery.
-  const publicCount = typeof channel.public_followers_count === 'number' && channel.public_followers_count > 0
-    ? channel.public_followers_count
-    : 0;
-  const displayCount = channel.follower_count > 0 ? channel.follower_count : publicCount;
+  // helps discovery. `effectiveFollowerCount` is the SAME value the ranking
+  // queries sort on, so a card can never display a number that contradicts
+  // its position in the list.
+  const displayCount = effectiveFollowerCount(channel);
   const followers = displayCount > 0 ? `${Number(displayCount).toLocaleString()} followers` : 'Follower count unavailable';
 
   if (variant === 'ranking') {

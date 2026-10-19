@@ -63,8 +63,9 @@ export default function SponsoredCard({ data, sourcePath }: { data: SponsoredCar
       </div>
       <div className="flex items-start gap-3">
         {(() => {
-          // SEO — never emit an <img> for a known-volatile (WhatsApp CDN) URL.
-          const safe = resolveChannelAvatar(ch.logo_url);
+          // Volatile WhatsApp CDN URLs are served through WaveLead's stable
+          // first-party avatar cache rather than hotlinked.
+          const safe = resolveChannelAvatar(ch.logo_url, ch.slug);
           return safe
             ? <img src={safe} alt={ch.name} className="h-12 w-12 rounded-full object-cover border" loading="lazy" />
             : <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center font-semibold">{ch.name[0]}</div>;

@@ -51,6 +51,11 @@ export const COLLECTIONS = {
   OWNER_PAYOUT_METHODS: 'owner_payout_methods',
   // M11-Batch2A — owner-submitted follower-count evidence (append-only history).
   CHANNEL_AUDIENCE_SNAPSHOTS: 'channel_audience_snapshots',
+  // Finalist hotfix — first-party cache of public channel avatar bytes.
+  // Additive cache only: WhatsApp CDN avatar URLs are pre-signed and expire,
+  // so we keep our own copy and serve it from a stable /api/channels/:slug/avatar
+  // URL instead of hotlinking a volatile CDN. Never holds private data.
+  CHANNEL_AVATAR_CACHE: 'channel_avatar_cache',
   // M11-Batch3 — Cookie consent decisions (append-only audit trail).
   CONSENT_RECORDS: 'consent_records',
   // M11-Batch3 — First-party product analytics events (append-only, consented).

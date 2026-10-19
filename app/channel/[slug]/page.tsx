@@ -160,12 +160,14 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
             <div className="flex flex-col md:flex-row md:items-center gap-6">
               <div className="h-20 w-20 md:h-24 md:w-24 rounded-2xl bg-gradient-to-br from-primary/80 to-primary grid place-items-center text-primary-foreground text-4xl font-extrabold shrink-0 overflow-hidden" aria-hidden>
                 {(() => {
-                  // SEO — never emit an <img> pointing at a known-volatile
-                  // (WhatsApp CDN) URL. Volatile URLs expire and were
-                  // responsible for the 20 broken external images flagged by
-                  // the audit. Fall back to the local WaveLead SVG so
-                  // crawlers only see a 200-OK asset.
-                  const safe = resolveChannelAvatar(channel.logo_url);
+                  // Volatile WhatsApp CDN URLs expire and were responsible for
+                  // the 20 broken external images flagged by the SEO audit, so
+                  // they are never emitted directly. They are served through
+                  // WaveLead's stable first-party avatar cache
+                  // (/api/channels/<slug>/avatar), which falls back to the
+                  // local SVG when no real avatar can be obtained — crawlers
+                  // only ever see a 200-OK first-party asset.
+                  const safe = resolveChannelAvatar(channel.logo_url, channel.slug);
                   if (safe) {
                     return (
                       // eslint-disable-next-line @next/next/no-img-element

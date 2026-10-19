@@ -7678,3 +7678,419 @@ agent_communication:
       rising, sitemap, sponsored delivery, curation) with NO false positives on
       organic channels. The implementation is purely a visibility projection with
       NO data mutations.
+
+#====================================================================================================
+# WAVELEAD FINALIST HOTFIX — REAL CHANNEL AVATARS + HONEST FOLLOWER RANKING
+#====================================================================================================
+
+user_problem_statement: |
+  The production inventory cleanup shipped. Real submitted WhatsApp Channels
+  are now publicly visible, but their original channel avatars do not render —
+  generic letter placeholders appear on /top, /trending, the Channel
+  Directory, and possibly the homepage and channel detail. The avatar IS
+  fetched and displayed correctly during Submit Channel -> Fetch Metadata, so
+  find out why it does not survive into public discovery.
+
+  Additionally: the production screenshot shows channels with unavailable
+  follower counts ranked ABOVE channels with millions of observed followers on
+  /top. Audit whether /top (and "Popular on WaveLead" on /trending) sorts by
+  the latest valid numeric public follower observation.
+
+  CONSTRAINTS: diagnose before changing anything; smallest possible fix; reuse
+  existing SSRF-safe validation and existing media storage; no unrestricted
+  image proxying; no browser scraping of WhatsApp; no new paid dependency; no
+  indefinite hotlinking of temporary CDN images; never generate fake avatars
+  or invent follower numbers. Do NOT modify statuses, owner verification,
+  visibility policy, sponsorship, promotion, payments, Marketplace 90/10,
+  Campaign Commitment 5%, SMTP, GA4, Support, auth/RBAC or production
+  secrets. Do not delete or seed production records. Do not auto-deploy.
+
+backend:
+  - task: "DIAGNOSIS — avatar pipeline traced end to end (read-only)"
+    implemented: true
+    working: true
+    file: "scripts/diagnose_avatar_pipeline.mjs, scripts/diagnose_avatar_samples.mjs"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Traced: ogFetcher -> enrichmentService -> submissionService ->
+          channels.logo_url -> sanitizeChannel -> ChannelCard -> browser.
+
+          A. Field            : `logo_url`, set from `og:image`
+                                (enrichmentService.ts:190).
+          B. Persisted        : YES (submissionService.ts:106).
+          C. Survives review  : YES — moderation never clears logo_url.
+          D. In public DTO    : YES — sanitizeChannel keeps it in `...rest`;
+                                confirmed present in GET /api/channels and
+                                GET /api/channels/:slug responses.
+          E. Card reads it    : YES — ChannelCard -> resolveChannelAvatar.
+          F. RENDERER REJECTS IT  <-- ROOT CAUSE.
+             lib/seo/channelAvatar.ts `resolveChannelAvatar` returned null for
+             EVERY hostname ending in .whatsapp.net / .whatsapp.com /
+             .fbcdn.net. Introduced by the earlier SEO remediation to stop the
+             crawler reporting 20 broken external images. It suppressed the
+             broken ones AND every working one, so initials rendered for all
+             real channels.
+          G. External URLs    : real avatars are on mmg.whatsapp.net and are
+             PRE-SIGNED (query keys ccb/_nc_sid/_nc_ohc/_nc_oc/oh/oe). Live
+             probe of real records: agus-mulyadi HTTP 200 image/jpeg 21589B,
+             bali-united-fc HTTP 200 35652B, vijay-deverakonda HTTP 404
+             (already expired), static.whatsapp.net/rsrc.php/... HTTP 200
+             image/png 15281B (stable, unsigned — this is WhatsApp's generic
+             placeholder served when a channel has no picture). Re-reading the
+             channel's own og:image RIGHT NOW returns a fresh working URL.
+             => expiry is REAL but partial; suppression was far too broad.
+          H. Fallback timing  : rendered unconditionally at SSR because the
+             resolver returned null — not after an HTTP failure. No network
+             request was ever made for these avatars.
+          Next.js image config ruled out: images.unoptimized = true and the
+          cards use plain <img>, so remotePatterns was never involved.
+
+          Scripts perform ZERO writes and print hostnames / path shapes /
+          query-parameter NAMES only — never signed URL values.
+
+  - task: "FIX — persistent first-party channel avatar cache"
+    implemented: true
+    working: true
+    file: "lib/services/media/channelAvatarCache.ts, app/api/channels/[slug]/avatar/route.ts, lib/seo/channelAvatar.ts, lib/db/collections.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: |
+          ✅ VERIFIED: Avatar cache working correctly. All 9 backend requirements PASS.
+          
+          TEST 1 (Avatar renders real bytes): ✅ PASS
+          - PNG magic 89504e47 verified
+          - Content-Type: image/png
+          - ETag present: "f82a074cb2b2a8bb2a62d4cdb3cc75c9"
+          - Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+          - Cache row created with byte_size 15281 (> 1000)
+          
+          TEST 2 (Caching): ✅ PASS
+          - Second request with If-None-Match returns 304
+          - Cache hit working correctly
+          
+          TEST 3 (Fallback): ✅ PASS
+          - logo_url = null → 302 to /brand/channel-fallback.svg
+          - Expired mmg.whatsapp.net URL → 302 to placeholder (safe fallback)
+          - NEVER returns 5xx
+          
+          TEST 4 (Visibility policy): ✅ PASS
+          - is_demo:true → 404, no cache row
+          - is_test_fixture:true → 404, no cache row
+          - pending_review → 404, no cache row
+          - rejected → 404, no cache row
+          - Cannot be used to probe hidden records
+          
+          TEST 5 (SSRF protection): ✅ PASS
+          - Verified via vitest suite (tests/finalist_avatar_hotfix.test.ts)
+          - isAllowedAvatarSource rejects http://, evil hosts, IP literals, internal targets
+          - Accepts only HTTPS WhatsApp/Meta CDN hosts
+          
+          TEST 6 (DTO unchanged): ✅ PASS
+          - GET /api/channels/<slug> returns logo_url unchanged
+          - Original: https://static.whatsapp.net/rsrc.php/v4/yO/r/rukeqTVNJDY.png
+          - Returned: https://static.whatsapp.net/rsrc.php/v4/yO/r/rukeqTVNJDY.png
+          
+          VITEST SUITES: 114/114 PASS
+          - tests/finalist_avatar_hotfix.test.ts (31/31)
+          - tests/seo_remediation.test.ts (43/43)
+          - tests/finalist_inventory_cleanup.test.ts (18/18)
+          - tests/m13_whatsapp_enrichment.test.ts (22/22)
+        -working: true
+        -agent: "main"
+        -comment: |
+          Because the upstream URLs genuinely expire, simply un-blocking them
+          would regress the SEO broken-image finding within weeks. Instead the
+          volatile URL is swapped for a STABLE first-party URL:
+
+            resolveChannelAvatar(logo_url, slug)
+              volatile host -> '/api/channels/<slug>/avatar'
+              stable host   -> returned unchanged
+              unusable      -> null (initials)
+
+          The slug argument is OPTIONAL, so the previous suppress-to-null
+          behaviour is preserved for any caller without a slug — the existing
+          SEO tests asserting resolveChannelAvatar(volatileUrl) === null still
+          pass unchanged.
+
+          New service caches the actual bytes in an ADDITIVE collection
+          `channel_avatar_cache` ({channel_id, content_type, byte_size, etag,
+          source_host, source_key, fetched_at, data}). Avatars are ~15-40KB,
+          far inside the BSON limit. 7-day TTL; the entry is keyed to a sha256
+          of logo_url so the existing whatsapp-refresh cron changing logo_url
+          naturally invalidates it.
+
+          NOT an open proxy — the URL is never user input:
+            • only the channel's OWN stored logo_url, or the og:image re-read
+              from that channel's OWN WhatsApp page via the EXISTING SSRF-safe
+              ogFetcher (which only ever talks to whatsapp.com);
+            • HTTPS-only host allowlist (.whatsapp.net/.whatsapp.com/.fbcdn.net),
+              bare IPv4/IPv6 literals rejected;
+            • redirects followed manually and re-validated per hop (max 3);
+            • 8s timeout, 512KB cap, image/* content-type only.
+
+          Route GET /api/channels/<slug>/avatar enforces the SAME canonical
+          public-visibility policy, so demo/fixture/pending/rejected channels
+          404 and the endpoint cannot confirm a hidden record exists. Serves
+          ETag + Cache-Control, supports If-None-Match -> 304, and on any
+          failure redirects (302) to the LOCAL placeholder SVG instead of
+          emitting a 5xx or a broken image. Never synthesises an avatar.
+
+          Self-healing: when the stored URL has expired, the service re-reads
+          the channel's own public page for a fresh og:image. It does NOT
+          write back to the channels collection — only the additive cache is
+          written, so channel records stay untouched.
+
+          Verified live before writing tests: 200 image/png 15281B
+          (630x630 real PNG), 304 on If-None-Match, 404 for demo/pending/
+          unknown slugs, bytes persisted in channel_avatar_cache.
+
+  - task: "FIX — rank on the effective follower count"
+    implemented: true
+    working: true
+    file: "lib/utils/followerCount.ts, lib/repositories/channelRepo.ts, lib/services/discoveryService.ts, lib/services/channelService.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: |
+          ✅ VERIFIED: Follower ranking working correctly.
+          
+          TEST 7 (Ranking correct): ✅ PASS
+          - Created 3 approved ID channels:
+            • follower_count=0, public_followers_count=1,300,000
+            • follower_count=0, public_followers_count=42,000
+            • follower_count=0, public_followers_count=0
+          - GET /api/channels/top?country=ID orders them correctly:
+            1.3M → 42k → unavailable (LAST)
+          - Country filter applied BEFORE ranking
+          - Order identical across repeated calls (deterministic tie-break)
+          - Pagination neither repeats nor skips rows
+          
+          TEST 8 (No fabrication): ✅ PASS
+          - effectiveFollowerCount never invents numbers
+          - Stored follower_count: 0 → 0 (unchanged)
+          - Stored public_followers_count: 12345 → 12345 (unchanged)
+          - Values byte-identical after exercising all surfaces
+          
+          TEST 9 (Inventory unchanged): ✅ PASS
+          - Demo records still hidden from public discovery
+          - Real approved inventory still visible
+          - Approved non-verified channel NOT labelled verified
+          - Verification status preserved correctly
+        -working: true
+        -agent: "main"
+        -comment: |
+          ROOT CAUSE CONFIRMED WITH REAL DATA. Real submitted channels hold
+          follower_count = 0 with the observed figure in
+          public_followers_count (agus-mulyadi 54,000; bali-united-fc 42,000;
+          vijay-deverakonda 1,300,000). The cards DISPLAYED
+          `follower_count || public_followers_count`, but every ranking query
+          sorted on `follower_count` ALONE — so all real channels tied at 0 and
+          came back in arbitrary natural order. That is exactly why a channel
+          showing "Follower count unavailable" outranked one showing 1.3M.
+
+          New lib/utils/followerCount.ts is the single source of truth:
+          effectiveFollowerCount() = max(follower_count, public_followers_count),
+          plus the matching Mongo $addFields expression and a deterministic
+          sort (effective desc, follower_count desc, id asc — id is a unique
+          UUID so the order is total and pagination cannot repeat or skip).
+          Unknown counts collapse to 0 and therefore sort BELOW every known
+          numeric count. No number is invented.
+
+          channelRepo.listRanked() implements it as an aggregation; adopted by
+          discoveryService.getTop / getPopular / getFeatured and
+          channelService.listPublic ('top' and 'trending') and
+          channelService.getFeatured. Category/country scoping stays in $match,
+          i.e. filters apply BEFORE ranking. ChannelCard now renders
+          effectiveFollowerCount(), so a card can never display a number that
+          contradicts its position.
+
+          Channel DETAIL keeps its richer M13 precedence chain (verified
+          snapshot > owner-submitted > observed) with its honest sub-labels —
+          deliberately unchanged.
+
+          Verified live: /api/channels/top?country=ID returned
+          1,300,000 -> 42,000 -> unavailable, in that order.
+
+frontend:
+  - task: "Consistent avatar resolution across every public surface"
+    implemented: true
+    working: true
+    file: "components/discovery/ChannelCard.tsx, components/discovery/ChannelAvatar.tsx, components/promo/SponsoredCard.tsx, app/channel/[slug]/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          All four avatar call sites now pass the slug, so homepage,
+          directory, trending, /top, category/country listings, related
+          channels (which render ChannelCard) and channel detail all resolve
+          through the one canonical resolver. Verified by DOM inspection on
+          /top: <img src="/api/channels/<slug>/avatar"> with naturalWidth 630
+          — real bytes, not a placeholder — while a channel with no avatar
+          still shows initials. Sizing/rounding classes unchanged, so there is
+          no layout shift; alt text and aria-hidden behaviour untouched.
+          Raw logo_url <img> tags remain only under /dashboard and /admin
+          (private owner/admin surfaces, out of scope).
+
+metadata:
+  created_by: "main_agent"
+  version: "1.1"
+  test_sequence: 2
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "FIX — persistent first-party channel avatar cache"
+    - "FIX — rank on the effective follower count"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    -agent: "main"
+    -message: |
+      FOCUSED VERIFICATION REQUESTED — avatar + ranking ONLY.
+
+      New targeted suite tests/finalist_avatar_hotfix.test.ts: 31/31 passing
+      locally. Adjacent suites re-run and passing: seo_remediation (43),
+      finalist_inventory_cleanup (18), m06_public_fixture_isolation (9),
+      m06_hardening, m10_homepage_launch, m18_1_post_launch,
+      m08a_sponsored_ranking, m19_2_polish, m13_whatsapp_enrichment,
+      m12_combined_review, m04, m05, m051, m17_1, m19, m14_beta_ux, sec_patch.
+      TSC PASS, yarn build PASS.
+
+      ONE INTENTIONAL TEST EDIT: tests/seo_remediation.test.ts "ChannelCard and
+      channel/[slug] and SponsoredCard all use resolveChannelAvatar" asserted
+      the literal source string `resolveChannelAvatar(channel.logo_url)`. The
+      call sites now pass the slug, so the assertion was updated and a NEW
+      assertion added proving a volatile URL still never leaves as an http(s)
+      URL. The original suppression tests are untouched and still pass.
+
+      KNOWN PRE-EXISTING FAILURES — DO NOT FIX, DO NOT INVESTIGATE (verified to
+      fail identically with my diff stashed): tests/m17.test.ts GA4
+      'BLOCKED_KEYS', and 2 source-string failures in tests/m18.test.ts. GA4
+      and SEO metadata are frozen.
+
+      PLEASE VERIFY (dev server on :3000, MONGO_URL/DB_NAME from .env; create
+      your own fixtures and clean them up, including any channel_avatar_cache
+      rows you cause):
+      1. AVATAR RENDERS: an approved, publicly-visible channel whose logo_url
+         points at a REAL reachable WhatsApp-hosted image (use the stable
+         https://static.whatsapp.net/rsrc.php/v4/yO/r/rukeqTVNJDY.png) serves
+         actual image bytes from GET /api/channels/<slug>/avatar — assert the
+         PNG magic number 89504e47, Content-Type image/*, an ETag, and a
+         Cache-Control max-age. Confirm a channel_avatar_cache row was created
+         with byte_size > 1000.
+      2. CACHING: second request is served from the cache; If-None-Match with
+         the returned ETag yields 304.
+      3. FALLBACK: a channel with logo_url = null redirects 302 to
+         /brand/channel-fallback.svg. A channel with an EXPIRED signed
+         mmg.whatsapp.net URL must fail safely — 302 to the placeholder or a
+         200 from a previously cached copy — and must NEVER return 5xx and
+         NEVER fabricate an image.
+      4. VISIBILITY: the avatar endpoint 404s for is_demo:true, is_test_fixture:
+         true, slug ^test-, QA slug b2-ch-<8hex>, pending_review and rejected
+         channels — it must not be usable to probe whether a hidden record
+         exists. Confirm no cache row is created for those.
+      5. SSRF: confirm the endpoint cannot be redirected at an arbitrary host.
+         Unit-check isAllowedAvatarSource rejects http://, https://evil.example.com,
+         127.0.0.1, 169.254.169.254, 10.0.0.5, [::1], and the suffix-confusion
+         host https://whatsapp.net.evil.com.
+      6. DTO: GET /api/channels/<slug> and the listing endpoints still return
+         logo_url unchanged.
+      7. RANKING: insert approved ID channels with follower_count 0 and
+         public_followers_count 1,300,000 / 42,000 / 0. Assert
+         GET /api/channels/top?country=ID and GET /api/channels?sort=top order
+         them 1.3M, then 42k, then the unavailable one LAST. Assert channels
+         with no observation form a contiguous block at the END. Assert the
+         country filter is applied before ranking, the order is identical
+         across repeated calls, and limit/skip pagination neither repeats nor
+         skips a row.
+      8. NO FABRICATION: effectiveFollowerCount must never turn absent or
+         negative inputs into a positive number, and the stored
+         follower_count / public_followers_count values must be byte-identical
+         after exercising every surface.
+      9. INVENTORY UNCHANGED: confirmed demo records are still hidden
+         everywhere, real approved inventory is still visible, and an approved
+         non-verified channel is still never labelled verified.
+
+      DO NOT: approve/reject/verify any channel, change any channel's
+      logo_url, delete records you did not create, touch payments/PayPal/
+      marketplace/campaign money paths, modify auth/RBAC, or run the full
+      suite. Report defects back to me rather than editing application source.
+
+
+    -agent: "testing"
+    -message: |
+      ✅ BACKEND VERIFICATION COMPLETE — WaveLead Finalist Avatar + Ranking Hotfix
+      
+      ALL 9 REQUIREMENTS VERIFIED (9/9 PASS):
+      
+      1. ✅ Avatar renders real bytes: PNG magic 89504e47, Content-Type image/png, 
+         ETag present, Cache-Control max-age present, cache row created (15281 bytes)
+      
+      2. ✅ Caching works: Second request with If-None-Match returns 304
+      
+      3. ✅ Fallback works: logo_url=null → 302 to placeholder; expired URL → 302 
+         (safe fallback); NEVER 5xx
+      
+      4. ✅ Visibility policy enforced: demo/fixture/pending/rejected all 404, 
+         no cache rows created, cannot probe hidden records
+      
+      5. ✅ SSRF protection: Verified via vitest (isAllowedAvatarSource rejects 
+         http://, evil hosts, IP literals, internal targets)
+      
+      6. ✅ DTO unchanged: GET /api/channels/<slug> returns logo_url unchanged
+      
+      7. ✅ Ranking correct: 1.3M → 42k → unavailable (LAST); country filter 
+         applied BEFORE ranking; deterministic order; pagination works correctly
+      
+      8. ✅ No fabrication: effectiveFollowerCount never invents numbers; stored 
+         values byte-identical after exercising all surfaces
+      
+      9. ✅ Inventory unchanged: Demo hidden, approved visible, verification 
+         status preserved
+      
+      VITEST SUITES: 114/114 PASS
+      - tests/finalist_avatar_hotfix.test.ts (31/31)
+      - tests/seo_remediation.test.ts (43/43)
+      - tests/finalist_inventory_cleanup.test.ts (18/18)
+      - tests/m13_whatsapp_enrichment.test.ts (22/22)
+      
+      KNOWN PRE-EXISTING FAILURES (IGNORED as instructed):
+      - tests/m17.test.ts GA4 'BLOCKED_KEYS' assertion
+      - tests/m18.test.ts 2 source-string failures
+      
+      KEY FINDINGS:
+      1. Avatar cache service (lib/services/media/channelAvatarCache.ts) correctly 
+         implements SSRF protection, caching, and fallback behavior
+      2. Avatar endpoint (/api/channels/[slug]/avatar/route.ts) enforces canonical 
+         public-visibility policy
+      3. Follower ranking (lib/utils/followerCount.ts) correctly uses 
+         max(follower_count, public_followers_count) with deterministic tie-break
+      4. channelRepo.listRanked() adopted by all ranking surfaces (top, popular, 
+         featured, trending)
+      5. NO data mutations: visibility is purely a projection
+      6. NO fabrication: effectiveFollowerCount never invents numbers
+      7. Cache entries created only for publicly-visible channels
+      8. Expired URLs fail safely (302 to placeholder, never 5xx)
+      
+      CONCLUSION: The Finalist Avatar + Ranking Hotfix is PRODUCTION-READY. Both 
+      fixes working correctly with NO regressions. Avatar cache provides stable 
+      first-party URLs for real channel avatars while maintaining SSRF protection 
+      and visibility policy. Follower ranking now correctly orders channels by 
+      effective follower count with deterministic tie-breaking.

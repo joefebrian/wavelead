@@ -3,6 +3,8 @@ import { resolveChannelAvatar, CHANNEL_FALLBACK_AVATAR } from '@/lib/seo/channel
 interface Props {
   logoUrl: string | null | undefined;
   name: string | null | undefined;
+  /** Channel slug — required to resolve the stable first-party avatar URL. */
+  slug?: string | null;
   size?: string;
   alt?: string;
   /**
@@ -13,8 +15,8 @@ interface Props {
   testId?: string;
 }
 
-export default function ChannelAvatar({ logoUrl, name, size = 'h-12 w-12 text-lg', alt = '', preferImage = false, testId }: Props): React.JSX.Element {
-  const safe = resolveChannelAvatar(logoUrl);
+export default function ChannelAvatar({ logoUrl, name, slug, size = 'h-12 w-12 text-lg', alt = '', preferImage = false, testId }: Props): React.JSX.Element {
+  const safe = resolveChannelAvatar(logoUrl, slug);
   const initial = ((name || 'W').trim().charAt(0) || 'W').toUpperCase();
   return (
     <div

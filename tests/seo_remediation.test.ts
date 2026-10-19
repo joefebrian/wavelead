@@ -182,10 +182,22 @@ describe('SEO §5 volatile WhatsApp CDN avatars are never rendered', () => {
   it('exposes a stable local fallback path (used when caller wants to prefer an <img>)', () => {
     expect(CHANNEL_FALLBACK_AVATAR).toBe('/brand/channel-fallback.svg');
   });
-  it('ChannelCard and channel/[slug] and SponsoredCard all use resolveChannelAvatar', () => {
-    expect(read('components/discovery/ChannelCard.tsx')).toContain('resolveChannelAvatar(channel.logo_url)');
-    expect(read('app/channel/[slug]/page.tsx')).toContain('resolveChannelAvatar(channel.logo_url)');
-    expect(read('components/promo/SponsoredCard.tsx')).toContain('resolveChannelAvatar(ch.logo_url)');
+  it('ChannelCard and channel/[slug] and SponsoredCard all use resolveChannelAvatar WITH the slug', () => {
+    // Finalist hotfix: the resolver now needs the slug so it can swap a
+    // volatile WhatsApp CDN URL for WaveLead's stable first-party cache URL
+    // (/api/channels/<slug>/avatar) instead of discarding the avatar. The SEO
+    // guarantee is unchanged — a volatile URL is still never emitted as an
+    // <img src> — but the real avatar is now actually displayed.
+    expect(read('components/discovery/ChannelCard.tsx')).toContain('resolveChannelAvatar(channel.logo_url, channel.slug)');
+    expect(read('app/channel/[slug]/page.tsx')).toContain('resolveChannelAvatar(channel.logo_url, channel.slug)');
+    expect(read('components/promo/SponsoredCard.tsx')).toContain('resolveChannelAvatar(ch.logo_url, ch.slug)');
+  });
+  it('a volatile URL is still never emitted directly — it becomes a first-party path', () => {
+    for (const url of cases) {
+      const out = resolveChannelAvatar(url, 'some-slug');
+      expect(out).toBe('/api/channels/some-slug/avatar');
+      expect(out?.startsWith('http')).toBe(false);
+    }
   });
 });
 

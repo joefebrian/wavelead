@@ -38,10 +38,11 @@ async function fillSection(section: Section, limit: number, fallback: () => Prom
 export const discoveryService = {
   async getPopular(limit = 6): Promise<PublicChannel[]> {
     return fillSection('popular', limit, async () => {
-      // Fallback: featured then follower_count. Approved only.
-      const items = await channelRepo.list({
+      // Fallback: featured first, then the EFFECTIVE follower count (the same
+      // number the cards display). Approved + publicly-visible only.
+      const items = await channelRepo.listRanked({
         filter: publicFilter({ status: 'approved' }),
-        sort: { is_featured: -1, follower_count: -1 },
+        featuredFirst: true,
         limit: limit * 2,
       });
       return items.map(sanitize);
@@ -62,9 +63,8 @@ export const discoveryService = {
 
   async getFeatured(limit = 6): Promise<PublicChannel[]> {
     return fillSection('featured', limit, async () => {
-      const items = await channelRepo.list({
+      const items = await channelRepo.listRanked({
         filter: publicFilter({ status: 'approved', is_featured: true }),
-        sort: { follower_count: -1 },
         limit: limit * 2,
       });
       return items.map(sanitize);
@@ -88,7 +88,10 @@ export const discoveryService = {
     // every other public surface.
     const filter: Record<string, unknown> = publicFilter({ status: 'approved' }) as Record<string, unknown>;
     if (country) filter.country_code = country.toUpperCase();
-    const items = await channelRepo.list({ filter, sort: { follower_count: -1 }, limit });
+    // Finalist hotfix: country/category scoping is applied in $match BEFORE
+    // ranking, and ranking uses the EFFECTIVE follower count so an observed
+    // 1.3M channel can no longer sit below one with no observation at all.
+    const items = await channelRepo.listRanked({ filter, limit });
     return items.map(sanitize);
   },
 
