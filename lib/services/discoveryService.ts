@@ -82,7 +82,11 @@ export const discoveryService = {
 
   async getTop({ country, limit = 5 }: { country?: string; limit?: number } = {}): Promise<PublicChannel[]> {
     // Top Channels stays algorithmic (behavior/follower_count), NOT curated.
-    const filter: Record<string, unknown> = { status: 'approved' };
+    // Finalist readiness: this surface previously used a RAW `status:approved`
+    // filter and therefore leaked demo/QA fixtures into /top and the homepage
+    // "Top by country" module. It now goes through the canonical policy like
+    // every other public surface.
+    const filter: Record<string, unknown> = publicFilter({ status: 'approved' }) as Record<string, unknown>;
     if (country) filter.country_code = country.toUpperCase();
     const items = await channelRepo.list({ filter, sort: { follower_count: -1 }, limit });
     return items.map(sanitize);

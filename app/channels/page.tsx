@@ -52,7 +52,12 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Pro
             title="Latest & greatest"
             subtitle={sort === 'newest' ? 'Sorted by newest.' : 'Sorted by reach.'}
           />
-          {result.items.length === 0 ? <EmptyState /> : (
+          {result.items.length === 0 ? (
+            <EmptyState
+              title="No public channels match this view yet"
+              message="Every WaveLead listing is reviewed before it goes live. Submit a WhatsApp Channel and it will appear here once approved."
+            />
+          ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {result.items.map((c) => <ChannelCard key={c.id} channel={c} />)}
             </div>

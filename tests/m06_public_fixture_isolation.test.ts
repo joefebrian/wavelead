@@ -203,14 +203,25 @@ describe('M06.1 — public channel visibility (fixture isolation)', () => {
     });
   });
 
-  it('search relevance for a normal seeded channel is UNCHANGED by the fixture filter', async () => {
-    // The seeded "Wave Sports Weekly" (Sports category) must still be the
-    // first result for q="sport" — the fixture filter only removes flagged
-    // rows and does not touch the scoring pipeline.
-    const r = await api<{ items: Array<{ slug: string; name: string }> }>(`/channels?q=sport&limit=10`);
+  it('search relevance for a normal channel is UNCHANGED by the fixture filter', async () => {
+    // Finalist readiness: this assertion used to hard-code the DEMO seed row
+    // "wave-sports-weekly" as the expected top hit. Demo rows (is_demo=true)
+    // are now suppressed from every public surface, so the contract is
+    // re-expressed without depending on the demo catalogue: an organic
+    // approved channel must still rank FIRST for a query that matches its
+    // name, proving the exclusion clauses don't disturb the scoring pipeline.
+    const tag = `relv${RUN_TAG}`;
+    const slug = `pfi-${RUN_TAG}-relevance`;
+    await insertChannel({
+      slug,
+      name: `${tag} Sports Weekly`,
+      short_description: `${tag} sports coverage`,
+      follower_count: 90_000,
+    });
+    const r = await api<{ items: Array<{ slug: string; name: string }> }>(`/channels?q=${encodeURIComponent(tag)}&limit=10`);
     expect(r.status).toBe(200);
     const items = r.body.data?.items || [];
     expect(items.length).toBeGreaterThan(0);
-    expect(items[0].slug).toBe('wave-sports-weekly');
+    expect(items[0].slug).toBe(slug);
   });
 });

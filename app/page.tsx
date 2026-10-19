@@ -43,18 +43,36 @@ export default async function HomePage() {
     .slice()
     .sort((a, b) => b.channel_count - a.channel_count)
     .slice(0, 10);
+  // Finalist readiness: same honesty rule as countries — show a real count
+  // when we have one, otherwise omit the number instead of printing "0".
+  const hasCategoryCounts = bundle.categories.some((c) => c.channel_count > 0);
   const pillCats = bundle.categories.slice(0, 10);
   // M18.1 Phase B — homepage shows a COMPACT set only: countries that actually
   // have at least one approved public channel, ranked by that count, capped at
   // 12. The canonical country dataset, /country/<slug> URLs and the full
   // /countries directory are untouched.
+  //
+  // Finalist readiness: when the eligible public inventory does not yet cover
+  // any country, we keep the crawlable /country/<slug> discovery links but
+  // render them WITHOUT a count, rather than printing "0 channels" on every
+  // card or dropping the discovery region entirely. The fallback ordering is
+  // WaveLead's core markets (Indonesia first) — a NAVIGATIONAL ordering, not a
+  // statistic. Nothing is fabricated: a count is shown only when a real one
+  // exists.
   const HOMEPAGE_COUNTRY_LIMIT = 12;
+  const CORE_MARKET_ORDER = ['ID', 'MY', 'SG', 'PH', 'TH', 'VN', 'IN', 'BR', 'US', 'MX', 'GB', 'AE'];
   const activeCountries: CountryWithCount[] = bundle.countries.filter((c) => c.channel_count > 0);
-  const countries: CountryWithCount[] = activeCountries
-    .slice()
-    .sort((a, b) => b.channel_count - a.channel_count || a.name.localeCompare(b.name))
-    .slice(0, HOMEPAGE_COUNTRY_LIMIT);
-  const hasMoreCountries = activeCountries.length > countries.length || bundle.countries.length > countries.length;
+  const hasCountryCounts = activeCountries.length > 0;
+  const countries: CountryWithCount[] = hasCountryCounts
+    ? activeCountries
+        .slice()
+        .sort((a, b) => b.channel_count - a.channel_count || a.name.localeCompare(b.name))
+        .slice(0, HOMEPAGE_COUNTRY_LIMIT)
+    : CORE_MARKET_ORDER
+        .map((code) => bundle.countries.find((c) => c.code === code))
+        .filter((c): c is CountryWithCount => !!c)
+        .slice(0, HOMEPAGE_COUNTRY_LIMIT);
+  const hasMoreCountries = bundle.countries.length > countries.length;
 
   return (
     <>
@@ -72,7 +90,12 @@ export default async function HomePage() {
             subtitle="Channels getting attention right now."
             href="/trending"
           />
-          {bundle.popular.length === 0 ? <EmptyState /> : (
+          {bundle.popular.length === 0 ? (
+            <EmptyState
+              title="No public channels listed yet"
+              message="WaveLead only shows WhatsApp Channels that have been submitted and approved — never placeholder listings. Be the first to add yours."
+            />
+          ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {sponsored[0] && <SponsoredCard data={sponsored[0]} sourcePath="/" />}
               {bundle.popular.map((c) => <ChannelCard key={c.id} channel={c} />)}
@@ -106,7 +129,12 @@ export default async function HomePage() {
             subtitle="Fresh channels worth checking out."
             href="/channels?sort=newest"
           />
-          {bundle.rising.length === 0 ? <EmptyState /> : (
+          {bundle.rising.length === 0 ? (
+            <EmptyState
+              title="No newly approved channels yet"
+              message="Freshly approved WhatsApp Channels appear here as soon as moderation clears them."
+            />
+          ) : (
             <div className="flex md:grid gap-4 md:grid-cols-2 lg:grid-cols-3 overflow-x-auto md:overflow-visible no-scrollbar snap-x snap-mandatory md:snap-none">
               {bundle.rising.map((c) => (
                 <div key={c.id} className="snap-start shrink-0 w-[78%] sm:w-[55%] md:w-auto">
@@ -146,7 +174,11 @@ export default async function HomePage() {
                     </div>
                     <div className="min-w-0">
                       <div className="font-semibold text-sm truncate group-hover:text-primary">{cat.name}</div>
-                      <div className="text-xs text-muted-foreground">{cat.channel_count} {cat.channel_count === 1 ? 'channel' : 'channels'}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {hasCategoryCounts
+                          ? `${cat.channel_count} ${cat.channel_count === 1 ? 'channel' : 'channels'}`
+                          : 'Browse channels'}
+                      </div>
                     </div>
                   </div>
                 </Link>
@@ -167,9 +199,13 @@ export default async function HomePage() {
                 <span className="text-2xl" aria-hidden>{c.flag}</span>
                 <div className="min-w-0">
                   <div className="font-semibold text-sm truncate">{c.name}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {c.channel_count} {c.channel_count === 1 ? 'channel' : 'channels'}
-                  </div>
+                  {hasCountryCounts ? (
+                    <div className="text-xs text-muted-foreground">
+                      {c.channel_count} {c.channel_count === 1 ? 'channel' : 'channels'}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">Browse channels</div>
+                  )}
                 </div>
               </Link>
             ))}

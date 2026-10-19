@@ -104,7 +104,7 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
         ? `${Number(channel.follower_count).toLocaleString()} followers`
         : (publicFollowersCount
             ? `${Number(publicFollowersCount).toLocaleString()} followers`
-            : 'Followers not verified'));
+            : 'Follower count unavailable'));
   const followers = followerCountText;
   const followersSubLabel = latestVerifiedSnap
     ? (verifiedFreshness ? verifiedFreshness.label : null)

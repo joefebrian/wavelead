@@ -5,6 +5,7 @@ import { channelRepo } from '../repositories/channelRepo';
 import { HttpError, requireRole, ROLES } from '../auth/rbac';
 import { slotSchema } from '../validation/submissionSchema';
 import { sanitizeChannel } from '../utils/sanitize';
+import { buildPublicChannelMongoFilter } from './publicChannelVisibility';
 import type { Actor, Channel, PublicChannel } from '@/lib/types';
 
 interface Slot {
@@ -87,13 +88,20 @@ export const curationService = {
 
   // Public: fetch curated (active only, approved channel only). Used by the
   // homepage bundle with fallback ranking.
+  //
+  // Finalist readiness: a curated slot is an editorial pointer, NOT a
+  // visibility override. Even a moderator-curated slot must satisfy the
+  // canonical public-visibility policy, so a demo/QA fixture can never be
+  // promoted onto the homepage through curation.
   async getSectionCurated(section: Slot['section']): Promise<PublicChannel[]> {
     const c = await coll();
     const rows = stripIds(await c.find({ section, active: true }).sort({ priority: 1 }).toArray()) as Slot[];
     if (rows.length === 0) return [];
     const channelIds = rows.map((r) => r.channel_id);
     const channelsColl = await getCollection<Channel>(COLLECTIONS.CHANNELS);
-    const channels = stripIds(await channelsColl.find({ id: { $in: channelIds }, status: 'approved' }).toArray()) as Channel[];
+    const channels = stripIds(await channelsColl.find(
+      buildPublicChannelMongoFilter({ id: { $in: channelIds }, status: 'approved' }),
+    ).toArray()) as Channel[];
     const byId = new Map(channels.map((c) => [c.id, c]));
     return rows.map((r) => byId.get(r.channel_id)).filter(Boolean).map((c) => sanitize(c as Channel));
   },

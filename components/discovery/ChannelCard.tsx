@@ -52,7 +52,7 @@ export default function ChannelCard({ channel, variant = 'standard', rank, spons
     ? channel.public_followers_count
     : 0;
   const displayCount = channel.follower_count > 0 ? channel.follower_count : publicCount;
-  const followers = displayCount > 0 ? `${Number(displayCount).toLocaleString()} followers` : 'Followers not verified';
+  const followers = displayCount > 0 ? `${Number(displayCount).toLocaleString()} followers` : 'Follower count unavailable';
 
   if (variant === 'ranking') {
     return (

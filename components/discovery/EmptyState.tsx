@@ -10,10 +10,10 @@ interface Props {
 }
 
 export default function EmptyState({
-  title = 'Nothing to show yet',
-  message = 'We couldn’t load this section right now. Explore all channels instead.',
-  ctaHref = '/channels',
-  ctaLabel = 'Browse Channels',
+  title = 'No channels listed yet',
+  message = 'WaveLead lists a WhatsApp Channel once it has been submitted and reviewed. Be the first to add one.',
+  ctaHref = '/submit',
+  ctaLabel = 'Submit a Channel',
 }: Props) {
   return (
     <div className="wh-card p-8 text-center">

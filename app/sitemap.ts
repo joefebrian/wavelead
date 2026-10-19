@@ -43,8 +43,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   try {
     const { getCollection } = await import('@/lib/db/mongo');
     const { COLLECTIONS } = await import('@/lib/db/collections');
+    const { buildPublicChannelFilter } = await import('@/lib/services/publicChannelVisibility');
     const col = await getCollection<{ slug: string; updated_at?: Date; status: string; is_test_fixture?: boolean }>(COLLECTIONS.CHANNELS);
-    const rows = await col.find({ status: 'approved', is_test_fixture: { $ne: true } })
+    // Finalist readiness: the sitemap now shares the canonical
+    // public-visibility policy, so demo/QA fixture records are never emitted
+    // as indexable URLs (previously only `is_test_fixture` was excluded).
+    const rows = await col.find(buildPublicChannelFilter({ status: 'approved' }) as never)
       .project({ slug: 1, updated_at: 1 }).limit(5000).toArray();
     for (const r of rows) {
       if (!r.slug) continue;

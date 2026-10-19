@@ -56,7 +56,12 @@ export default async function TrendingPage() {
         </div>
         <section className="container py-8">
           <SectionHeader title="Popular on WaveLead" subtitle="Highest observed reach across approved channels." />
-          {popular.length === 0 ? <EmptyState /> : (
+          {popular.length === 0 ? (
+            <EmptyState
+              title="No follower observations to rank yet"
+              message="WaveLead ranks this view from real public follower observations. Once approved channels have observations, they appear here."
+            />
+          ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {popular.map((c) => <ChannelCard key={c.id} channel={c} />)}
             </div>
@@ -64,7 +69,12 @@ export default async function TrendingPage() {
         </section>
         <section className="container py-8">
           <SectionHeader title="New & noteworthy" subtitle="Recently added and approved public channels." />
-          {rising.length === 0 ? <EmptyState /> : (
+          {rising.length === 0 ? (
+            <EmptyState
+              title="No newly approved channels yet"
+              message="Recently approved WhatsApp Channels show up here as soon as moderation clears them."
+            />
+          ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {rising.map((c) => <ChannelCard key={c.id} channel={c} />)}
             </div>

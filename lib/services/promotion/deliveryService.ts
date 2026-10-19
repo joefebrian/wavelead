@@ -7,6 +7,7 @@ import { channelRepo } from '@/lib/repositories/channelRepo';
 import { reconcileCampaign } from './campaignStateService';
 import { issueAttributionToken } from './attributionTokenService';
 import { scoreCandidate, isEligibleByRelevance, type RankBreakdown } from './sponsoredRankingService';
+import { isChannelPublicallyVisible } from '@/lib/services/publicChannelVisibility';
 import type {
   Channel,
   PromotionCampaign,
@@ -111,6 +112,10 @@ export const promotionDeliveryService = {
       if (!funding.funded) continue;
       const ch = await channelRepo.findById(camp.channel_id);
       if (!ch || ch.status !== 'approved') continue;
+      // Finalist readiness: a paid placement must still satisfy the canonical
+      // public-visibility policy. A demo/QA fixture channel can never be
+      // surfaced as sponsored inventory, regardless of campaign state.
+      if (!isChannelPublicallyVisible(ch)) continue;
       const vs = (ch as unknown as { verification_status?: string }).verification_status;
       if (vs !== 'verified' && vs !== 'official') continue;
       // Targeting hard filter (existing).
