@@ -15,9 +15,20 @@ export function sanitizeChannel(c: Channel): PublicChannel {
     activation_status: _as,
     activation_active_at: _aa,
     activation_revoked_at: _ar,
+    // P0B — sourcing attribution and ownership-release trail are INTERNAL.
+    // They must never reach a public response: `sourced_by_user_id` and
+    // `released_from_owner_id` identify staff/owner accounts.
+    submitted_by: _sb,
+    source: _src,
+    sourced_by_user_id: _sbu,
+    sourced_at: _sat,
+    ownership_released_at: _ora,
+    ownership_released_by: _orb,
+    released_from_owner_id: _rfo,
     ...rest
   } = c;
   void _rb; void _ra; void _rr; void _rn; void _tf; void _as; void _aa; void _ar;
+  void _sb; void _src; void _sbu; void _sat; void _ora; void _orb; void _rfo;
   const hasOwner = !!owner_id;
   const rawVerified = verification_status === 'verified' || verification_status === 'official';
   const rawOfficial = verification_status === 'official';

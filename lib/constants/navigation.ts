@@ -85,7 +85,11 @@ export const USER_NAV_GROUPS: NavGroup[] = [
 export const ADMIN_NAV_GROUPS: NavGroup[] = [
   {
     label: 'Overview',
-    items: [{ href: '/admin', label: 'Overview', icon: 'LayoutDashboard', prefix: false, min_role: 'moderator' }],
+    items: [
+      { href: '/admin', label: 'Overview', icon: 'LayoutDashboard', prefix: false, min_role: 'moderator' },
+      // P0B — read-only inventory / claim-path diagnostics.
+      { href: '/admin/operations', label: 'Operations', icon: 'Activity', min_role: 'moderator' },
+    ],
   },
   {
     label: 'Channels',

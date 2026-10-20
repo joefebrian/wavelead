@@ -18,6 +18,16 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { is_featured: 1, status: 1 }, name: 'featured_status' },
       { key: { follower_count: -1, status: 1 }, name: 'ranking' },
       { key: { owner_id: 1 }, name: 'by_owner' },
+      // P0B — sourcing attribution lookups (per-agent reporting, candidate queue).
+      { key: { sourced_by_user_id: 1, sourced_at: -1 }, name: 'by_sourcing_agent' },
+      { key: { source: 1, status: 1 }, name: 'source_status' },
+    ]),
+    // P0B — append-only inventory snapshots. The unique key is what makes
+    // capture idempotent per release + phase even under a concurrent retry.
+    db.collection(COLLECTIONS.INVENTORY_SNAPSHOTS).createIndexes([
+      { key: { id: 1 }, unique: true, name: 'uniq_id' },
+      { key: { release_key: 1, phase: 1 }, unique: true, name: 'uniq_release_phase' },
+      { key: { captured_at: -1 }, name: 'by_captured_at' },
     ]),
     db.collection(COLLECTIONS.CATEGORIES).createIndexes([
       { key: { id: 1 }, unique: true, name: 'uniq_id' },

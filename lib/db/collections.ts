@@ -14,6 +14,10 @@ export const COLLECTIONS = {
   BOOKMARKS: 'bookmarks',
   REPORTS: 'reports',
   AUDIT_LOGS: 'audit_logs',
+  // P0B — append-only, aggregate-only inventory & ownership snapshots used to
+  // compare counts before/after an approved production deployment. Contains
+  // COUNTS ONLY: no personal data, no payment detail, no channel exports.
+  INVENTORY_SNAPSHOTS: 'inventory_snapshots',
   HOMEPAGE_SLOTS: 'homepage_slots',
   PROMOTION_CAMPAIGNS: 'promotion_campaigns',
   PROMOTION_RATE_CARDS: 'promotion_rate_cards',

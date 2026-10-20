@@ -20,6 +20,7 @@ export type OwnershipConflictReason =
   | 'verified_owner_exists'      // another account already holds verified/official ownership
   | 'linked_to_other_account'    // another account is linked as owner (unverified)
   | 'not_eligible_claimant'      // payer is neither the linked owner nor the original submitter
+  | 'sourcing_agent_not_owner'   // P0B — payer sourced this listing as staff (PIC); sourcing is not ownership
   | 'listing_blocked'            // listing rejected / archived / suspended / removed
   | 'ownership_under_review'     // dispute / suspension / inconsistent ownership data
   | 'ownership_state_changed';   // atomic guard refused the write (state moved underneath)
@@ -47,6 +48,14 @@ export function fastOwnershipConflictReason(channel: Channel, userId: string): O
   const ch = channel as Channel & { is_disputed?: boolean; is_suspended?: boolean; submitted_by?: string | null };
   if (FAST_BLOCKED.has(String(ch.status))) return 'listing_blocked';
   if (ch.is_disputed || ch.is_suspended) return 'ownership_under_review';
+  // P0B — SOURCING IS NOT OWNERSHIP. A staff sourcing agent (PIC) who added
+  // this listing can never buy ownership of it with the $1 Fast path. The
+  // only way they could legitimately pass this guard is if a moderator has
+  // already approved their ownership claim, which sets owner_id to them.
+  if (ch.source === 'staff_sourced' && ch.sourced_by_user_id && ch.sourced_by_user_id === userId
+    && ch.owner_id !== userId) {
+    return 'sourcing_agent_not_owner';
+  }
   const verified = ch.verification_status === 'verified' || ch.verification_status === 'official';
   if (ch.owner_id) {
     if (ch.owner_id === userId) return null;

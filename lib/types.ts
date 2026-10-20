@@ -27,6 +27,15 @@ export interface User {
   session_version?: number;         // incremented on password change / admin reset / disable
   must_change_password?: boolean;   // set by admin reset; enforced on /change-password
   password_updated_at?: Date | null;
+  // P0B — admin-managed SOURCING AGENT (PIC) designation.
+  // This is a plain user ATTRIBUTE, not an RBAC role and not an elevated
+  // permission: it grants nothing. Its only effects are (a) submissions are
+  // attributed as `staff_sourced` and keep owner_id NULL, and (b) the actor
+  // can never gain Fast Verification eligibility from submitter status.
+  // Only admin+ may set or clear it (see sourcingAgentService).
+  is_sourcing_agent?: boolean;
+  sourcing_agent_assigned_at?: Date | null;
+  sourcing_agent_assigned_by?: string | null;
   // Phase 3 — SaaS entitlements. Missing/unknown resolves to 'free' at read
   // time via getUserPlan() — no data migration required.
   plan?: 'free' | 'pro' | 'enterprise' | null;
@@ -107,7 +116,39 @@ export interface Channel {
   activation_status?: ChannelActivationStatus;
   activation_active_at?: Date | null;   // set when payment finalizes with credit issuance
   activation_revoked_at?: Date | null;  // set when a refund flips status back to 'revoked'
+  // Ownership review markers (read by ownershipState / fast-verification
+  // guards; written only by admin moderation paths).
+  is_disputed?: boolean;
+  is_suspended?: boolean;
+  // ---------------------------------------------------------------------
+  // P0B — SOURCING ATTRIBUTION (separate from OWNERSHIP, always)
+  // ---------------------------------------------------------------------
+  // `submitted_by` is WHO created the listing. It is NOT a grant of
+  // ownership and never implies verification eligibility on its own.
+  submitted_by?: string | null;
+  // Server-authoritative provenance. Derived from the authenticated actor's
+  // admin-assigned sourcing designation at submission time — NEVER from the
+  // request body. Attribution is permanent: it survives removal of the
+  // sourcing designation so per-PIC reporting stays truthful.
+  source?: ChannelSource | null;
+  sourced_by_user_id?: string | null;
+  sourced_at?: Date | null;
+  // P0B — audit trail for the admin "Release Unverified Ownership Link"
+  // action. `released_from_owner_id` keeps the previous link visible to
+  // admins after the owner link is cleared.
+  ownership_released_at?: Date | null;
+  ownership_released_by?: string | null;
+  released_from_owner_id?: string | null;
 }
+
+/**
+ * P0B — how a listing entered the directory.
+ *   'owner_self'    — submitted by an ordinary user for their own channel.
+ *                     Keeps today's behaviour: owner_id = submitter.
+ *   'staff_sourced' — submitted by an admin-designated sourcing agent (PIC).
+ *                     owner_id stays NULL so the rightful owner can claim it.
+ */
+export type ChannelSource = 'owner_self' | 'staff_sourced';
 
 // M11-Batch2B — Channel activation lifecycle. Deliberately small.
 export type ChannelActivationStatus = 'not_required' | 'pending' | 'active' | 'revoked';
@@ -124,6 +165,13 @@ export type PublicChannel = Omit<
   | 'rejection_reason'
   | 'rejection_notes'
   | 'is_test_fixture'
+  | 'submitted_by'
+  | 'source'
+  | 'sourced_by_user_id'
+  | 'sourced_at'
+  | 'ownership_released_at'
+  | 'ownership_released_by'
+  | 'released_from_owner_id'
 > & {
   is_verified: boolean;
   is_official: boolean;

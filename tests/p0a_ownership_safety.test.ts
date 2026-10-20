@@ -186,7 +186,13 @@ describe('P0A §1 atomic ownership guard', () => {
   it('source keeps the single atomic compare-and-set (no unconditional owner write)', () => {
     const svc = src('lib/services/ownerVerificationService.ts');
     expect(svc).toContain('channels.findOneAndUpdate(');
-    expect(svc).toContain("{ owner_id: null, submitted_by: userId, verification_status: { $nin: ['verified', 'official'] } }");
+    expect(svc).toContain('owner_id: null,');
+    expect(svc).toContain('submitted_by: userId,');
+    expect(svc).toContain("verification_status: { $nin: ['verified', 'official'] }");
+    // P0B hardening — a staff sourcing agent can never win this write via
+    // original-submitter status; the exclusion lives INSIDE the atomic
+    // condition, not in a read-then-write pre-check.
+    expect(svc).toContain("$nor: [{ source: 'staff_sourced', sourced_by_user_id: userId }]");
     expect(svc).not.toMatch(/channelRepo\.update\(channelId,\s*\{\s*\n\s*owner_id: userId/);
   });
 });

@@ -127,6 +127,11 @@ export async function assertFastVerificationEligible(actor: Actor, channel: Chan
   // free Manual Verification path.
   const reason = fastOwnershipConflictReason(channel, actor.user.id);
   if (reason) {
+    // P0B — a staff sourcing agent gets an explicit, honest message: adding a
+    // listing to the directory is sourcing work, never an ownership right.
+    if (reason === 'sourcing_agent_not_owner') {
+      throw new HttpError(403, 'You added this channel to the directory as a sourcing agent. Sourcing a listing does not grant ownership, so Fast Verification is not available to you for this channel. The rightful channel owner can claim it through the ownership claim flow.');
+    }
     throw new HttpError(403, 'Only the original submitter or the linked owner can start Fast Verification for this channel. Other claimants can use free Manual Verification, which is reviewed by WaveLead moderators.');
   }
 }
@@ -467,7 +472,15 @@ export const ownerVerificationService = {
         verification_status: { $ne: 'official' },
         $or: [
           { owner_id: userId },
-          { owner_id: null, submitted_by: userId, verification_status: { $nin: ['verified', 'official'] } },
+          {
+            owner_id: null,
+            submitted_by: userId,
+            verification_status: { $nin: ['verified', 'official'] },
+            // P0B — SOURCING IS NOT OWNERSHIP. Encoded in the compare-and-set
+            // itself so a staff sourcing agent can never win this write via
+            // original-submitter status, even under a concurrent race.
+            $nor: [{ source: 'staff_sourced', sourced_by_user_id: userId }],
+          },
         ],
       } as never,
       {

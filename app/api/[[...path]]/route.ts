@@ -9,7 +9,6 @@ import { ok, fail, handleServiceError } from '@/lib/utils/response';
 import { applyCors } from '@/lib/utils/cors';
 import { rateLimit, clientKey } from '@/lib/auth/rateLimit';
 import { verifyCronSecret } from '@/lib/auth/cronAuth';
-import { getVersionInfo } from '@/lib/utils/version';
 
 async function safeJson(request: NextRequest): Promise<Record<string, unknown>> {
   try { return await request.json(); } catch { return {}; }
@@ -59,16 +58,14 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
     if (gate) return gate;
 
     if (route === '/health' && method === 'GET') {
-      const v = getVersionInfo();
+      // P0B — the PUBLIC health probe stays minimal on purpose. Deployment
+      // identity (commit / build time / release id) is privileged and now
+      // lives behind GET /admin/diagnostics/build.
       return applyCors(ok({
         status: 'ok',
         service: 'wavelead',
         time: new Date().toISOString(),
         env: process.env.NODE_ENV || 'unknown',
-        version: v.commitShort,
-        commit: v.commit,
-        commitTime: v.commitTime,
-        branch: v.branch,
       }), request);
     }
 
@@ -1126,6 +1123,93 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       const { promotionCampaignService } = await import('@/lib/services/promotion/campaignService');
       return applyCors(ok({ campaign: await promotionCampaignService.reject(await resolveActor(request), path[2], await safeJson(request)) }), request);
     }
+    // ---------- P0B: OPERATIONS DIAGNOSTICS & OWNERSHIP RECOVERY ----------
+    // All read-only unless explicitly noted. The ONLY mutating endpoints here
+    // are the sourcing designation and the single-channel ownership release.
+    if (route === '/admin/diagnostics/build' && method === 'GET') {
+      const actor = await resolveActor(request); requireRole(actor, ROLES.ADMIN);
+      const { getBuildInfo } = await import('@/lib/buildInfo');
+      // Identity only — never secrets, connection strings or infra detail.
+      return applyCors(ok(getBuildInfo()), request);
+    }
+    if (route === '/admin/operations/metrics' && method === 'GET') {
+      const actor = await resolveActor(request); requireRole(actor, ROLES.MODERATOR);
+      const { claimPathMetricsService } = await import('@/lib/services/claimPathMetricsService');
+      return applyCors(ok(await claimPathMetricsService.compute()), request);
+    }
+    if (route === '/admin/operations/sourcing-agents' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const { sourcingAgentService } = await import('@/lib/services/sourcingAgentService');
+      return applyCors(ok({ items: await sourcingAgentService.listAgents(actor) }), request);
+    }
+    if (route === '/admin/operations/sourcing-agents' && method === 'POST') {
+      const actor = await resolveActor(request);
+      const body = await safeJson(request) as { user_id?: string; enabled?: boolean; reason?: string } | null;
+      if (!body?.user_id) return applyCors(fail(400, 'user_id is required'), request);
+      if (typeof body.enabled !== 'boolean') return applyCors(fail(400, 'enabled must be true or false'), request);
+      const { sourcingAgentService } = await import('@/lib/services/sourcingAgentService');
+      return applyCors(ok(await sourcingAgentService.setDesignation(
+        actor, String(body.user_id), body.enabled, String(body.reason || ''),
+      )), request);
+    }
+    if (route === '/admin/operations/sourcing-daily' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const days = parseInt(new URL(request.url).searchParams.get('days') || '14', 10);
+      const { sourcingAgentService } = await import('@/lib/services/sourcingAgentService');
+      return applyCors(ok({
+        timezone: 'Asia/Jakarta',
+        items: await sourcingAgentService.dailySourcingCounts(actor, days),
+      }), request);
+    }
+    if (route === '/admin/operations/release-candidates' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const sp = new URL(request.url).searchParams;
+      const { ownershipReleaseService } = await import('@/lib/services/ownershipReleaseService');
+      return applyCors(ok(await ownershipReleaseService.listCandidates(actor, {
+        limit: parseInt(sp.get('limit') || '25', 10),
+        skip: parseInt(sp.get('skip') || '0', 10),
+        label: (sp.get('label') as never) || undefined,
+      })), request);
+    }
+    if (route === '/admin/operations/snapshots' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const { inventorySnapshotService } = await import('@/lib/services/inventorySnapshotService');
+      return applyCors(ok({ items: await inventorySnapshotService.list(actor) }), request);
+    }
+    if (route === '/admin/operations/snapshots' && method === 'POST') {
+      const actor = await resolveActor(request);
+      const body = await safeJson(request) as { phase?: string; release_key?: string; note?: string } | null;
+      const { inventorySnapshotService } = await import('@/lib/services/inventorySnapshotService');
+      return applyCors(ok(await inventorySnapshotService.capture(
+        actor, (body?.phase as never) || 'pre_deploy',
+        { release_key: body?.release_key, note: body?.note },
+      )), request);
+    }
+    if (route === '/admin/operations/snapshots/diff' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const key = new URL(request.url).searchParams.get('release_key') || '';
+      const { inventorySnapshotService } = await import('@/lib/services/inventorySnapshotService');
+      return applyCors(ok(await inventorySnapshotService.diff(actor, key)), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'channels'
+      && path[3] === 'ownership-assessment' && method === 'GET') {
+      const actor = await resolveActor(request);
+      const { ownershipReleaseService } = await import('@/lib/services/ownershipReleaseService');
+      return applyCors(ok(await ownershipReleaseService.getAssessment(actor, path[2])), request);
+    }
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'channels'
+      && path[3] === 'release-ownership-link' && method === 'POST') {
+      const actor = await resolveActor(request);
+      const body = await safeJson(request) as Record<string, unknown> | null;
+      const { ownershipReleaseService } = await import('@/lib/services/ownershipReleaseService');
+      return applyCors(ok(await ownershipReleaseService.releaseUnverifiedLink(actor, path[2], {
+        expected_owner_user_id: body?.expected_owner_user_id as string | undefined,
+        reason: body?.reason as string | undefined,
+        evidence_ref: body?.evidence_ref as string | undefined,
+        acknowledge_warnings: body?.acknowledge_warnings === true,
+      })), request);
+    }
+
     // Rate cards (admin/super_admin)
     if (route === '/admin/promotion-rates' && method === 'GET') {
       const actor = await resolveActor(request); requireRole(actor, ROLES.ADMIN);

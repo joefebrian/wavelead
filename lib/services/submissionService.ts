@@ -72,6 +72,9 @@ export const submissionService = {
 
     const user = await userRepo.findById(actor.user.id);
     if (!user) throw new HttpError(401, 'Session invalid');
+    // P0B — server-authoritative sourcing designation (admin-managed user
+    // attribute, never a client-supplied field and never an RBAC role).
+    const isStaffSourced = user.is_sourcing_agent === true;
 
     const slug = await ensureUniqueSlug(slugify(data.name));
     const now = new Date();
@@ -109,7 +112,22 @@ export const submissionService = {
       country_code: data.country_code.toUpperCase(),
       primary_language: data.primary_language,
       category_id: category.id,
-      owner_id: actor.user.id,
+      // ------------------------------------------------------------------
+      // P0B — SOURCING IS NOT OWNERSHIP.
+      // A staff sourcing agent (PIC) adds public listings to the directory;
+      // they are NOT the channel's owner. Their submissions therefore keep
+      // `owner_id: null` so the rightful owner can claim the listing, while
+      // attribution is recorded separately for operational reporting.
+      // The designation is read from the server-side user record — NEVER from
+      // the request body (submissionSchema strips unknown keys anyway).
+      // ------------------------------------------------------------------
+      owner_id: isStaffSourced ? null : actor.user.id,
+      submitted_by: actor.user.id,
+      source: isStaffSourced ? 'staff_sourced' : 'owner_self',
+      // Attribution is permanent: it survives later removal of the sourcing
+      // designation so per-agent reporting stays truthful.
+      sourced_by_user_id: isStaffSourced ? actor.user.id : null,
+      sourced_at: isStaffSourced ? now : null,
       // SECURITY: normal users can NEVER set moderation state.
       status: 'pending_review',
       verification_status: 'unclaimed',
