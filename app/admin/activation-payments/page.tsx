@@ -37,6 +37,7 @@ export default async function AdminActivationPaymentsPage() {
     { label: 'WaveLead Credit Issued', value: dollars(summary.wavelead_credit_issued_minor) },
     { label: 'Active Activations', value: String(summary.active_activations) },
     { label: 'Refunded / Reversed', value: String(summary.refunded_or_reversed) },
+    { label: 'Ownership Conflicts (Refund Review)', value: String(summary.ownership_conflicts_pending_review ?? 0) },
   ];
 
   return (
@@ -52,7 +53,7 @@ export default async function AdminActivationPaymentsPage() {
           Read-only — isolated from Marketplace &amp; Promote. WaveLead Credit is issued equal to provider net.
         </p>
 
-        <div className="grid gap-3 grid-cols-2 md:grid-cols-4 lg:grid-cols-7 mb-6">
+        <div className="grid gap-3 grid-cols-2 md:grid-cols-4 lg:grid-cols-8 mb-6">
           {cards.map((c) => (
             <div key={c.label} className="wh-card p-3">
               <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{c.label}</div>
@@ -100,7 +101,22 @@ export default async function AdminActivationPaymentsPage() {
                     <td className="p-3 tabular-nums">{dollars(it.provider_net_minor as number)}</td>
                     <td className="p-3 tabular-nums">{dollars(it.wavelead_credit_minor as number)}</td>
                     <td className="p-3"><StatusBadge status={String(it.status)} /></td>
-                    <td className="p-3"><Badge variant="outline">{String(it.activation_status ?? '—')}</Badge></td>
+                    <td className="p-3">
+                      <Badge variant="outline">{String(it.activation_status ?? '—')}</Badge>
+                      {(() => {
+                        const oc = it.ownership_conflict as { reason?: string; review_status?: string } | null | undefined;
+                        if (!oc) return null;
+                        const open = oc.review_status === 'pending_admin_refund_review';
+                        return (
+                          <div className="mt-1" data-testid="activation-ownership-conflict">
+                            <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${open ? 'bg-rose-100 text-rose-800' : 'bg-muted text-muted-foreground'}`}>
+                              {open ? 'Ownership conflict — refund review' : 'Ownership conflict — refunded'}
+                            </span>
+                            <div className="text-[11px] text-muted-foreground mt-0.5">{String(oc.reason || '').replace(/_/g, ' ')}</div>
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td className="p-3">{String(it.provider || '').toUpperCase()}</td>
                     <td className="p-3 font-mono text-xs">{String(it.provider_capture_id_masked ?? '—')}</td>
                     <td className="p-3">
@@ -116,6 +132,8 @@ export default async function AdminActivationPaymentsPage() {
         <p className="mt-4 text-xs text-muted-foreground">
           Read-only reporting. This surface intentionally has no payout, edit, or payment-mutation controls.
           Provider order/capture references are masked. The $1.00 charge is server-authoritative and not editable from Admin.
+          Rows flagged &ldquo;Ownership conflict&rdquo; were captured but could NOT finalize ownership (ownership changed); the owner was not
+          overwritten and no automatic refund was made &mdash; review them for a refund through the existing refund process.
         </p>
       </section>
     </div>

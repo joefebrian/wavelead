@@ -30,6 +30,9 @@ import { getConfiguredOrigin } from '@/lib/utils/canonicalOrigin';
 import { normalizeCountryCode } from '@/lib/constants/countries';
 import { channelActivationService, ACTIVATION_AMOUNT_MINOR, ACTIVATION_CURRENCY, ACTIVATION_PURPOSE } from './channelActivationService';
 import type { Actor, Channel, ChannelActivationPayment } from '@/lib/types';
+import {
+  fastOwnershipConflictReason, recordActivationOwnershipConflict, findCapturedPayment,
+} from './activationOwnershipConflict';
 
 export const OWNER_DECLARATION_TEXT =
   'I confirm that I am authorized to manage this WhatsApp Channel and that the information I provided is accurate.';
@@ -116,21 +119,15 @@ export async function assertFastVerificationEligible(actor: Actor, channel: Chan
   if (channel.owner_id && channel.owner_id !== actor.user.id) {
     throw new HttpError(403, 'Only the original submitter or the eligible claimant can verify this channel.');
   }
-  const submittedBy = (channel as unknown as { submitted_by?: string | null }).submitted_by || null;
-  const isSubmitter = !!submittedBy && submittedBy === actor.user.id;
-  const isCurrentOwner = channel.owner_id === actor.user.id;
-  if (!isSubmitter && !isCurrentOwner) {
-    // Fall back to an approved/pending claim by this user, if the claim
-    // architecture already recognises them as an eligible claimant.
-    const claims = await getCollection<{ channel_id: string; claimant_user_id?: string; user_id?: string; status: string }>(COLLECTIONS.CHANNEL_CLAIMS);
-    const claim = await claims.findOne({
-      channel_id: channel.id,
-      $or: [{ claimant_user_id: actor.user.id }, { user_id: actor.user.id }],
-      status: { $in: ['pending', 'needs_information', 'approved'] },
-    } as never);
-    if (!claim) {
-      throw new HttpError(403, 'Only the original submitter or an eligible claimant can start Fast Verification for this channel.');
-    }
+  // P0A — the SAME server-authoritative rule enforced again (atomically) at
+  // finalization. Eligible ONLY as the linked owner, or — when no owner is
+  // linked — the original submitter. A user whose only link is a pending
+  // ownership claim is NOT eligible: payment + self-declaration must never
+  // replace moderator review of ownership evidence. Such claimants keep the
+  // free Manual Verification path.
+  const reason = fastOwnershipConflictReason(channel, actor.user.id);
+  if (reason) {
+    throw new HttpError(403, 'Only the original submitter or the linked owner can start Fast Verification for this channel. Other claimants can use free Manual Verification, which is reviewed by WaveLead moderators.');
   }
 }
 
@@ -143,6 +140,15 @@ async function latestFastPayment(channelId: string, userId: string): Promise<Cha
   const c = await payCol();
   return c.find({ channel_id: channelId, owner_user_id: userId } as never)
     .sort({ created_at: -1 }).limit(1).next();
+}
+
+/** P0A — preserve a CAPTURED payment as a reviewable conflict when the payer has lost eligibility. */
+async function flagCapturedPaymentConflict(channel: Channel, userId: string): Promise<boolean> {
+  const reason = fastOwnershipConflictReason(channel, userId);
+  if (!reason) return false;
+  const captured = await findCapturedPayment(channel.id, userId);
+  if (!captured) return false;
+  return recordActivationOwnershipConflict({ paymentId: captured.id, channelId: channel.id, userId, reason, flow: 'fast' });
 }
 
 export type FastVerificationStep =
@@ -233,13 +239,16 @@ export const ownerVerificationService = {
     await assertFastVerificationEligible(actor!, channel);
 
     const c = await payCol();
+    // P0A — scope reuse to THIS caller. Never hand one user another user's
+    // checkout approve_url or payment row.
     const open = await c.find({
       channel_id: channelId,
+      owner_user_id: actor!.user.id,
       status: { $in: ['created', 'checkout_created', 'pending', 'captured_pending_fee'] },
     } as never).sort({ created_at: -1 }).limit(1).next();
     if (open) return this.toPaymentView(open);
-    // Duplicate protection — one finalized $1 activation per channel is enough.
-    const finalized = await c.findOne({ channel_id: channelId, status: 'captured_finalized' } as never);
+    // Duplicate protection — one finalized $1 activation per (channel, payer).
+    const finalized = await c.findOne({ channel_id: channelId, owner_user_id: actor!.user.id, status: 'captured_finalized' } as never);
     if (finalized) return this.toPaymentView(finalized);
 
     const id = uuidv4();
@@ -317,7 +326,14 @@ export const ownerVerificationService = {
     requireAuth(actor);
     const channel = await channelRepo.findById(channelId);
     if (!channel) throw new HttpError(404, 'Channel not found');
-    await assertFastVerificationEligible(actor!, channel);
+    try {
+      await assertFastVerificationEligible(actor!, channel);
+    } catch (err) {
+      // P0A — if this user already has a CAPTURED payment, keep it reviewable
+      // instead of silently stranding the transaction.
+      await flagCapturedPaymentConflict(channel, actor!.user.id).catch(() => false);
+      throw err;
+    }
     const parsed = ownerIdentitySchema.safeParse(input);
     if (!parsed.success) {
       const first = parsed.error.issues[0];
@@ -393,13 +409,27 @@ export const ownerVerificationService = {
   }> {
     const channel = await channelRepo.findById(channelId);
     if (!channel) throw new HttpError(404, 'Channel not found');
-    const blocked: string[] = [];
-    // M18.1 Phase D — listing approval is an OUTCOME of this gate, not a
-    // precondition. Only a terminal/blocked listing stops the fast path.
-    if (FAST_BLOCKED_STATUSES.has(String(channel.status))) blocked.push('listing_blocked');
 
     const c = await payCol();
     const payment = await c.findOne({ channel_id: channelId, owner_user_id: userId, status: 'captured_finalized' } as never);
+
+    // P0A — ownership eligibility is re-evaluated at FINALIZATION time, not
+    // only when checkout started. A stale/competing completion is refused and
+    // a captured payment is preserved as a reviewable exception.
+    const preReason = fastOwnershipConflictReason(channel, userId);
+    if (preReason) {
+      const captured = payment || (await findCapturedPayment(channelId, userId));
+      if (captured) {
+        await recordActivationOwnershipConflict({
+          paymentId: (captured as unknown as { id: string }).id, channelId, userId, reason: preReason, flow: 'fast',
+        });
+      }
+      return { verified: false, blocked_by: ['ownership_conflict'] };
+    }
+
+    const blocked: string[] = [];
+    // Defense in depth (normally caught by the ownership pre-check above).
+    if (FAST_BLOCKED_STATUSES.has(String(channel.status))) blocked.push('listing_blocked');
     if (!payment) blocked.push('payment');
 
     const ic = await identityCol();
@@ -411,22 +441,63 @@ export const ownerVerificationService = {
 
     if (blocked.length > 0) return { verified: false, blocked_by: blocked };
 
+    // Idempotent no-op: this user already holds verified/official ownership
+    // with an active activation. Never downgrade 'official' to 'verified'.
+    if (channel.owner_id === userId
+      && (channel.verification_status === 'official'
+        || (channel.verification_status === 'verified' && channel.activation_status === 'active'))) {
+      return { verified: true, blocked_by: [] };
+    }
+
     const now = new Date();
-    // Explicit, idempotent transition. The listing leaves the moderation queue
-    // here (no second manual ownership review); re-running this is a no-op
-    // because the same target values are written and no new row is created.
+    // P0A — ATOMIC, server-authoritative ownership transition. A single
+    // compare-and-set: the write only applies if, at write time, the channel
+    // is still owned by this user OR still has no owner and this user is its
+    // original submitter, the listing is not blocked/under review, and no
+    // other account holds verified/official ownership. A read-then-write
+    // check alone is NOT relied upon.
     const listingBecomesApproved = channel.status !== 'approved';
-    await channelRepo.update(channelId, {
-      owner_id: userId,
-      status: 'approved',
-      published_at: channel.published_at ?? now,
-      rejection_reason: null,
-      rejection_notes: null,
-      verification_status: 'verified',
-      activation_status: 'active',
-      activation_active_at: now,
-      activation_revoked_at: null,
-    } as unknown as Partial<Channel>);
+    const channels = await getCollection<Channel>(COLLECTIONS.CHANNELS);
+    const res = await channels.findOneAndUpdate(
+      {
+        id: channelId,
+        status: { $nin: Array.from(FAST_BLOCKED_STATUSES) },
+        is_disputed: { $ne: true },
+        is_suspended: { $ne: true },
+        verification_status: { $ne: 'official' },
+        $or: [
+          { owner_id: userId },
+          { owner_id: null, submitted_by: userId, verification_status: { $nin: ['verified', 'official'] } },
+        ],
+      } as never,
+      {
+        $set: {
+          owner_id: userId,
+          status: 'approved',
+          published_at: channel.published_at ?? now,
+          rejection_reason: null,
+          rejection_notes: null,
+          verification_status: 'verified',
+          verified_at: channel.verified_at ?? now,
+          activation_status: 'active',
+          activation_active_at: now,
+          activation_revoked_at: null,
+          updated_at: now,
+        },
+      } as never,
+      { returnDocument: 'after' },
+    );
+    const updated = (res && typeof res === 'object' && 'value' in (res as object)
+      ? (res as unknown as { value: Channel | null }).value
+      : (res as unknown as Channel | null));
+    if (!updated || updated.owner_id !== userId) {
+      const fresh = await channelRepo.findById(channelId);
+      const reason = (fresh && fastOwnershipConflictReason(fresh, userId)) || 'ownership_state_changed';
+      await recordActivationOwnershipConflict({
+        paymentId: (payment as unknown as { id: string }).id, channelId, userId, reason, flow: 'fast',
+      });
+      return { verified: false, blocked_by: ['ownership_conflict'] };
+    }
 
     // Audit trail (best-effort, never blocks the commercial state).
     try {

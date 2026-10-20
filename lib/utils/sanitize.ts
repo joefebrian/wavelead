@@ -25,21 +25,26 @@ export function sanitizeChannel(c: Channel): PublicChannel {
   // the operator has explicitly flipped `CHANNEL_OWNER_ACTIVATION_REQUIRED`
   // ON. Before that, existing verified owners retain their badge without any
   // activation being required. After that, activation_status must be 'active'.
-  const activationRequired = isActivationRequired();
-  // Grandfather-safe: a channel explicitly marked 'not_required' (existing
-  // ownership-verified owners at the LIVE rollout cutoff) ALWAYS keeps its
-  // badge, even after the operator flips CHANNEL_OWNER_ACTIVATION_REQUIRED on.
-  // Newly verified channels subject to activation must reach 'active'.
-  const activationOk =
-    !activationRequired ||
-    c.activation_status === 'active' ||
-    c.activation_status === 'not_required';
+  const activationOk = isActivationBadgeSatisfied(c);
   return {
     ...rest,
     is_verified: rawVerified && hasOwner && activationOk,
     is_official: rawOfficial && hasOwner && activationOk,
     has_owner: hasOwner,
   };
+}
+
+// Single source of truth for the activation gate on the public badge.
+// Grandfather-safe: a channel explicitly marked 'not_required' (existing
+// ownership-verified owners at the LIVE rollout cutoff) ALWAYS keeps its
+// badge, even after the operator flips CHANNEL_OWNER_ACTIVATION_REQUIRED on.
+// Newly verified channels subject to activation must reach 'active'.
+export function isActivationBadgeSatisfied(c: Pick<Channel, 'activation_status'>): boolean {
+  return (
+    !isActivationRequired() ||
+    c.activation_status === 'active' ||
+    c.activation_status === 'not_required'
+  );
 }
 
 export function sanitizeChannels(list: Channel[]): PublicChannel[] {

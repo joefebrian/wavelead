@@ -1446,6 +1446,14 @@ export interface ChannelActivationPayment {
   captured_at: Date | null;
   finalized_at: Date | null;                    // when credit was issued
   refunded_at: Date | null;
+  // P0A — additive, reviewable exception when a CAPTURED payment could not
+  // finalize ownership (owner state changed). Never auto-refunded.
+  ownership_conflict?: {
+    reason: string;
+    flow: 'fast' | 'activation';
+    detected_at: Date;
+    review_status: 'pending_admin_refund_review';
+  } | null;
   created_at: Date;
   updated_at: Date;
 }

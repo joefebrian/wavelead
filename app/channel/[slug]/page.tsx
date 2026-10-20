@@ -19,6 +19,9 @@ import { cookies, headers } from 'next/headers';
 import { ShieldCheck, Users, Share2, ArrowUpRight, Sparkles, BadgeCheck, Flag, KeyRound, Handshake, Package, Clock } from 'lucide-react';
 import { resolveChannelAvatar, CHANNEL_FALLBACK_AVATAR } from '@/lib/seo/channelAvatar';
 import type { Metadata } from 'next';
+import { deriveOwnershipState, ctaForOwnershipState, type OwnershipCta } from '@/lib/services/ownershipState';
+import { getCollection } from '@/lib/db/mongo';
+import { COLLECTIONS } from '@/lib/db/collections';
 import { buildMetadata } from '@/lib/seo/metadata';
 import { channelMetaTitle } from '@/lib/seo/channelTitle';
 
@@ -119,7 +122,24 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
   const cleanedDescription = displayCleanWhatsAppDescription(channel.description) || channel.description;
   const cleanedShortDescription = displayCleanWhatsAppDescription(channel.short_description) || channel.short_description;
   const isOwner = !!(actor && internal && internal.owner_id === actor.user.id);
-  const hasVerifiedOwner = !!internal?.owner_id && channel.is_verified;
+  // P0A — the ownership CTA is derived from the SAME canonical server-side
+  // ownership state as the claim page (owner link + verification + activation
+  // + review flags), NOT from the public badge alone. Only an enum crosses
+  // into render; owner identity is never exposed.
+  let ownershipCta: OwnershipCta = 'ownership_support';
+  if (internal) {
+    let viewerHasActiveClaim = false;
+    if (actor) {
+      try {
+        const claims = await getCollection(COLLECTIONS.CHANNEL_CLAIMS);
+        viewerHasActiveClaim = !!(await claims.findOne(
+          { channel_id: internal.id, claimant_user_id: actor.user.id, status: { $in: ['pending', 'needs_information'] } },
+          { projection: { _id: 1 } },
+        ));
+      } catch { /* fail-safe: treated as no active claim */ }
+    }
+    ownershipCta = ctaForOwnershipState(deriveOwnershipState(internal, actor?.user.id ?? null, viewerHasActiveClaim));
+  }
 
   // M04: fire-and-forget profile view tracking. Attributes to upstream source
   // if the frontend passes ?source=<canonical>. Never blocks render.
@@ -231,17 +251,21 @@ export default async function ChannelProfilePage({ params, searchParams }: { par
                   <Button size="lg" variant="outline" className="gap-2"><Share2 className="h-4 w-4" /> Share</Button>
 
                   {/* M03 Claim / Ownership CTAs */}
-                  {isOwner ? (
+                  {isOwner || ownershipCta === 'manage' ? (
                     <Link href={`/dashboard/channels/${channel.id}`}>
-                      <Button size="lg" variant="secondary" className="gap-2"><ShieldCheck className="h-4 w-4" /> Manage this channel</Button>
+                      <Button size="lg" variant="secondary" className="gap-2" data-testid="ownership-cta-manage"><ShieldCheck className="h-4 w-4" /> Manage this channel</Button>
                     </Link>
-                  ) : hasVerifiedOwner ? (
-                    <Link href={`/report/channel/${channel.slug}`}>
-                      <Button size="lg" variant="ghost" className="gap-2"><Flag className="h-4 w-4" /> Report ownership issue</Button>
+                  ) : ownershipCta === 'claim' ? (
+                    <Link href={`/claim/${channel.slug}`}>
+                      <Button size="lg" variant="secondary" className="gap-2" data-testid="ownership-cta-claim"><KeyRound className="h-4 w-4" /> Claim this channel</Button>
+                    </Link>
+                  ) : ownershipCta === 'claim_status' ? (
+                    <Link href={`/claim/${channel.slug}`}>
+                      <Button size="lg" variant="secondary" className="gap-2" data-testid="ownership-cta-claim-status"><KeyRound className="h-4 w-4" /> View claim status</Button>
                     </Link>
                   ) : (
                     <Link href={`/claim/${channel.slug}`}>
-                      <Button size="lg" variant="secondary" className="gap-2"><KeyRound className="h-4 w-4" /> Claim this channel</Button>
+                      <Button size="lg" variant="ghost" className="gap-2" data-testid="ownership-cta-support"><Flag className="h-4 w-4" /> Ownership status</Button>
                     </Link>
                   )}
                 </div>

@@ -25,6 +25,7 @@ import { getPaymentProvider } from '@/lib/services/payments/providerFactory';
 import { readActiveEnvironment } from '@/lib/services/payments/paypalConfigService';
 import { isActivationRequired, isActivationLiveCheckoutEnabled } from '@/lib/services/payments/activationFlag';
 import { getConfiguredOrigin } from '@/lib/utils/canonicalOrigin';
+import { fastOwnershipConflictReason, recordActivationOwnershipConflict } from './activationOwnershipConflict';
 import type {
   Actor,
   Channel,
@@ -219,11 +220,27 @@ async function tryFinalize(paymentId: string): Promise<ChannelActivationPayment 
     return finalized || (await c.findOne({ id: paymentId }));
   }
   // Flip the channel to activation_status='active' (idempotent).
-  await channelRepo.update(p.channel_id, {
-    activation_status: 'active',
-    activation_active_at: new Date(),
-    activation_revoked_at: null,
-  } as unknown as Partial<Channel>);
+  // P0A — atomic owner guard: activation only applies while the payer is
+  // STILL the verified owner of the channel. If ownership changed after
+  // checkout started, never activate another account's badge with this
+  // payment; preserve it as a reviewable exception (no auto-refund).
+  const channelsColl = await getCollection<Channel>(COLLECTIONS.CHANNELS);
+  const flip = await channelsColl.updateOne(
+    {
+      id: p.channel_id,
+      owner_id: p.owner_user_id,
+      verification_status: { $in: ['verified', 'official'] },
+    } as never,
+    { $set: { activation_status: 'active', activation_active_at: new Date(), activation_revoked_at: null, updated_at: new Date() } } as never,
+  );
+  if (flip.matchedCount !== 1) {
+    const ch = await channelRepo.findById(p.channel_id).catch(() => null);
+    const reason = ch ? (fastOwnershipConflictReason(ch, p.owner_user_id) || 'ownership_state_changed') : 'ownership_state_changed';
+    await recordActivationOwnershipConflict({
+      paymentId: p.id, channelId: p.channel_id, userId: p.owner_user_id,
+      reason: reason === 'not_eligible_claimant' ? 'ownership_state_changed' : reason, flow: 'activation',
+    }).catch(() => false);
+  }
   return finalized || (await c.findOne({ id: paymentId }));
 }
 
@@ -452,7 +469,7 @@ export const channelActivationService = {
     const credits = await creditCol();
     const rows = await c.find({}).sort({ created_at: -1 }).limit(500).toArray();
 
-    let grossCaptured = 0, fees = 0, net = 0, creditIssued = 0, activeCount = 0, refundedCount = 0;
+    let grossCaptured = 0, fees = 0, net = 0, creditIssued = 0, activeCount = 0, refundedCount = 0, conflictCount = 0;
     const items: Array<Record<string, unknown>> = [];
 
     for (const p of rows) {
@@ -467,6 +484,11 @@ export const channelActivationService = {
       creditIssued += creditForPayment;
       if (p.status === 'captured_finalized') activeCount += 1;
       if (p.status === 'refunded' || p.status === 'partially_refunded' || (p.amount_refunded_minor || 0) > 0) refundedCount += 1;
+      // P0A — captured payment that could not finalize ownership; pending
+      // authorized admin refund review (never auto-refunded).
+      const conflict = p.ownership_conflict || null;
+      const conflictOpen = !!conflict && !(p.status === 'refunded' || p.status === 'partially_refunded');
+      if (conflictOpen) conflictCount += 1;
 
       items.push({
         id: p.id,
@@ -492,6 +514,9 @@ export const channelActivationService = {
         wavelead_credit_minor: creditForPayment,
         status: p.status,
         activation_status: ch?.activation_status || null,
+        ownership_conflict: conflict
+          ? { reason: conflict.reason, flow: conflict.flow, detected_at: conflict.detected_at, review_status: conflictOpen ? conflict.review_status : 'resolved_refunded' }
+          : null,
       });
     }
 
@@ -505,6 +530,7 @@ export const channelActivationService = {
         wavelead_credit_issued_minor: creditIssued,
         active_activations: activeCount,
         refunded_or_reversed: refundedCount,
+        ownership_conflicts_pending_review: conflictCount,
         currency: 'USD' as const,
       },
     };

@@ -8,11 +8,33 @@ import { getCollection } from '../db/mongo';
 import { COLLECTIONS } from '../db/collections';
 import { HttpError } from '../auth/rbac';
 import { claimSubmitSchema, claimResubmitSchema } from '../validation/claimSchemas';
+import { deriveOwnershipState, OWNERSHIP_SUPPORT_EMAIL, type OwnershipState } from './ownershipState';
 import type {
   Actor, ChannelClaim, ClaimStatus, PublicClaimForClaimant,
 } from '@/lib/types';
 
 const ACTIVE_STATUSES: ClaimStatus[] = ['pending', 'needs_information'];
+
+// P0A — claim eligibility contract. `ownershipState` is the canonical state;
+// the legacy booleans are kept for backwards compatibility. Never carries
+// owner identity or payment data.
+export interface ClaimEligibility {
+  ownershipState: OwnershipState;
+  canClaim: boolean;
+  alreadyOwned?: boolean;
+  verifiedOwner?: boolean;
+  needsAuth?: boolean;
+  ownerVerificationMode?: boolean;
+  pendingListing?: boolean;
+  underReview?: boolean;
+  reason?: string;
+  existingClaim?: {
+    id: string;
+    status: ClaimStatus;
+    submitted_at: Date;
+    request_more_info_message: string | null;
+  };
+}
 
 function extractDomain(url: string | null | undefined): string | null {
   if (!url) return null;
@@ -41,86 +63,66 @@ async function findActiveClaim(channelId: string, userId: string): Promise<Chann
 }
 
 export const claimService = {
-  async getEligibility(channelSlug: string, actor: Actor | null) {
+  async getEligibility(channelSlug: string, actor: Actor | null): Promise<ClaimEligibility> {
     const channel = await channelRepo.findBySlug(channelSlug);
     if (!channel) throw new HttpError(404, 'Channel not found');
-    const isLinkedOwner = !!actor && channel.owner_id === actor.user.id;
-    if (channel.status !== 'approved') {
-      // Combined onboarding (M12): the ORIGINAL submitter / linked owner may
-      // file ownership proof while the listing is still pending_review, so a
-      // single admin review can approve listing + ownership together. Filing
-      // this claim NEVER proves ownership by itself. Everyone else must wait
-      // until the listing is approved (privacy + no takeover of unapproved).
-      if (channel.status === 'pending_review' && isLinkedOwner) {
-        const active = await findActiveClaim(channel.id, actor!.user.id);
-        if (active) {
-          return {
-            canClaim: false,
-            ownerVerificationMode: true,
-            underReview: true,
-            existingClaim: {
-              id: active.id, status: active.status,
-              submitted_at: active.submitted_at,
-              request_more_info_message: active.request_more_info_message,
-            },
-          };
+    const viewerId = actor?.user.id ?? null;
+    const active = viewerId ? await findActiveClaim(channel.id, viewerId) : null;
+    const existingClaim = active ? {
+      id: active.id, status: active.status,
+      submitted_at: active.submitted_at,
+      request_more_info_message: active.request_more_info_message,
+    } : undefined;
+    // P0A — ONE canonical, server-authoritative ownership state shared with
+    // the public channel CTA. Never derived from the public badge alone and
+    // never carries owner identity.
+    const ownershipState: OwnershipState = deriveOwnershipState(channel, viewerId, !!active);
+
+    switch (ownershipState) {
+      case 'not_claimable':
+        return { ownershipState, canClaim: false, reason: 'Only approved channels can be claimed.' };
+      case 'self_verified':
+        return { ownershipState, canClaim: false, alreadyOwned: true, verifiedOwner: true,
+          reason: 'You are the verified owner of this channel.' };
+      case 'verified_owner':
+        // Genuinely verified ownership — the ONLY state allowed to say so.
+        return { ownershipState, canClaim: false, alreadyOwned: true, verifiedOwner: true,
+          reason: 'This channel already has a verified owner.' };
+      case 'verified_activation_incomplete':
+        return { ownershipState, canClaim: false, alreadyOwned: true, verifiedOwner: true,
+          reason: 'Ownership of this channel has already been verified by WaveLead, so it cannot be claimed by another account.' };
+      case 'linked_unverified':
+        // M03.7 takeover protection is preserved: another account is linked,
+        // so a new claim would silently transfer ownership. But ownership has
+        // NOT been verified — never describe this as a verified owner.
+        if (!actor) {
+          // The linked account holder may simply not be signed in yet.
+          return { ownershipState, canClaim: false, needsAuth: true, verifiedOwner: false,
+            reason: `This listing is linked to a WaveLead account, but its ownership has not been verified. If it is your account, sign in to complete verification. Otherwise contact ${OWNERSHIP_SUPPORT_EMAIL}.` };
         }
-        return { canClaim: true, ownerVerificationMode: true, pendingListing: true };
-      }
-      return { canClaim: false, reason: 'Only approved channels can be claimed.' };
-    }
-    // If already verified (or official) with an owner, only support "report an issue" path.
-    if (channel.owner_id && (channel.verification_status === 'verified' || channel.verification_status === 'official')) {
-      return {
-        canClaim: false,
-        alreadyOwned: true,
-        reason: 'This channel already has a verified owner.',
-      };
-    }
-    // ── M03.7 — assigned-but-not-yet-verified ownership state. ──────────────
-    // Channel has an owner_id but verification_status is not 'verified'.
-    // - The current owner may submit ownership evidence (self-verification).
-    // - Any OTHER signed-in user must NOT be allowed to file a claim here —
-    //   approving such a claim would silently transfer ownership. Route them
-    //   into the ownership-dispute / report-ownership flow instead.
-    if (channel.owner_id) {
-      if (!actor) return { canClaim: false, needsAuth: true, reason: 'Sign in to complete ownership verification for this channel.' };
-      if (channel.owner_id !== actor.user.id) {
+        return { ownershipState, canClaim: false, alreadyOwned: true, verifiedOwner: false,
+          reason: `This listing is linked to another WaveLead account, but its ownership has not been verified. If you run this channel, contact ${OWNERSHIP_SUPPORT_EMAIL} and our team will review it.` };
+      case 'ownership_issue':
+        return { ownershipState, canClaim: false, alreadyOwned: true, verifiedOwner: false,
+          reason: `The ownership record for this channel needs review by WaveLead support. If you run this channel, contact ${OWNERSHIP_SUPPORT_EMAIL}.` };
+      case 'pending_claim': {
+        const ownerVerificationMode = channel.owner_id === viewerId;
         return {
-          canClaim: false,
-          alreadyOwned: true,
-          reason: 'This channel is already linked to a WaveLead owner. If you believe this is wrong, please report an ownership issue.',
+          ownershipState, canClaim: false, existingClaim,
+          ...(ownerVerificationMode ? { ownerVerificationMode: true } : {}),
+          ...(channel.status === 'pending_review' ? { underReview: true } : {}),
         };
       }
-      // Actor IS the current owner and channel is not yet verified.
-      const active = await findActiveClaim(channel.id, actor.user.id);
-      if (active) {
+      case 'self_linked_unverified':
         return {
-          canClaim: false,
-          ownerVerificationMode: true,
-          existingClaim: {
-            id: active.id, status: active.status,
-            submitted_at: active.submitted_at,
-            request_more_info_message: active.request_more_info_message,
-          },
+          ownershipState, canClaim: true, ownerVerificationMode: true,
+          ...(channel.status === 'pending_review' ? { pendingListing: true } : {}),
         };
-      }
-      return { canClaim: true, ownerVerificationMode: true };
+      case 'unclaimed':
+      default:
+        if (!actor) return { ownershipState, canClaim: true, needsAuth: true };
+        return { ownershipState, canClaim: true };
     }
-    // Unclaimed channel — standard claim flow.
-    if (!actor) return { canClaim: true, needsAuth: true };
-    const active = await findActiveClaim(channel.id, actor.user.id);
-    if (active) {
-      return {
-        canClaim: false,
-        existingClaim: {
-          id: active.id, status: active.status,
-          submitted_at: active.submitted_at,
-          request_more_info_message: active.request_more_info_message,
-        },
-      };
-    }
-    return { canClaim: true };
   },
 
   async submit(actor: Actor | null, channelSlug: string, input: unknown) {
@@ -145,7 +147,7 @@ export const claimService = {
     // is enforced BOTH here and in claim-moderation approval (defence in
     // depth). Route the caller to the ownership-dispute flow instead.
     if (channel.owner_id && channel.owner_id !== actor.user.id) {
-      throw new HttpError(409, 'This channel is already linked to a WaveLead owner. Please report an ownership issue instead of filing a new claim.');
+      throw new HttpError(409, `This listing is linked to another WaveLead account and its ownership has not been verified. Please contact ${OWNERSHIP_SUPPORT_EMAIL} instead of filing a new claim.`);
     }
 
     // Duplicate active claim guard.

@@ -5,6 +5,7 @@ import Footer from '@/components/layout/Footer';
 import { Button } from '@/components/ui/button';
 import { channelService } from '@/lib/services/channelService';
 import { notFound } from 'next/navigation';
+import { OWNERSHIP_SUPPORT_EMAIL } from '@/lib/services/ownershipState';
 
 export const metadata: Metadata = {
   title: 'Report ownership issue — WaveLead',
@@ -25,9 +26,9 @@ export default async function ReportChannelPage({ params }: { params: Promise<Pa
       <main className="container py-10 max-w-2xl">
         <div className="text-xs uppercase tracking-wider text-muted-foreground">Report an issue</div>
         <h1 className="text-2xl md:text-3xl font-bold">Ownership concern about {channel.name}</h1>
-        <p className="mt-2 text-muted-foreground">If you believe the wrong person is verified as the owner of this channel, let us know. Full dispute resolution is coming in a later milestone — for now the WaveLead moderation team will review your report and follow up.</p>
+        <p className="mt-2 text-muted-foreground">If you run this channel and believe its ownership record on WaveLead is incorrect, contact our support team. Your message is reviewed manually by WaveLead staff; ownership is never transferred automatically.</p>
         <div className="mt-6 wh-card p-6">
-          <p className="text-sm text-muted-foreground">Email <a href="mailto:trust@wavelead.dev" className="underline">trust@wavelead.dev</a> with:</p>
+          <p className="text-sm text-muted-foreground">Email <a href={`mailto:${OWNERSHIP_SUPPORT_EMAIL}?subject=${encodeURIComponent(`Ownership review: ${channel.name}`)}`} className="underline" data-testid="ownership-support-email">{OWNERSHIP_SUPPORT_EMAIL}</a> with:</p>
           <ul className="mt-2 text-sm list-disc pl-5 space-y-1">
             <li>Channel: <Link href={`/channel/${channel.slug}`} className="underline">{channel.name}</Link></li>
             <li>Why you believe the ownership is incorrect</li>
