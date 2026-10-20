@@ -31,7 +31,7 @@ import { normalizeCountryCode } from '@/lib/constants/countries';
 import { channelActivationService, ACTIVATION_AMOUNT_MINOR, ACTIVATION_CURRENCY, ACTIVATION_PURPOSE } from './channelActivationService';
 import type { Actor, Channel, ChannelActivationPayment } from '@/lib/types';
 import {
-  fastOwnershipConflictReason, recordActivationOwnershipConflict, findCapturedPayment,
+  fastOwnershipConflictReason, recordActivationOwnershipConflict, findCapturedPayment, resolveActivationOwnershipConflict,
 } from './activationOwnershipConflict';
 
 export const OWNER_DECLARATION_TEXT =
@@ -498,6 +498,10 @@ export const ownerVerificationService = {
       });
       return { verified: false, blocked_by: ['ownership_conflict'] };
     }
+
+    // P0A — this payment now backs a legitimate finalization; close any
+    // earlier refund-review flag so it is never refunded by mistake.
+    await resolveActivationOwnershipConflict((payment as unknown as { id: string }).id, userId).catch(() => false);
 
     // Audit trail (best-effort, never blocks the commercial state).
     try {

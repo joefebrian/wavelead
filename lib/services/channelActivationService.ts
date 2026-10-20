@@ -487,7 +487,8 @@ export const channelActivationService = {
       // P0A — captured payment that could not finalize ownership; pending
       // authorized admin refund review (never auto-refunded).
       const conflict = p.ownership_conflict || null;
-      const conflictOpen = !!conflict && !(p.status === 'refunded' || p.status === 'partially_refunded');
+      const conflictOpen = !!conflict && conflict.review_status === 'pending_admin_refund_review'
+        && !(p.status === 'refunded' || p.status === 'partially_refunded');
       if (conflictOpen) conflictCount += 1;
 
       items.push({
@@ -515,7 +516,8 @@ export const channelActivationService = {
         status: p.status,
         activation_status: ch?.activation_status || null,
         ownership_conflict: conflict
-          ? { reason: conflict.reason, flow: conflict.flow, detected_at: conflict.detected_at, review_status: conflictOpen ? conflict.review_status : 'resolved_refunded' }
+          ? { reason: conflict.reason, flow: conflict.flow, detected_at: conflict.detected_at, review_status: conflictOpen ? conflict.review_status
+            : (conflict.review_status === 'resolved_finalized' ? 'resolved_finalized' : 'resolved_refunded') }
           : null,
       });
     }

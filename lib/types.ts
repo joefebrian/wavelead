@@ -1452,7 +1452,8 @@ export interface ChannelActivationPayment {
     reason: string;
     flow: 'fast' | 'activation';
     detected_at: Date;
-    review_status: 'pending_admin_refund_review';
+    review_status: 'pending_admin_refund_review' | 'resolved_finalized';
+    resolved_at?: Date | null;
   } | null;
   created_at: Date;
   updated_at: Date;

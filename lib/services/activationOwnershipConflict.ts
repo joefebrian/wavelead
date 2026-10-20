@@ -102,6 +102,32 @@ export async function recordActivationOwnershipConflict(args: {
   return true;
 }
 
+/**
+ * If a payment previously flagged for refund review is later used for a
+ * LEGITIMATE ownership finalization (e.g. a moderator approved the payer's
+ * manual claim first), close the flag so admins are never prompted to refund
+ * a payment that now backs an active, verified ownership. Additive only:
+ * never touches amounts, status or provider data. Idempotent.
+ */
+export async function resolveActivationOwnershipConflict(paymentId: string, userId: string): Promise<boolean> {
+  const pay = await getCollection<ChannelActivationPayment>(COLLECTIONS.CHANNEL_ACTIVATION_PAYMENTS);
+  const now = new Date();
+  const res = await pay.updateOne(
+    { id: paymentId, 'ownership_conflict.review_status': OWNERSHIP_CONFLICT_REVIEW_STATUS } as never,
+    { $set: { 'ownership_conflict.review_status': 'resolved_finalized', 'ownership_conflict.resolved_at': now, updated_at: now } } as never,
+  );
+  if (res.modifiedCount !== 1) return false;
+  try {
+    const audit = await getCollection<Record<string, unknown>>(COLLECTIONS.AUDIT_LOGS);
+    await audit.insertOne({
+      id: uuidv4(), actor_user_id: userId, action: 'ACTIVATION_OWNERSHIP_CONFLICT_RESOLVED',
+      entity_type: 'channel_activation_payment', entity_id: paymentId, before_data: null,
+      after_data: { review_status: 'resolved_finalized' }, created_at: now,
+    } as never);
+  } catch { /* audit is best-effort */ }
+  return true;
+}
+
 /** Latest captured payment for (channel, user), any flow. */
 export async function findCapturedPayment(channelId: string, userId: string): Promise<ChannelActivationPayment | null> {
   const pay = await getCollection<ChannelActivationPayment>(COLLECTIONS.CHANNEL_ACTIVATION_PAYMENTS);

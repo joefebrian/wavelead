@@ -283,6 +283,29 @@ describe('P0A §3 captured payment conflict handling', () => {
     await expect(channelActivationService.adminListActivations(actorFor(b))).rejects.toMatchObject({ status: 403 });
   });
 
+  it('a flagged payment later used for a LEGITIMATE finalization is closed (never left for refund)', async () => {
+    const claimant = await seedUser();
+    const mod = await seedUser('moderator');
+    const admin = await seedUser('admin');
+    const c = await seedChannel();
+    const claimId = await seedClaim(c.id, claimant, 'pending');
+    const pid = await readyFastUser(c.id, claimant);
+    // Pending claimant only → refused + flagged for refund review.
+    expect((await ownerVerificationService.finalizeIfComplete(claimant, c.id)).verified).toBe(false);
+    expect((await pay(pid)).ownership_conflict?.review_status).toBe('pending_admin_refund_review');
+    // Moderator approves the manual claim → claimant is now the verified owner.
+    await claimModerationService.approve(actorFor(mod, 'moderator'), claimId, {});
+    // Finalization now legitimately uses the same payment → flag resolved.
+    expect((await ownerVerificationService.finalizeIfComplete(claimant, c.id)).verified).toBe(true);
+    const p = await pay(pid);
+    expect(p.ownership_conflict?.review_status).toBe('resolved_finalized');
+    expect(p.status).toBe('captured_finalized');
+    expect(p.amount_refunded_minor).toBe(0);
+    const report = await channelActivationService.adminListActivations(actorFor(admin, 'admin'));
+    const row = report.items.find((it) => it.id === pid) as Record<string, any>;
+    expect(row.ownership_conflict.review_status).toBe('resolved_finalized');
+  });
+
   it('a payer who lost eligibility before submitting identity still gets the captured payment preserved', async () => {
     const s = await seedUser();
     const other = await seedUser();

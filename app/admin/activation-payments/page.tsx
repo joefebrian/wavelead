@@ -110,7 +110,7 @@ export default async function AdminActivationPaymentsPage() {
                         return (
                           <div className="mt-1" data-testid="activation-ownership-conflict">
                             <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${open ? 'bg-rose-100 text-rose-800' : 'bg-muted text-muted-foreground'}`}>
-                              {open ? 'Ownership conflict — refund review' : 'Ownership conflict — refunded'}
+                              {open ? 'Ownership conflict — refund review' : oc.review_status === 'resolved_finalized' ? 'Conflict resolved — ownership finalized (do not refund)' : 'Ownership conflict — refunded'}
                             </span>
                             <div className="text-[11px] text-muted-foreground mt-0.5">{String(oc.reason || '').replace(/_/g, ' ')}</div>
                           </div>
