@@ -1,0 +1,32 @@
+{
+  "phase": "pre_deploy",
+  "source": "production public API (read-only)",
+  "captured_at": "2026-10-21T01:31:40.143Z",
+  "environment": "production",
+  "deployed_commit_reported_by_app": "unknown",
+  "deployed_version_reported_by_app": "unknown",
+  "public_approved_total": 956,
+  "channels_scanned": 956,
+  "verified_public_count": 4,
+  "verified_public_slugs": [
+    "espn-brasil",
+    "persib",
+    "p2p-labs",
+    "tiara-andini"
+  ],
+  "top_countries": {
+    "ID": 204,
+    "US": 175,
+    "IN": 122,
+    "ES": 65,
+    "BR": 39
+  },
+  "ownership_cta_sample": {
+    "sample_size": 25,
+    "distribution": {
+      "ownership-cta-support": 25
+    }
+  },
+  "canonical_bucket_snapshot": null,
+  "canonical_bucket_snapshot_note": "NOT AVAILABLE pre-deploy: the claim-path metrics and inventory snapshot endpoints ship WITH this release. No baseline was fabricated."
+}

@@ -19,7 +19,18 @@ function stampedCommit() {
     process.env.GIT_COMMIT;
   if (fromEnv && String(fromEnv).trim()) return String(fromEnv).trim();
   try {
-    return execSync('git rev-parse HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    const sha = execSync('git rev-parse HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    // Truthfulness guard: if the tree being built carries uncommitted changes,
+    // the artifact does NOT correspond to that commit. Say so, rather than
+    // reporting a commit that does not describe what was shipped.
+    let dirty = false;
+    try {
+      dirty = execSync('git status --porcelain', { stdio: ['ignore', 'pipe', 'ignore'] })
+        .toString()
+        .split('\n')
+        .some((l) => l.trim() && !/(^|\s)(yarn\.lock|\.env\.example|test_result\.md)$/.test(l.trim()));
+    } catch { /* status unavailable — report the bare sha */ }
+    return dirty ? `${sha}-dirty` : sha;
   } catch {
     return '';
   }

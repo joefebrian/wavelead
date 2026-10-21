@@ -1144,6 +1144,9 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
     }
     if (route === '/admin/operations/sourcing-agents' && method === 'POST') {
       const actor = await resolveActor(request);
+      // Authorize BEFORE validating input, so an anonymous caller learns
+      // nothing about this endpoint's payload shape (previously returned 400).
+      requireRole(actor, ROLES.ADMIN);
       const body = await safeJson(request) as { user_id?: string; enabled?: boolean; reason?: string } | null;
       if (!body?.user_id) return applyCors(fail(400, 'user_id is required'), request);
       if (typeof body.enabled !== 'boolean') return applyCors(fail(400, 'enabled must be true or false'), request);
