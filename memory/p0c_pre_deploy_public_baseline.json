@@ -1,0 +1,13 @@
+{
+ "phase": "pre_deploy_P0C",
+ "source": "production PUBLIC API (read-only) \u2014 NOT the canonical admin snapshot",
+ "captured_at": "2026-10-21T16:28:50.126574Z",
+ "public_total": 1013,
+ "scanned": 1013,
+ "has_owner": {
+  "True": 1013
+ },
+ "public_verified_badge": 4,
+ "verified_at_set": 15,
+ "unique_whatsapp_ids": 1013
+}
