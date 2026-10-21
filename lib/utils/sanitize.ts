@@ -25,10 +25,12 @@ export function sanitizeChannel(c: Channel): PublicChannel {
     ownership_released_at: _ora,
     ownership_released_by: _orb,
     released_from_owner_id: _rfo,
+    // P0C — reviewer identity is internal.
+    verified_by: _vb,
     ...rest
   } = c;
   void _rb; void _ra; void _rr; void _rn; void _tf; void _as; void _aa; void _ar;
-  void _sb; void _src; void _sbu; void _sat; void _ora; void _orb; void _rfo;
+  void _sb; void _src; void _sbu; void _sat; void _ora; void _orb; void _rfo; void _vb;
   const hasOwner = !!owner_id;
   const rawVerified = verification_status === 'verified' || verification_status === 'official';
   const rawOfficial = verification_status === 'official';

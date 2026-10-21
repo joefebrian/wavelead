@@ -234,8 +234,17 @@ export const ownershipReleaseService = {
       throw new HttpError(400, 'expected_owner_user_id is required so the release can verify it is clearing the owner link you reviewed.');
     }
 
+    // P0C — an admin can never release an ownership link held by their own
+    // account; that decision must be made by a different administrator.
+    if (expectedOwner === admin.user.id) {
+      throw new HttpError(403, 'Conflict of interest: this ownership link belongs to your own account. A different administrator must review and release it.');
+    }
+
     const channel = await channelRepo.findById(channelId);
     if (!channel) throw new HttpError(404, 'Channel not found');
+    if (channel.owner_id && channel.owner_id === admin.user.id) {
+      throw new HttpError(403, 'Conflict of interest: this ownership link belongs to your own account. A different administrator must review and release it.');
+    }
 
     const assessment = await assess(channel, await designatedAgentIds());
     if (!assessment.eligible) {

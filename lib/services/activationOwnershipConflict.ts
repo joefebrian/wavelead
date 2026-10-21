@@ -62,6 +62,11 @@ export function fastOwnershipConflictReason(channel: Channel, userId: string): O
     return verified ? 'verified_owner_exists' : 'linked_to_other_account';
   }
   if (verified) return 'ownership_under_review'; // verified flag without owner link — inconsistent
+  // P0C — the "original submitter" fallback NEVER applies to a staff-sourced
+  // listing: whoever submitted it did so as directory work, not as owner.
+  if (ch.source === 'staff_sourced') {
+    return ch.submitted_by && ch.submitted_by === userId ? 'sourcing_agent_not_owner' : 'not_eligible_claimant';
+  }
   if (ch.submitted_by && ch.submitted_by === userId) return null;
   return 'not_eligible_claimant';
 }

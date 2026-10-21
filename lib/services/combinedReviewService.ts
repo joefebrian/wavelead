@@ -26,6 +26,7 @@ import { COLLECTIONS } from '../db/collections';
 import { moderationService } from './moderationService';
 import { claimModerationService } from './claimModerationService';
 import type { Actor, Channel, ChannelClaim } from '@/lib/types';
+import { SELF_REVIEW_MESSAGE } from './reviewerConflictGuard';
 
 // The single reviewable ownership claim for a channel that belongs to the
 // channel's linked owner (the combined-onboarding case). Returns null when no
@@ -54,6 +55,10 @@ export const combinedReviewService = {
     }
     if (channel.status !== 'pending_review') {
       throw new HttpError(409, `Channel is in status "${channel.status}" — combined approval only applies to pending_review listings.`);
+    }
+    // P0C — never combined-approve a listing linked to / submitted by the reviewer.
+    if (channel.owner_id === actor!.user.id || channel.submitted_by === actor!.user.id) {
+      throw new HttpError(403, SELF_REVIEW_MESSAGE);
     }
     const claim = await getReviewableOwnershipClaim(channelId);
     if (!claim) {

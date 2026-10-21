@@ -19,7 +19,7 @@ import type { Metadata } from 'next';
 import { resolveActorFromCookies, rankOf, ROLES } from '@/lib/auth/rbac';
 import { claimPathMetricsService } from '@/lib/services/claimPathMetricsService';
 import { ownershipReleaseService, type ReleaseAssessment } from '@/lib/services/ownershipReleaseService';
-import { sourcingAgentService, type DailySourcingCount } from '@/lib/services/sourcingAgentService';
+import { operationsReportService, type RecentSubmissionRow } from '@/lib/services/operationsReportService';
 import { inventorySnapshotService, type InventorySnapshot } from '@/lib/services/inventorySnapshotService';
 import { getBuildInfo } from '@/lib/buildInfo';
 import { Activity, ShieldCheck, Users, AlertTriangle } from 'lucide-react';
@@ -77,10 +77,17 @@ export default async function AdminOperationsPage({
     candidateTotal = res.total;
     snapshots = await inventorySnapshotService.list(actor, 6).catch(() => []);
   }
-  let sourcingDaily: DailySourcingCount[] = [];
-  try {
-    sourcingDaily = await sourcingAgentService.dailySourcingCounts(actor, 7);
-  } catch { /* reporting is non-critical to the page */ }
+  // P0C — provenance split, sourcing scoreboard and (admin) recent submitters.
+  const split = await operationsReportService.inventorySplit(actor).catch(() => null);
+  const board = await operationsReportService.sourcingScoreboard(actor, 7).catch(() => null);
+  let recent: RecentSubmissionRow[] = [];
+  let recentTotal = 0;
+  if (isAdmin) {
+    const r = await operationsReportService.recentSubmissions(actor, { days: 7, limit: 100 }).catch(() => null);
+    recent = r?.items ?? [];
+    recentTotal = r?.total ?? 0;
+  }
+  const who = (u: RecentSubmissionRow['submitter']) => (u ? `${u.email}${u.is_sourcing_agent ? ' · agent' : ''} (${u.role})` : '—');
 
   const cards = [
     { label: 'Public Channels', value: metrics.public_approved_total, hint: 'Approved + publicly visible' },
@@ -131,6 +138,26 @@ export default async function AdminOperationsPage({
             </span>
           )}
         </div>
+
+        {/* -------------------- P0C: PROVENANCE SPLIT -------------------- */}
+        {split && (
+          <div className="grid gap-3 grid-cols-2 md:grid-cols-6 mb-6" data-testid="ops-provenance">
+            {[
+              { label: 'Staff-Sourced', value: split.staff_sourced_public, hint: 'Public listings added by sourcing agents' },
+              { label: 'Owner-Submitted', value: split.owner_submitted_public, hint: 'Public listings submitted as owner_self' },
+              { label: 'Legacy (no source)', value: split.legacy_no_source_public, hint: 'Pre-P0B listings, provenance not recorded' },
+              { label: 'Claimed + Verified', value: split.staff_sourced_claimed_verified, hint: 'Staff-sourced listings now owner-verified' },
+              { label: 'Verified Owners', value: split.verified_owners, hint: 'Verified/official with an owner link' },
+              { label: 'Sponsorship-Ready', value: split.sponsorship_ready, hint: 'Verified + activation + active package + verified payout' },
+            ].map((c) => (
+              <div key={c.label} className="wh-card p-3">
+                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{c.label}</div>
+                <div className="mt-1 text-lg font-bold tabular-nums">{c.value.toLocaleString()}</div>
+                <div className="mt-0.5 text-[11px] text-muted-foreground leading-snug">{c.hint}</div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* -------------------- OWNERSHIP REVIEW QUEUE -------------------- */}
         {isAdmin ? (
@@ -211,39 +238,127 @@ export default async function AdminOperationsPage({
           </div>
         )}
 
-        {/* -------------------- SOURCING ACTIVITY -------------------- */}
-        <div className="mb-8">
+        {/* -------------------- P0C: SOURCING SCOREBOARD -------------------- */}
+        <div className="mb-8" data-testid="ops-scoreboard">
           <div className="flex items-center gap-2 mb-1">
             <Users className="h-4 w-4 text-primary" />
-            <h2 className="text-lg font-semibold">Sourcing Activity</h2>
-            <span className="text-xs text-muted-foreground">unique channels per day · Asia/Jakarta</span>
+            <h2 className="text-lg font-semibold">Sourcing Scoreboard</h2>
+            <span className="text-xs text-muted-foreground">
+              last 7 days · Asia/Jakarta days · target {board?.target_per_day ?? 100} unique listings/day (a target, not achieved traction)
+            </span>
           </div>
-          {sourcingDaily.length === 0 ? (
+          {!board || board.items.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              No staff-sourced submissions recorded yet. Attribution starts when an administrator designates a sourcing
-              agent; existing listings are never reclassified retroactively.
+              No staff-sourced submissions recorded in this window. Attribution starts when an administrator designates a
+              sourcing agent; existing listings are never reclassified retroactively.
             </p>
           ) : (
-            <table className="w-full text-sm max-w-xl">
-              <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground border-b">
-                  <th className="py-2 pr-3">Day</th>
-                  {isAdmin && <th className="py-2 pr-3">Sourcing agent</th>}
-                  <th className="py-2 pr-3">Unique channels</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sourcingDaily.map((d) => (
-                  <tr key={`${d.day}-${d.user_id}`} className="border-b last:border-0">
-                    <td className="py-2 pr-3 tabular-nums">{d.day}</td>
-                    {isAdmin && <td className="py-2 pr-3">{d.display_name}</td>}
-                    <td className="py-2 pr-3 tabular-nums font-medium">{d.unique_channels}</td>
-                  </tr>
+            <>
+              <div className="flex flex-wrap gap-2 mb-2 text-xs">
+                {board.day_totals.map((t) => (
+                  <span key={t.day} className="rounded border px-2 py-1 tabular-nums">
+                    {t.day}: <strong>{t.accepted_unique}</strong>/{board.target_per_day} ({t.progress_pct}%)
+                  </span>
                 ))}
-              </tbody>
-            </table>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground border-b">
+                      <th className="py-2 pr-3">Day</th>
+                      {isAdmin && <th className="py-2 pr-3">Sourcing account</th>}
+                      <th className="py-2 pr-3">Submitted</th>
+                      <th className="py-2 pr-3">Unique accepted</th>
+                      <th className="py-2 pr-3">Approved public</th>
+                      <th className="py-2 pr-3">Pending</th>
+                      <th className="py-2 pr-3">Rejected</th>
+                      <th className="py-2 pr-3">Duplicates</th>
+                      <th className="py-2 pr-3">Claims</th>
+                      <th className="py-2 pr-3">Claimed</th>
+                      <th className="py-2 pr-3">Verified</th>
+                      <th className="py-2 pr-3">vs target</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {board.items.map((d) => (
+                      <tr key={`${d.day}-${d.user_id}`} className="border-b last:border-0 tabular-nums">
+                        <td className="py-2 pr-3">{d.day}</td>
+                        {isAdmin && <td className="py-2 pr-3">{d.display_name}</td>}
+                        <td className="py-2 pr-3">{d.submitted}</td>
+                        <td className="py-2 pr-3 font-medium">{d.accepted_unique}</td>
+                        <td className="py-2 pr-3">{d.approved_public}</td>
+                        <td className="py-2 pr-3">{d.pending_moderation}</td>
+                        <td className="py-2 pr-3">{d.rejected}</td>
+                        <td className="py-2 pr-3 text-[11px] text-muted-foreground">Not tracked</td>
+                        <td className="py-2 pr-3">{d.ownership_claims}</td>
+                        <td className="py-2 pr-3">{d.claimed_by_owner}</td>
+                        <td className="py-2 pr-3">{d.verified_conversions}</td>
+                        <td className="py-2 pr-3">{d.progress_pct}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Claimed / Verified reflect the CURRENT state of listings sourced that day (no historical event log).
+                Duplicate attempts are rejected at submission and not stored, so they are shown as Not tracked.
+              </p>
+            </>
           )}
         </div>
+
+        {/* -------------------- P0C: RECENT SUBMITTERS (ADMIN) -------------------- */}
+        {isAdmin && (
+          <div className="mb-8" data-testid="ops-recent-submissions">
+            <h2 className="text-lg font-semibold mb-1">Recent Submissions — Submitter Lookup</h2>
+            <p className="text-xs text-muted-foreground mb-3">
+              Admin-only, read-only. {recentTotal.toLocaleString()} listings created in the last 7 days (showing up to 100).
+              Submitter identity is never shown publicly, and a linked owner is not assumed to be staff.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground border-b">
+                    <th className="py-2 pr-3">Channel</th>
+                    <th className="py-2 pr-3">Created / Approved (UTC)</th>
+                    <th className="py-2 pr-3">Submitted by</th>
+                    <th className="py-2 pr-3">Linked owner</th>
+                    <th className="py-2 pr-3">Source / sourced by</th>
+                    <th className="py-2 pr-3">Verification</th>
+                    <th className="py-2 pr-3">Claim state</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recent.length === 0 ? (
+                    <tr><td colSpan={7} className="py-4 text-muted-foreground">No listings created in this window.</td></tr>
+                  ) : recent.map((r) => (
+                    <tr key={r.channel_id} className="border-b last:border-0 align-top text-[11px]">
+                      <td className="py-2 pr-3">
+                        <Link href={`/admin/channels/${r.channel_id}`} className="font-medium text-sm text-primary hover:underline">{r.name}</Link>
+                        <div className="text-muted-foreground font-mono">{r.whatsapp_channel_id || '—'}</div>
+                      </td>
+                      <td className="py-2 pr-3 tabular-nums">
+                        <div>{new Date(r.created_at).toISOString().slice(0, 16).replace('T', ' ')}</div>
+                        <div className="text-muted-foreground">{r.published_at ? new Date(r.published_at).toISOString().slice(0, 16).replace('T', ' ') : r.status}</div>
+                      </td>
+                      <td className="py-2 pr-3">{who(r.submitter)}</td>
+                      <td className="py-2 pr-3">{who(r.linked_owner)}{r.submitter_is_linked_owner && <div className="text-amber-700">= submitter</div>}</td>
+                      <td className="py-2 pr-3">
+                        <div>{r.source ?? 'not recorded'}</div>
+                        {r.sourced_by && <div className="text-muted-foreground">{r.sourced_by.email}</div>}
+                      </td>
+                      <td className="py-2 pr-3">{r.verification_status}</td>
+                      <td className="py-2 pr-3">
+                        <div>{r.claim_eligibility.replace(/_/g, ' ')}</div>
+                        {r.active_claims > 0 && <div className="text-violet-700">{r.active_claims} active claim(s)</div>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* -------------------- RELEASE DIAGNOSTICS -------------------- */}
         {isAdmin && build && (

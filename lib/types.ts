@@ -139,6 +139,8 @@ export interface Channel {
   ownership_released_at?: Date | null;
   ownership_released_by?: string | null;
   released_from_owner_id?: string | null;
+  // P0C — reviewer attribution for ownership verification (internal only).
+  verified_by?: string | null;
 }
 
 /**
@@ -172,6 +174,7 @@ export type PublicChannel = Omit<
   | 'ownership_released_at'
   | 'ownership_released_by'
   | 'released_from_owner_id'
+  | 'verified_by'
 > & {
   is_verified: boolean;
   is_official: boolean;
@@ -233,6 +236,8 @@ export interface ChannelClaim {
   approved_at: Date | null;
   rejected_at: Date | null;
   created_at: Date;
+  // P0C — set when the approving reviewer had also sourced/submitted the listing.
+  reviewer_source_overlap?: boolean;
   updated_at: Date;
 }
 

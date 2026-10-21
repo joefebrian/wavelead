@@ -6,12 +6,13 @@ import { channelRepo } from '../repositories/channelRepo';
 import { userRepo } from '../repositories/userRepo';
 import { getCollection } from '../db/mongo';
 import { COLLECTIONS } from '../db/collections';
-import { HttpError, requireRole, ROLES } from '../auth/rbac';
+import { HttpError, requireRole, ROLES, rankOf } from '../auth/rbac';
 import {
   claimApproveSchema, claimRejectSchema, claimRequestInfoSchema,
 } from '../validation/claimSchemas';
 import type { Actor, Channel, ChannelClaim, ClaimStatus } from '@/lib/types';
 import { isActivationRequired } from '../services/payments/activationFlag';
+import { assertNotOwnClaim, assertNotOwnChannel, assertOverlapApprovalAllowed } from './reviewerConflictGuard';
 
 // M11-Batch2B — activation state to stamp on a channel at ownership approval.
 //   • requirement ON  → 'pending' (owner must complete the $1 activation)
@@ -78,6 +79,28 @@ export const claimModerationService = {
     if (!['pending', 'needs_information'].includes(claim.status)) {
       throw new HttpError(409, 'Claim cannot be approved from status ' + claim.status);
     }
+    // P0C — conflict-of-interest guards (before any write).
+    assertNotOwnClaim(actor!.user.id, claim);
+    const before = await channelRepo.findById(claim.channel_id);
+    const competing = await (await getCollection<ChannelClaim>(COLLECTIONS.CHANNEL_CLAIMS)).countDocuments({
+      channel_id: claim.channel_id, id: { $ne: claim.id }, status: { $in: ['pending', 'needs_information'] },
+    });
+    const notesForReview = parsed.data.moderator_notes ?? claim.moderator_notes ?? null;
+    // P0C — defence in depth for claims filed by the sourcing agent who added
+    // the listing (e.g. filed before the submit-time block existed). Sourcing
+    // is never ownership: only an ADMIN (a different account) may approve it,
+    // with a written evidence review.
+    if (before?.source === 'staff_sourced' && before.sourced_by_user_id === claim.claimant_user_id) {
+      if (rankOf(actor!.user.role) < rankOf(ROLES.ADMIN)) {
+        throw new HttpError(403, 'The claimant is the sourcing agent who added this listing. Escalate this claim to an administrator.');
+      }
+      if (String(notesForReview || '').trim().length < 20) {
+        throw new HttpError(400, 'The claimant sourced this listing. Record the independent ownership evidence reviewed (at least 20 characters) before approving.');
+      }
+    }
+    const reviewerSourceOverlap = assertOverlapApprovalAllowed({
+      reviewerId: actor!.user.id, channel: before, moderatorNotes: notesForReview, competingActiveClaims: competing,
+    });
 
     // Atomic ownership assignment. Only assign if the channel is still
     // approved and either (a) has no assigned owner_id, or (b) the assigned
@@ -102,6 +125,7 @@ export const claimModerationService = {
           owner_id: claim.claimant_user_id,
           verification_status: 'verified',
           verified_at: now,
+          verified_by: actor!.user.id,
           updated_at: now,
         },
       },
@@ -141,7 +165,8 @@ export const claimModerationService = {
       reviewed_at: now,
       reviewed_by: actor!.user.id,
       moderator_notes: parsed.data.moderator_notes || claim.moderator_notes,
-    });
+      ...(reviewerSourceOverlap ? { reviewer_source_overlap: true } : {}),
+    } as Partial<ChannelClaim>);
 
     await auditRepo.insert({
       id: uuidv4(),
@@ -150,7 +175,10 @@ export const claimModerationService = {
       entity_type: 'channel_claim',
       entity_id: claim.id,
       before_data: { status: claim.status },
-      after_data: { status: 'approved', channel_id: claim.channel_id, new_owner_id: claim.claimant_user_id },
+      after_data: {
+        status: 'approved', channel_id: claim.channel_id, new_owner_id: claim.claimant_user_id,
+        reviewer_source_overlap: reviewerSourceOverlap,
+      },
       created_at: now,
     });
     await auditRepo.insert({
@@ -159,8 +187,17 @@ export const claimModerationService = {
       action: 'CHANNEL_OWNER_ASSIGNED',
       entity_type: 'channel',
       entity_id: claim.channel_id,
-      before_data: { owner_id: null, verification_status: 'unclaimed' },
-      after_data: { owner_id: claim.claimant_user_id, verification_status: 'verified' },
+      // P0C — record the REAL pre-approval state (previously hard-coded).
+      before_data: {
+        owner_id: before?.owner_id ?? null,
+        verification_status: before?.verification_status ?? null,
+        source: before?.source ?? null,
+        sourced_by_user_id: before?.sourced_by_user_id ?? null,
+      },
+      after_data: {
+        owner_id: claim.claimant_user_id, verification_status: 'verified', verified_by: actor!.user.id,
+        reviewer_source_overlap: reviewerSourceOverlap,
+      },
       created_at: now,
     });
     return { ok: true };
@@ -175,6 +212,7 @@ export const claimModerationService = {
     if (!['pending', 'needs_information'].includes(claim.status)) {
       throw new HttpError(409, 'Claim cannot be rejected from status ' + claim.status);
     }
+    assertNotOwnClaim(actor!.user.id, claim);
     const now = new Date();
     await claimRepo.update(claim.id, {
       status: 'rejected',
@@ -204,6 +242,7 @@ export const claimModerationService = {
     const claim = await claimRepo.findById(claimId);
     if (!claim) throw new HttpError(404, 'Claim not found');
     if (claim.status !== 'pending') throw new HttpError(409, 'Only pending claims can be flagged for more info');
+    assertNotOwnClaim(actor!.user.id, claim);
     const now = new Date();
     await claimRepo.update(claim.id, {
       status: 'needs_information',
@@ -259,6 +298,12 @@ export const claimModerationService = {
     if (!channel.owner_id) {
       throw new HttpError(409, 'Channel has no assigned owner. Approve an ownership claim first to assign an owner.');
     }
+    // P0C — a reviewer can never verify a channel linked to their own account.
+    assertNotOwnChannel(actor!.user.id, channel);
+    // P0C — a staff-sourced listing never gets its owner "verified" without a claim review.
+    if (channel.source === 'staff_sourced' && channel.sourced_by_user_id === channel.owner_id) {
+      throw new HttpError(409, 'The linked owner is the sourcing agent who added this listing. Sourcing is not ownership — use the claim review flow.');
+    }
     if (channel.verification_status === 'verified' || channel.verification_status === 'official') {
       throw new HttpError(409, 'Channel ownership is already verified.');
     }
@@ -270,7 +315,7 @@ export const claimModerationService = {
     const channelsColl = await getCollection<Channel>(COLLECTIONS.CHANNELS);
     const res = (await channelsColl.findOneAndUpdate(
       { id: channelId, owner_id: preservedOwnerId, status: 'approved', verification_status: { $ne: 'verified' } },
-      { $set: { verification_status: 'verified', verified_at: now, updated_at: now } },
+      { $set: { verification_status: 'verified', verified_at: now, verified_by: actor!.user.id, updated_at: now } },
       { returnDocument: 'after' },
     )) as unknown as (Channel | { value: Channel } | null);
     const updated: Channel | null = res && typeof res === 'object' && 'value' in (res as object)

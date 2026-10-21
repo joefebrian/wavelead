@@ -4,7 +4,7 @@ import { channelService } from '@/lib/services/channelService';
 import { categoryService } from '@/lib/services/categoryService';
 import { runSeed } from '@/lib/seed/seedData';
 import { getSessionFromRequest, setSessionCookie, clearSessionCookie } from '@/lib/auth/session';
-import { resolveActor, requireRole, ROLES } from '@/lib/auth/rbac';
+import { resolveActor, requireRole, ROLES, rankOf } from '@/lib/auth/rbac';
 import { ok, fail, handleServiceError } from '@/lib/utils/response';
 import { applyCors } from '@/lib/utils/cors';
 import { rateLimit, clientKey } from '@/lib/auth/rateLimit';
@@ -1155,6 +1155,27 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
         actor, String(body.user_id), body.enabled, String(body.reason || ''),
       )), request);
     }
+    // P0C — read-only operations reporting.
+    if (route === '/admin/operations/recent-submissions' && method === 'GET') {
+      const actor = await resolveActor(request); requireRole(actor, ROLES.ADMIN);
+      const sp = new URL(request.url).searchParams;
+      const { operationsReportService } = await import('@/lib/services/operationsReportService');
+      return applyCors(ok(await operationsReportService.recentSubmissions(actor, {
+        days: parseInt(sp.get('days') || '7', 10),
+        limit: parseInt(sp.get('limit') || '60', 10),
+        skip: parseInt(sp.get('skip') || '0', 10),
+      })), request);
+    }
+    if (route === '/admin/operations/sourcing-scoreboard' && method === 'GET') {
+      const actor = await resolveActor(request); requireRole(actor, ROLES.MODERATOR);
+      const days = parseInt(new URL(request.url).searchParams.get('days') || '7', 10);
+      const { operationsReportService } = await import('@/lib/services/operationsReportService');
+      const isAdmin = rankOf(actor!.user.role) >= rankOf(ROLES.ADMIN);
+      const board = await operationsReportService.sourcingScoreboard(actor, days);
+      // Agent identity is ADMIN+ only.
+      if (!isAdmin) board.items = board.items.map((r) => ({ ...r, user_id: 'redacted', display_name: 'Sourcing agent' }));
+      return applyCors(ok(board), request);
+    }
     if (route === '/admin/operations/sourcing-daily' && method === 'GET') {
       const actor = await resolveActor(request);
       const days = parseInt(new URL(request.url).searchParams.get('days') || '14', 10);
@@ -1373,6 +1394,15 @@ async function handler(request: NextRequest, ctx: RouteCtx): Promise<NextRespons
       requireRole(actor, ROLES.SUPER_ADMIN);
       await accountSecurityService.setMustChangePassword(actor!, path[2]);
       return applyCors(ok({ ok: true }), request);
+    }
+    // P0C — moderator role assignment (super_admin only, audited, sessions invalidated).
+    if (path.length === 4 && path[0] === 'admin' && path[1] === 'users' && path[3] === 'moderator-role' && method === 'POST') {
+      const actor = await resolveActor(request);
+      requireRole(actor, ROLES.SUPER_ADMIN); // authorize BEFORE reading the payload
+      const body = await safeJson(request) as { grant?: unknown; reason?: unknown } | null;
+      if (typeof body?.grant !== 'boolean') return applyCors(fail(400, 'grant must be true or false'), request);
+      const { roleAssignmentService } = await import('@/lib/services/security/roleAssignmentService');
+      return applyCors(ok(await roleAssignmentService.setModerator(actor, path[2], body.grant, String(body.reason || ''))), request);
     }
     // ---------- M07-SECURITY — SUPER ADMIN PAYPAL SETTINGS ----------
     if (route === '/admin/settings/paypal' && method === 'GET') {

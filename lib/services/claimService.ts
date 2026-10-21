@@ -146,6 +146,12 @@ export const claimService = {
     // not the currently-assigned owner on an already-owned channel. This
     // is enforced BOTH here and in claim-moderation approval (defence in
     // depth). Route the caller to the ownership-dispute flow instead.
+    // P0C — sourcing a listing is directory work, never an ownership right.
+    // The sourcing agent who added this listing cannot claim it through the
+    // ordinary flow; a genuine ownership case must be escalated to an admin.
+    if (channel.source === 'staff_sourced' && channel.sourced_by_user_id === actor.user.id && channel.owner_id !== actor.user.id) {
+      throw new HttpError(403, `You added this channel to the directory as a sourcing agent, which does not make you its owner. If you genuinely manage this channel, contact ${OWNERSHIP_SUPPORT_EMAIL} so a different administrator can review it.`);
+    }
     if (channel.owner_id && channel.owner_id !== actor.user.id) {
       throw new HttpError(409, `This listing is linked to another WaveLead account and its ownership has not been verified. Please contact ${OWNERSHIP_SUPPORT_EMAIL} instead of filing a new claim.`);
     }

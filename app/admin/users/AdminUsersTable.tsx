@@ -67,6 +67,42 @@ export default function AdminUsersTable({ initialQuery, initialItems }: Props) {
     finally { setBusyId(null); }
   }
 
+  // P0C — moderator role (super_admin) and sourcing designation (admin+).
+  // Both require a written reason and are audited server-side.
+  async function toggleModerator(u: PublicUser) {
+    const grant = u.role !== 'moderator';
+    const reason = prompt(`${grant ? 'Grant' : 'Revoke'} the MODERATOR role for ${u.email}?\nTheir sessions will be signed out.\n\nReason (required, 10+ characters):`);
+    if (!reason) return;
+    setBusyId(u.id);
+    try {
+      const r = await fetch(`/api/admin/users/${u.id}/moderator-role`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ grant, reason }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j?.error || 'Failed');
+      await search();
+    } catch (e) { alert((e as Error).message); }
+    finally { setBusyId(null); }
+  }
+
+  async function toggleSourcing(u: PublicUser & { is_sourcing_agent?: boolean }) {
+    const enabled = !u.is_sourcing_agent;
+    const reason = prompt(`${enabled ? 'Designate' : 'Remove'} ${u.email} ${enabled ? 'as' : 'from'} SOURCING AGENT?\nThis is not a role and grants no permissions. Listings they submit will stay unowned.\n\nReason (required):`);
+    if (!reason) return;
+    setBusyId(u.id);
+    try {
+      const r = await fetch('/api/admin/operations/sourcing-agents', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ user_id: u.id, enabled, reason }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j?.error || 'Failed');
+      await search();
+    } catch (e) { alert((e as Error).message); }
+    finally { setBusyId(null); }
+  }
+
   return (
     <div className="mt-6 space-y-4">
       <div className="flex gap-2">
@@ -99,7 +135,8 @@ export default function AdminUsersTable({ initialQuery, initialItems }: Props) {
           <tbody>
             {items.length === 0 && <tr><td colSpan={5} className="px-3 py-10 text-center text-muted-foreground">No matching users.</td></tr>}
             {items.map((u) => {
-              const anyU = u as PublicUser & { is_disabled?: boolean; must_change_password?: boolean };
+              const anyU = u as PublicUser & { is_disabled?: boolean; must_change_password?: boolean; is_sourcing_agent?: boolean };
+              const canModerator = ['user', 'channel_owner', 'business', 'moderator'].includes(String(u.role));
               return (
                 <tr key={u.id} className="border-t border-border/60 align-top">
                   <td className="px-3 py-2 whitespace-nowrap">{u.email}</td>
@@ -108,12 +145,21 @@ export default function AdminUsersTable({ initialQuery, initialItems }: Props) {
                   <td className="px-3 py-2 space-x-1">
                     {anyU.is_disabled ? <Badge className="bg-rose-100 text-rose-800">disabled</Badge> : <Badge className="bg-emerald-100 text-emerald-800">active</Badge>}
                     {anyU.must_change_password && <Badge className="bg-amber-100 text-amber-800">must change pwd</Badge>}
+                    {anyU.is_sourcing_agent && <Badge className="bg-sky-100 text-sky-800" data-testid={`sourcing-badge-${u.id}`}>sourcing agent</Badge>}
                   </td>
                   <td className="px-3 py-2 text-right space-x-1">
                     <Button size="sm" variant="outline" disabled={busyId === u.id} onClick={() => resetPassword(u)}>
                       {busyId === u.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><KeyRound className="h-3.5 w-3.5 mr-1" /> Reset</>}
                     </Button>
                     <Button size="sm" variant="outline" disabled={busyId === u.id} onClick={() => forceChange(u)}>Force change</Button>
+                    {canModerator && (
+                      <Button size="sm" variant="outline" disabled={busyId === u.id} onClick={() => toggleModerator(u)} data-testid={`moderator-toggle-${u.id}`}>
+                        {u.role === 'moderator' ? 'Revoke moderator' : 'Make moderator'}
+                      </Button>
+                    )}
+                    <Button size="sm" variant="outline" disabled={busyId === u.id} onClick={() => toggleSourcing(anyU)} data-testid={`sourcing-toggle-${u.id}`}>
+                      {anyU.is_sourcing_agent ? 'Sourcing: off' : 'Sourcing: on'}
+                    </Button>
                     <Button size="sm" variant={anyU.is_disabled ? 'default' : 'outline'} disabled={busyId === u.id} onClick={() => toggleDisabled(anyU)}>
                       {anyU.is_disabled ? <><ShieldCheck className="h-3.5 w-3.5 mr-1" /> Enable</> : <><ShieldBan className="h-3.5 w-3.5 mr-1" /> Disable</>}
                     </Button>
