@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   detectPwaPlatform, detectIosBrowser, iosVersion, iosThirdPartyCanInstall, installModeFor, isSensitiveLocation, isAutoSuggestPath, shouldAutoSuggest,
-  AUTO_MIN_MS, DISMISS_SUPPRESS_MS,
+  autoSuggestTrigger, ga4Platform, ga4Browser, AUTO_TIME_MS, AUTO_SECOND_PAGE_MS, DISMISS_SUPPRESS_MS,
 } from '@/lib/pwa/platform';
 
 const UA = {
@@ -84,35 +84,87 @@ describe('sensitive flows', () => {
   });
 });
 
-describe('automatic suggestion gating', () => {
+describe('automatic suggestion gating (Trigger A / Trigger B)', () => {
   const now = Date.now();
   const base = {
     platform: 'android_chromium' as const, nativePromptAvailable: true, standalone: false,
-    pathname: '/channels', search: '', distinctPages: 2, engagedMs: AUTO_MIN_MS, shownThisSession: false, dismissedAt: null, now,
+    pathname: '/channels', search: '', eligiblePages: 1, activeMs: 0, interactions: 0,
+    shownThisSession: false, dismissedAt: null, now,
   };
-  it('requires ≥2 pages AND ≥30s', () => {
-    expect(shouldAutoSuggest(base)).toBe(true);
-    expect(shouldAutoSuggest({ ...base, distinctPages: 1 })).toBe(false);
-    expect(shouldAutoSuggest({ ...base, engagedMs: AUTO_MIN_MS - 1 })).toBe(false);
+  it('Trigger A: 15s active + at least one interaction', () => {
+    expect(autoSuggestTrigger({ ...base, activeMs: AUTO_TIME_MS, interactions: 1 })).toBe('time_engagement');
+    expect(autoSuggestTrigger({ ...base, activeMs: AUTO_TIME_MS, interactions: 0 })).toBeNull();
+    expect(autoSuggestTrigger({ ...base, activeMs: AUTO_TIME_MS - 1000, interactions: 5 })).toBeNull();
+  });
+  it('Trigger B: 2nd eligible page after 8s active (no interaction needed)', () => {
+    expect(autoSuggestTrigger({ ...base, eligiblePages: 2, activeMs: AUTO_SECOND_PAGE_MS })).toBe('second_page');
+    expect(autoSuggestTrigger({ ...base, eligiblePages: 2, activeMs: AUTO_SECOND_PAGE_MS - 1000 })).toBeNull();
+    expect(autoSuggestTrigger({ ...base, eligiblePages: 1, activeMs: 14_000 })).toBeNull();
+  });
+  it('either trigger suffices; second_page wins when both hold', () => {
+    expect(autoSuggestTrigger({ ...base, eligiblePages: 3, activeMs: 20_000, interactions: 2 })).toBe('second_page');
   });
   it('once per session, 7-day dismissal, never when installed', () => {
-    expect(shouldAutoSuggest({ ...base, shownThisSession: true })).toBe(false);
-    expect(shouldAutoSuggest({ ...base, dismissedAt: now - 1000 })).toBe(false);
-    expect(shouldAutoSuggest({ ...base, dismissedAt: now - DISMISS_SUPPRESS_MS - 1 })).toBe(true);
-    expect(shouldAutoSuggest({ ...base, standalone: true })).toBe(false);
+    const ok = { ...base, eligiblePages: 2, activeMs: 9000 };
+    expect(shouldAutoSuggest({ ...ok, shownThisSession: true })).toBe(false);
+    expect(shouldAutoSuggest({ ...ok, dismissedAt: now - 1000 })).toBe(false);
+    expect(shouldAutoSuggest({ ...ok, dismissedAt: now - DISMISS_SUPPRESS_MS - 1 })).toBe(true);
+    expect(shouldAutoSuggest({ ...ok, standalone: true })).toBe(false);
   });
   it('only where a real install path exists', () => {
-    expect(shouldAutoSuggest({ ...base, nativePromptAvailable: false })).toBe(false);
-    expect(shouldAutoSuggest({ ...base, platform: 'ios_safari', nativePromptAvailable: false })).toBe(true);
-    expect(shouldAutoSuggest({ ...base, platform: 'ios_other_browser', nativePromptAvailable: false })).toBe(false);
-    expect(shouldAutoSuggest({ ...base, platform: 'ios_other_browser', nativePromptAvailable: false, iosThirdPartySupported: true })).toBe(true);
-    expect(shouldAutoSuggest({ ...base, platform: 'android_in_app' })).toBe(false);
-    expect(shouldAutoSuggest({ ...base, platform: 'desktop' })).toBe(false);
+    const ok = { ...base, eligiblePages: 2, activeMs: 9000 };
+    expect(shouldAutoSuggest({ ...ok, nativePromptAvailable: false })).toBe(false);
+    expect(shouldAutoSuggest({ ...ok, platform: 'ios_safari', nativePromptAvailable: false })).toBe(true);
+    expect(shouldAutoSuggest({ ...ok, platform: 'ios_other_browser', nativePromptAvailable: false })).toBe(false);
+    expect(shouldAutoSuggest({ ...ok, platform: 'ios_other_browser', nativePromptAvailable: false, iosThirdPartySupported: true })).toBe(true);
+    expect(shouldAutoSuggest({ ...ok, platform: 'android_in_app' })).toBe(false);
+    expect(shouldAutoSuggest({ ...ok, platform: 'desktop' })).toBe(false);
   });
-  it('never on sensitive flows', () => {
-    expect(shouldAutoSuggest({ ...base, pathname: '/login' })).toBe(false);
-    expect(shouldAutoSuggest({ ...base, pathname: '/sponsor/x' })).toBe(false);
-    expect(shouldAutoSuggest({ ...base, search: '?token=abc' })).toBe(false);
+  it('never on restricted routes or sensitive URLs', () => {
+    const ok = { ...base, eligiblePages: 2, activeMs: 20_000, interactions: 3 };
+    for (const pathname of ['/login', '/signup', '/sponsor/x', '/dashboard', '/pricing', '/admin', '/claim/x', '/submit']) {
+      expect(shouldAutoSuggest({ ...ok, pathname })).toBe(false);
+    }
+    expect(shouldAutoSuggest({ ...ok, search: '?token=abc' })).toBe(false);
+  });
+});
+
+describe('GA4 parameter mapping', () => {
+  it('maps platform to android / ios / desktop / other', () => {
+    expect(ga4Platform('android_chromium')).toBe('android');
+    expect(ga4Platform('android_in_app')).toBe('android');
+    expect(ga4Platform('ios_safari')).toBe('ios');
+    expect(ga4Platform('ios_other_browser')).toBe('ios');
+    expect(ga4Platform('desktop')).toBe('desktop');
+    expect(ga4Platform('unknown')).toBe('other');
+  });
+  it('maps browser vocabulary', () => {
+    expect(ga4Browser(UA.androidChrome)).toBe('chrome');
+    expect(ga4Browser(UA.samsung)).toBe('samsung_internet');
+    expect(ga4Browser(UA.androidFirefox)).toBe('firefox');
+    expect(ga4Browser(UA.iosSafari)).toBe('safari');
+    expect(ga4Browser(UA.iosChrome)).toBe('chrome');
+    expect(ga4Browser('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/125.0 Mobile/15E148 Safari/605.1.15')).toBe('edge');
+    expect(ga4Browser('Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Mobile Safari/537.36 EdgA/129.0')).toBe('edge');
+    expect(ga4Browser(UA.iosFacebook)).toBe('other');
+    expect(ga4Browser(UA.androidInstagram)).toBe('other');
+    expect(ga4Browser('')).toBe('other');
+  });
+  it('the GA4 allowlist accepts exactly the documented vocabularies', () => {
+    const src = readFileSync('lib/analytics/events.ts', 'utf8');
+    expect(src).toContain("pwa_platform:        new Set(['android', 'ios', 'desktop', 'other'])");
+    expect(src).toContain("pwa_browser:         new Set(['chrome', 'safari', 'edge', 'firefox', 'samsung_internet', 'other'])");
+    expect(src).toContain("pwa_entry_point:     new Set(['auto_prompt', 'mobile_menu', 'footer'])");
+    expect(src).toContain("pwa_trigger:         new Set(['time_engagement', 'second_page', 'manual'])");
+    expect(src).toContain("pwa_display_mode:    new Set(['browser', 'standalone'])");
+    expect(src).toContain("pwa_install_method:  new Set(['native_prompt', 'manual_a2hs'])");
+  });
+  it('pwa_app_installed is never fired from instruction views or CTA clicks', () => {
+    const sheet = readFileSync('components/pwa/InstallSheet.tsx', 'utf8');
+    expect(sheet).not.toContain('pwa_app_installed');
+    const prov = readFileSync('components/pwa/PwaProvider.tsx', 'utf8');
+    // only inside the browser's appinstalled handler
+    expect(prov.match(/'pwa_app_installed'/g)?.length).toBe(2); // once-key + event name, single call site
   });
 });
 

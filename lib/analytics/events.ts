@@ -107,7 +107,11 @@ const PARAM_ALLOWLIST = new Set([
   'result_count_bucket',
   // PWA
   'pwa_platform',
+  'pwa_browser',
+  'pwa_entry_point',
   'pwa_trigger',
+  'pwa_display_mode',
+  'pwa_install_method',
 ]);
 
 const PARAM_VALUE_ALLOWLIST: Record<string, ReadonlySet<string>> = {
@@ -117,8 +121,12 @@ const PARAM_VALUE_ALLOWLIST: Record<string, ReadonlySet<string>> = {
   trend_period:        new Set(['7d', '30d', 'most_followed']),
   currency:            new Set(['USD', 'IDR']),
   result_count_bucket: new Set(['0', '1-5', '6-20', '21-100', '100+']),
-  pwa_platform:        new Set(['android_chromium', 'android_other', 'android_in_app', 'ios_safari', 'ios_other_browser', 'ios_in_app', 'desktop', 'unknown']),
-  pwa_trigger:         new Set(['auto', 'menu', 'footer']),
+  pwa_platform:        new Set(['android', 'ios', 'desktop', 'other']),
+  pwa_browser:         new Set(['chrome', 'safari', 'edge', 'firefox', 'samsung_internet', 'other']),
+  pwa_entry_point:     new Set(['auto_prompt', 'mobile_menu', 'footer']),
+  pwa_trigger:         new Set(['time_engagement', 'second_page', 'manual']),
+  pwa_display_mode:    new Set(['browser', 'standalone']),
+  pwa_install_method:  new Set(['native_prompt', 'manual_a2hs']),
 };
 
 // ---------------------------------------------------------------------------
@@ -151,6 +159,11 @@ function looksSensitive(v: unknown): boolean {
 }
 
 export interface Ga4Params { [k: string]: string | number | boolean | null | undefined; }
+
+/** True when an event would actually be delivered (consent granted + GA4 loaded). */
+export function canSendGa4(): boolean {
+  return typeof window !== 'undefined' && ga4Granted && !!window.gtag;
+}
 
 /** Public entry point. Silent no-op on missing consent, unknown event, or PII shape. */
 export function trackGa4Event(event: Ga4Event, params: Ga4Params = {}): void {

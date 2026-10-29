@@ -81,9 +81,13 @@ export function installModeFor(p: PwaPlatform, nativePromptAvailable: boolean, s
 // ---------------------------------------------------------------------------
 // Automatic suggestion gating
 // ---------------------------------------------------------------------------
-export const AUTO_MIN_PAGES = 2;
-export const AUTO_MIN_MS = 30_000;
+// Trigger A: ≥15 s active browsing + ≥1 meaningful interaction.
+// Trigger B: 2nd eligible page visit + ≥8 s cumulative active browsing.
+// "Active" time only accrues while the tab is visible and focused.
+export const AUTO_TIME_MS = 15_000;
+export const AUTO_SECOND_PAGE_MS = 8_000;
 export const DISMISS_SUPPRESS_MS = 7 * 24 * 60 * 60 * 1000;
+export type AutoTrigger = 'time_engagement' | 'second_page';
 
 /** Automatic suggestions appear ONLY on public discovery / marketing pages. */
 const AUTO_ALLOWED_PATH_RE = /^\/(?:$|channels\/?$|channel\/[^/]+\/?$|categories\/?$|category\/[^/]+\/?$|countries\/?$|country\/[^/]+\/?$|trending\/?$|top\/?$|search\/?$|for-brands\/?$|about\/?$|faq\/?$)/;
@@ -113,8 +117,12 @@ export interface AutoSuggestInput {
   standalone: boolean;
   pathname: string;
   search: string;
-  distinctPages: number;
-  engagedMs: number;
+  /** Distinct auto-eligible (discovery) pages visited this session. */
+  eligiblePages: number;
+  /** Cumulative visible + focused browsing time this session. */
+  activeMs: number;
+  /** Meaningful interactions (tap/click/key/scroll) this session. */
+  interactions: number;
   shownThisSession: boolean;
   dismissedAt: number | null;
   now: number;
@@ -122,15 +130,46 @@ export interface AutoSuggestInput {
   iosThirdPartySupported?: boolean;
 }
 
-export function shouldAutoSuggest(i: AutoSuggestInput): boolean {
-  if (i.standalone || i.shownThisSession) return false;
-  // Only where a real install path exists right now: a captured native
-  // prompt, or Safari on iOS (Add to Home Screen).
+/** Which automatic trigger fires now, or null. */
+export function autoSuggestTrigger(i: AutoSuggestInput): AutoTrigger | null {
+  if (i.standalone || i.shownThisSession) return null;
+  // Only where a real install path exists right now.
   const eligible = (i.nativePromptAvailable && (i.platform === 'android_chromium' || i.platform === 'android_other'))
     || i.platform === 'ios_safari'
     || (i.platform === 'ios_other_browser' && i.iosThirdPartySupported === true);
-  if (!eligible) return false;
-  if (i.dismissedAt && i.now - i.dismissedAt < DISMISS_SUPPRESS_MS) return false;
-  if (i.distinctPages < AUTO_MIN_PAGES || i.engagedMs < AUTO_MIN_MS) return false;
-  return isAutoSuggestPath(i.pathname, i.search);
+  if (!eligible) return null;
+  if (i.dismissedAt && i.now - i.dismissedAt < DISMISS_SUPPRESS_MS) return null;
+  if (!isAutoSuggestPath(i.pathname, i.search)) return null;
+  if (i.eligiblePages >= 2 && i.activeMs >= AUTO_SECOND_PAGE_MS) return 'second_page';
+  if (i.activeMs >= AUTO_TIME_MS && i.interactions >= 1) return 'time_engagement';
+  return null;
+}
+
+export function shouldAutoSuggest(i: AutoSuggestInput): boolean {
+  return autoSuggestTrigger(i) !== null;
+}
+
+// ---------------------------------------------------------------------------
+// GA4 parameter mapping (coarse, non-identifying vocabularies)
+// ---------------------------------------------------------------------------
+export type Ga4PwaPlatform = 'android' | 'ios' | 'desktop' | 'other';
+export type Ga4PwaBrowser = 'chrome' | 'safari' | 'edge' | 'firefox' | 'samsung_internet' | 'other';
+
+export function ga4Platform(p: PwaPlatform): Ga4PwaPlatform {
+  if (p.startsWith('android')) return 'android';
+  if (p.startsWith('ios')) return 'ios';
+  if (p === 'desktop') return 'desktop';
+  return 'other';
+}
+
+export function ga4Browser(ua: string): Ga4PwaBrowser {
+  if (!ua) return 'other';
+  if (IN_APP_RE.test(ua) || /; wv\)/i.test(ua)) return 'other';
+  if (/SamsungBrowser/i.test(ua)) return 'samsung_internet';
+  if (/EdgiOS|EdgA|Edg\//i.test(ua)) return 'edge';
+  if (/FxiOS|Firefox\//i.test(ua)) return 'firefox';
+  if (/OPR\/|OPiOS|OPT\/|YaBrowser|DuckDuckGo|Brave/i.test(ua)) return 'other';
+  if (/CriOS|Chrome\//i.test(ua)) return 'chrome';
+  if (/Safari\//i.test(ua) && /Version\//i.test(ua)) return 'safari';
+  return 'other';
 }

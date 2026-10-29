@@ -7,15 +7,16 @@ import React, { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { Share, SquarePlus, ToggleRight, Home, AppWindow, Store, MoreVertical, Compass, Copy, Check, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { trackGa4Event } from '@/lib/analytics/events';
 import type { InstallMode, IosBrowser, PwaPlatform } from '@/lib/pwa/platform';
-import type { InstallTrigger } from './PwaProvider';
+import { trackGa4EventOnce, type Ga4Params } from '@/lib/analytics/events';
+import { baseParams, type InstallOpenContext, type InstallTrigger } from './PwaProvider';
 
 interface Props {
   mode: InstallMode;
   platform: PwaPlatform;
   iosBrowser: IosBrowser;
   trigger: InstallTrigger;
+  openCtx: InstallOpenContext | null;
   onClose: () => void;
   onNotNow: () => void;
   onNativeInstall: () => Promise<'accepted' | 'dismissed' | 'unavailable'>;
@@ -46,22 +47,37 @@ function CopyLink() {
   );
 }
 
-export default function InstallSheet({ mode, platform, iosBrowser, trigger, onClose, onNotNow, onNativeInstall }: Props) {
+export default function InstallSheet({ mode, platform, iosBrowser, trigger, openCtx, onClose, onNotNow, onNativeInstall }: Props) {
   const [view, setView] = useState<'intro' | 'steps' | 'installing'>('intro');
   const [busy, setBusy] = useState(false);
   const [shown, setShown] = useState(false);
   const primaryRef = useRef<HTMLButtonElement>(null);
 
+  const isIos = platform.startsWith('ios');
+  const method = mode === 'native' ? 'native_prompt' : 'manual_a2hs';
+  const ev = (extra: Ga4Params = {}): Ga4Params => ({
+    ...baseParams(platform), pwa_entry_point: openCtx?.entry_point, pwa_trigger: openCtx?.trigger, ...extra,
+  });
+  const oid = openCtx?.openId || 'x';
+  const iosSteps = () => {
+    // Instructions actually displayed on iOS (any browser). Never an install.
+    if (isIos) trackGa4EventOnce(`pwa_ios_instr:${oid}`, 'pwa_ios_instructions_viewed', ev({ pwa_install_method: 'manual_a2hs' }));
+  };
+
   useEffect(() => {
-    trackGa4Event('pwa_install_cta_viewed', { pwa_platform: platform, pwa_trigger: trigger });
+    // One impression per sheet opening (strict-mode / re-render safe).
+    trackGa4EventOnce(`pwa_viewed:${oid}`, 'pwa_install_cta_viewed', ev());
+    // iOS modes that show the steps immediately (no intro step).
+    if (mode === 'ios_open_in_safari' || (mode === 'open_in_browser' && isIos)) iosSteps();
     const t = requestAnimationFrame(() => setShown(true));
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => { cancelAnimationFrame(t); window.removeEventListener('keydown', onKey); };
-  }, [platform, trigger, onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [oid]);
 
   async function primary() {
-    trackGa4Event('pwa_install_cta_clicked', { pwa_platform: platform, pwa_trigger: trigger });
+    trackGa4EventOnce(`pwa_click:${oid}`, 'pwa_install_cta_clicked', ev({ pwa_install_method: method }));
     if (mode === 'native') {
       setBusy(true);
       const r = await onNativeInstall();
@@ -71,7 +87,7 @@ export default function InstallSheet({ mode, platform, iosBrowser, trigger, onCl
       else setView('steps'); // prompt no longer available → honest manual steps
       return;
     }
-    if (mode === 'ios_safari' || mode === 'ios_share') trackGa4Event('pwa_ios_instructions_viewed', { pwa_platform: platform });
+    if (mode === 'ios_safari' || mode === 'ios_share') iosSteps();
     setView('steps');
   }
 

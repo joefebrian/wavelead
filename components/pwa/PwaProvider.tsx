@@ -9,10 +9,11 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { usePathname } from 'next/navigation';
 import { toast } from 'sonner';
 import { WifiOff, Wifi } from 'lucide-react';
-import { trackGa4Event } from '@/lib/analytics/events';
+import { canSendGa4, trackGa4Event, trackGa4EventOnce, type Ga4Params } from '@/lib/analytics/events';
 import {
-  detectPwaPlatform, detectIosBrowser, installModeFor, iosThirdPartyCanInstall, isMobilePlatform, isSensitiveLocation, shouldAutoSuggest,
-  type InstallMode, type IosBrowser, type PwaPlatform,
+  autoSuggestTrigger, detectPwaPlatform, detectIosBrowser, ga4Browser, ga4Platform, installModeFor, iosThirdPartyCanInstall,
+  isAutoSuggestPath, isMobilePlatform, isSensitiveLocation,
+  type AutoTrigger, type InstallMode, type IosBrowser, type PwaPlatform,
 } from '@/lib/pwa/platform';
 import InstallSheet from './InstallSheet';
 
@@ -26,6 +27,13 @@ declare global {
 }
 
 export type InstallTrigger = 'auto' | 'menu' | 'footer';
+
+/** Context of one install-sheet opening, used for GA4 attribution. */
+export interface InstallOpenContext {
+  openId: string;
+  entry_point: 'auto_prompt' | 'mobile_menu' | 'footer';
+  trigger: AutoTrigger | 'manual';
+}
 
 interface PwaContextValue {
   platform: PwaPlatform;
@@ -43,12 +51,22 @@ export const usePwa = () => useContext(PwaContext);
 
 const K_DISMISSED = 'wl_pwa_dismissed_at';     // localStorage
 const K_SHOWN = 'wl_pwa_auto_shown';           // sessionStorage
-const K_PAGES = 'wl_pwa_pages';                // sessionStorage
-const K_START = 'wl_pwa_session_start';        // sessionStorage
+const K_PAGES = 'wl_pwa_eligible_pages';       // sessionStorage — distinct discovery pages
+const K_ACTIVE = 'wl_pwa_active_ms';           // sessionStorage — visible+focused time
+const K_INTERACT = 'wl_pwa_interactions';      // sessionStorage — meaningful interactions
 const K_STANDALONE = 'wl_pwa_standalone_tracked';
 
 function ss(): Storage | null { try { return window.sessionStorage; } catch { return null; } }
 function ls(): Storage | null { try { return window.localStorage; } catch { return null; } }
+
+/** Parameters common to every in-browser PWA event. */
+export function baseParams(p: PwaPlatform): Ga4Params {
+  return {
+    pwa_platform: ga4Platform(p),
+    pwa_browser: typeof navigator !== 'undefined' ? ga4Browser(navigator.userAgent) : 'other',
+    pwa_display_mode: detectStandalone() ? 'standalone' : 'browser',
+  };
+}
 
 function detectStandalone(): boolean {
   try {
@@ -76,6 +94,8 @@ export default function PwaProvider({ children }: { children: React.ReactNode })
   const [bip, setBip] = useState<BeforeInstallPromptEvent | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [trigger, setTrigger] = useState<InstallTrigger>('menu');
+  const [openCtx, setOpenCtx] = useState<InstallOpenContext | null>(null);
+  const nativeAcceptedRef = useRef(false);
   const [online, setOnline] = useState(true);
   const [backOnline, setBackOnline] = useState(false);
   const [updateReady, setUpdateReady] = useState(false);
@@ -91,16 +111,29 @@ export default function PwaProvider({ children }: { children: React.ReactNode })
     setIosShare(iosThirdPartyCanInstall(navigator.userAgent));
     const sa = detectStandalone();
     setStandalone(sa);
-    if (sa && !ss()?.getItem(K_STANDALONE)) {
+    // Once per session, and only marked as sent when it can actually be
+    // delivered (consent granted + GA4 loaded); retried on consent change.
+    // The installing browser is unknowable here, so pwa_browser is omitted.
+    const sendStandalone = () => {
+      if (!detectStandalone() || ss()?.getItem(K_STANDALONE) || !canSendGa4()) return;
       ss()?.setItem(K_STANDALONE, '1');
-      trackGa4Event('pwa_standalone_launched', { pwa_platform: p });
-    }
+      trackGa4Event('pwa_standalone_launched', { pwa_platform: ga4Platform(p), pwa_display_mode: 'standalone' });
+    };
+    sendStandalone();
+    const t1 = setTimeout(sendStandalone, 3000);  // GA4 script may load after hydration
+    window.addEventListener('wl-consent-changed', sendStandalone);
     if (window.__wlBip) setBip(window.__wlBip);
     const onBip = () => setBip(window.__wlBip || null);
     const onInstalled = () => {
       setBip(null);
       setSheetOpen(false);
-      trackGa4Event('pwa_app_installed', { pwa_platform: p });
+      // Browser-confirmed install (Chromium). install_method only when it is
+      // known that our native prompt was accepted in this page lifetime.
+      trackGa4EventOnce('pwa_app_installed', 'pwa_app_installed', {
+        pwa_platform: ga4Platform(p),
+        pwa_browser: ga4Browser(navigator.userAgent),
+        pwa_install_method: nativeAcceptedRef.current ? 'native_prompt' : undefined,
+      });
       toast.success('WaveLead was added to your home screen.');
     };
     window.addEventListener('wl:bip', onBip);
@@ -109,6 +142,8 @@ export default function PwaProvider({ children }: { children: React.ReactNode })
     const onMode = () => setStandalone(detectStandalone());
     try { mq = window.matchMedia('(display-mode: standalone)'); mq.addEventListener('change', onMode); } catch { /* old Safari */ }
     return () => {
+      clearTimeout(t1);
+      window.removeEventListener('wl-consent-changed', sendStandalone);
       window.removeEventListener('wl:bip', onBip);
       window.removeEventListener('wl:appinstalled', onInstalled);
       try { mq?.removeEventListener('change', onMode); } catch { /* noop */ }
@@ -188,20 +223,46 @@ export default function PwaProvider({ children }: { children: React.ReactNode })
     return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down); if (t) clearTimeout(t); };
   }, []);
 
-  // ---- engagement tracking (distinct pages + time) -----------------------
+  // ---- engagement tracking (eligible pages, active time, interactions) ---
   useEffect(() => {
     const s = ss(); if (!s) return;
-    if (!s.getItem(K_START)) s.setItem(K_START, String(Date.now()));
+    if (!isAutoSuggestPath(pathname, window.location.search)) return;
     let pages: string[] = [];
     try { pages = JSON.parse(s.getItem(K_PAGES) || '[]'); } catch { pages = []; }
     if (!pages.includes(pathname)) { pages.push(pathname); s.setItem(K_PAGES, JSON.stringify(pages.slice(-20))); }
   }, [pathname]);
 
+  useEffect(() => {
+    const s = ss(); if (!s) return;
+    // Active time accrues only while the tab is visible AND focused.
+    const tick = setInterval(() => {
+      if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+      s.setItem(K_ACTIVE, String(Number(s.getItem(K_ACTIVE) || 0) + 1000));
+    }, 1000);
+    const bump = () => s.setItem(K_INTERACT, String(Number(s.getItem(K_INTERACT) || 0) + 1));
+    let scrolled = false;
+    const onScroll = () => { if (!scrolled && window.scrollY > 300) { scrolled = true; bump(); } };
+    window.addEventListener('pointerdown', bump, { passive: true });
+    window.addEventListener('keydown', bump);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      clearInterval(tick);
+      window.removeEventListener('pointerdown', bump);
+      window.removeEventListener('keydown', bump);
+      window.removeEventListener('scroll', onScroll);
+    };
+  }, []);
+
   const mode = installModeFor(platform, !!bip, standalone, iosShare);
   const canOfferInstall = isMobilePlatform(platform) && mode !== 'none';
 
-  const openInstall = useCallback((t: InstallTrigger) => {
+  const openInstall = useCallback((t: InstallTrigger, autoTrigger?: AutoTrigger) => {
     setTrigger(t);
+    setOpenCtx({
+      openId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      entry_point: t === 'auto' ? 'auto_prompt' : t === 'menu' ? 'mobile_menu' : 'footer',
+      trigger: t === 'auto' ? (autoTrigger || 'time_engagement') : 'manual',
+    });
     setSheetOpen(true);
   }, []);
 
@@ -213,19 +274,19 @@ export default function PwaProvider({ children }: { children: React.ReactNode })
       const s = ss(); const l = ls();
       let pages: string[] = [];
       try { pages = JSON.parse(s?.getItem(K_PAGES) || '[]'); } catch { pages = []; }
-      const start = Number(s?.getItem(K_START) || Date.now());
       const dismissed = Number(l?.getItem(K_DISMISSED) || 0) || null;
-      const ok = shouldAutoSuggest({
+      const fired = autoSuggestTrigger({
         platform, nativePromptAvailable: !!bip, standalone, pathname, search: window.location.search,
-        distinctPages: pages.length, engagedMs: Date.now() - start,
+        eligiblePages: pages.length, activeMs: Number(s?.getItem(K_ACTIVE) || 0),
+        interactions: Number(s?.getItem(K_INTERACT) || 0),
         shownThisSession: s?.getItem(K_SHOWN) === '1', dismissedAt: dismissed, now: Date.now(),
         iosThirdPartySupported: iosShare,
       });
-      if (!ok || attentionBusy()) return;
+      if (!fired || attentionBusy()) return;
       s?.setItem(K_SHOWN, '1');
-      openInstall('auto');
+      openInstall('auto', fired);
     };
-    const id = setInterval(check, 5000);
+    const id = setInterval(check, 2000);
     check();
     return () => clearInterval(id);
   }, [platform, bip, standalone, pathname, sheetOpen, openInstall, iosShare]);
@@ -243,17 +304,22 @@ export default function PwaProvider({ children }: { children: React.ReactNode })
       const choice = await ev.userChoice;
       window.__wlBip = null;
       setBip(null);                          // a prompt event can only be used once
+      const params: Ga4Params = {
+        ...baseParams(platform),
+        pwa_entry_point: openCtx?.entry_point, pwa_trigger: openCtx?.trigger, pwa_install_method: 'native_prompt',
+      };
       if (choice.outcome === 'accepted') {
-        trackGa4Event('pwa_install_prompt_accepted', { pwa_platform: platform });
+        nativeAcceptedRef.current = true;
+        trackGa4EventOnce(`pwa_accept:${openCtx?.openId}`, 'pwa_install_prompt_accepted', params);
         return 'accepted';
       }
-      trackGa4Event('pwa_install_prompt_dismissed', { pwa_platform: platform });
+      trackGa4EventOnce(`pwa_dismiss:${openCtx?.openId}`, 'pwa_install_prompt_dismissed', params);
       ls()?.setItem(K_DISMISSED, String(Date.now()));
       return 'dismissed';
     } catch {
       return 'unavailable';
     }
-  }, [bip, platform]);
+  }, [bip, platform, openCtx]);
 
   const value = useMemo<PwaContextValue>(() => ({ platform, standalone, mode, canOfferInstall, openInstall }),
     [platform, standalone, mode, canOfferInstall, openInstall]);
@@ -267,6 +333,7 @@ export default function PwaProvider({ children }: { children: React.ReactNode })
           platform={platform}
           iosBrowser={iosBrowser}
           trigger={trigger}
+          openCtx={openCtx}
           onClose={() => setSheetOpen(false)}
           onNotNow={dismiss}
           onNativeInstall={runNativePrompt}
