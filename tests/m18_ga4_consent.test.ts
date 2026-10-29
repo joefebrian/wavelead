@@ -272,8 +272,10 @@ describe('M18-GA4 §5 no PII or sensitive identifiers reach GA4', () => {
       'app/pricing/PricingClient.tsx',
       'app/dashboard/campaigns/CampaignsClient.tsx',
       'app/dashboard/opportunities/OpportunitiesClient.tsx',
-      'app/signup/page.tsx',
-      'app/login/page.tsx',
+      // SEO remediation (2026-09-23) split these pages into a server page +
+      // client component; the tracking calls live in the client components.
+      'app/signup/SignupClient.tsx',
+      'app/login/LoginClient.tsx',
       'components/support/SupportWidget.tsx',
     ]) {
       const s = src(f);

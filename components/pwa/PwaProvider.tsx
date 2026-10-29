@@ -11,8 +11,8 @@ import { toast } from 'sonner';
 import { WifiOff, Wifi } from 'lucide-react';
 import { trackGa4Event } from '@/lib/analytics/events';
 import {
-  detectPwaPlatform, installModeFor, isMobilePlatform, isSensitiveLocation, shouldAutoSuggest,
-  type InstallMode, type PwaPlatform,
+  detectPwaPlatform, detectIosBrowser, installModeFor, iosThirdPartyCanInstall, isMobilePlatform, isSensitiveLocation, shouldAutoSuggest,
+  type InstallMode, type IosBrowser, type PwaPlatform,
 } from '@/lib/pwa/platform';
 import InstallSheet from './InstallSheet';
 
@@ -70,6 +70,8 @@ function attentionBusy(): boolean {
 export default function PwaProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/';
   const [platform, setPlatform] = useState<PwaPlatform>('unknown');
+  const [iosBrowser, setIosBrowser] = useState<IosBrowser>('safari');
+  const [iosShare, setIosShare] = useState(false);
   const [standalone, setStandalone] = useState(false);
   const [bip, setBip] = useState<BeforeInstallPromptEvent | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -85,6 +87,8 @@ export default function PwaProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     const p = detectPwaPlatform(navigator.userAgent, navigator.maxTouchPoints || 0);
     setPlatform(p);
+    setIosBrowser(detectIosBrowser(navigator.userAgent));
+    setIosShare(iosThirdPartyCanInstall(navigator.userAgent));
     const sa = detectStandalone();
     setStandalone(sa);
     if (sa && !ss()?.getItem(K_STANDALONE)) {
@@ -193,7 +197,7 @@ export default function PwaProvider({ children }: { children: React.ReactNode })
     if (!pages.includes(pathname)) { pages.push(pathname); s.setItem(K_PAGES, JSON.stringify(pages.slice(-20))); }
   }, [pathname]);
 
-  const mode = installModeFor(platform, !!bip, standalone);
+  const mode = installModeFor(platform, !!bip, standalone, iosShare);
   const canOfferInstall = isMobilePlatform(platform) && mode !== 'none';
 
   const openInstall = useCallback((t: InstallTrigger) => {
@@ -215,6 +219,7 @@ export default function PwaProvider({ children }: { children: React.ReactNode })
         platform, nativePromptAvailable: !!bip, standalone, pathname, search: window.location.search,
         distinctPages: pages.length, engagedMs: Date.now() - start,
         shownThisSession: s?.getItem(K_SHOWN) === '1', dismissedAt: dismissed, now: Date.now(),
+        iosThirdPartySupported: iosShare,
       });
       if (!ok || attentionBusy()) return;
       s?.setItem(K_SHOWN, '1');
@@ -223,7 +228,7 @@ export default function PwaProvider({ children }: { children: React.ReactNode })
     const id = setInterval(check, 5000);
     check();
     return () => clearInterval(id);
-  }, [platform, bip, standalone, pathname, sheetOpen, openInstall]);
+  }, [platform, bip, standalone, pathname, sheetOpen, openInstall, iosShare]);
 
   const dismiss = useCallback(() => {
     ls()?.setItem(K_DISMISSED, String(Date.now()));
@@ -260,6 +265,7 @@ export default function PwaProvider({ children }: { children: React.ReactNode })
         <InstallSheet
           mode={mode}
           platform={platform}
+          iosBrowser={iosBrowser}
           trigger={trigger}
           onClose={() => setSheetOpen(false)}
           onNotNow={dismiss}

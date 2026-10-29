@@ -8,12 +8,13 @@ import Image from 'next/image';
 import { Share, SquarePlus, ToggleRight, Home, AppWindow, Store, MoreVertical, Compass, Copy, Check, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { trackGa4Event } from '@/lib/analytics/events';
-import type { InstallMode, PwaPlatform } from '@/lib/pwa/platform';
+import type { InstallMode, IosBrowser, PwaPlatform } from '@/lib/pwa/platform';
 import type { InstallTrigger } from './PwaProvider';
 
 interface Props {
   mode: InstallMode;
   platform: PwaPlatform;
+  iosBrowser: IosBrowser;
   trigger: InstallTrigger;
   onClose: () => void;
   onNotNow: () => void;
@@ -45,7 +46,7 @@ function CopyLink() {
   );
 }
 
-export default function InstallSheet({ mode, platform, trigger, onClose, onNotNow, onNativeInstall }: Props) {
+export default function InstallSheet({ mode, platform, iosBrowser, trigger, onClose, onNotNow, onNativeInstall }: Props) {
   const [view, setView] = useState<'intro' | 'steps' | 'installing'>('intro');
   const [busy, setBusy] = useState(false);
   const [shown, setShown] = useState(false);
@@ -70,7 +71,7 @@ export default function InstallSheet({ mode, platform, trigger, onClose, onNotNo
       else setView('steps'); // prompt no longer available → honest manual steps
       return;
     }
-    if (mode === 'ios_safari') trackGa4Event('pwa_ios_instructions_viewed', { pwa_platform: platform });
+    if (mode === 'ios_safari' || mode === 'ios_share') trackGa4Event('pwa_ios_instructions_viewed', { pwa_platform: platform });
     setView('steps');
   }
 
@@ -83,6 +84,20 @@ export default function InstallSheet({ mode, platform, trigger, onClose, onNotNo
             <Step n={2} icon={<SquarePlus className="h-4 w-4" />}>Scroll down and choose <strong>Add to Home Screen</strong>.</Step>
             <Step n={3} icon={<ToggleRight className="h-4 w-4" />}>Keep <strong>Open as Web App</strong> switched on if you see it.</Step>
             <Step n={4} icon={<Home className="h-4 w-4" />}>Tap <strong>Add</strong>, then open WaveLead from your Home Screen.</Step>
+          </ol>
+        );
+      case 'ios_share':
+        return (
+          <ol className="space-y-3" data-testid={`pwa-ios-share-steps-${iosBrowser}`}>
+            {iosBrowser === 'chrome' ? (
+              <Step n={1} icon={<Share className="h-4 w-4" />}>Tap the <strong>Share</strong> icon in Chrome&rsquo;s address bar.</Step>
+            ) : (
+              <Step n={1} icon={<MoreVertical className="h-4 w-4" />}>Open the <strong>{iosBrowser === 'edge' ? '•••' : '☰'}</strong> menu, then tap <strong>Share</strong>.</Step>
+            )}
+            <Step n={2} icon={<SquarePlus className="h-4 w-4" />}>Choose <strong>Add to Home Screen</strong> (scroll down if needed).</Step>
+            <Step n={3} icon={<ToggleRight className="h-4 w-4" />}>Keep <strong>Open as Web App</strong> switched on if you see it.</Step>
+            <Step n={4} icon={<Home className="h-4 w-4" />}>Tap <strong>Add</strong>, then open WaveLead from your Home Screen.</Step>
+            <li className="pt-1 text-xs text-muted-foreground">Don&rsquo;t see Add to Home Screen? Open wavelead.org in Safari and use Share there.</li>
           </ol>
         );
       case 'ios_open_in_safari':
@@ -123,7 +138,7 @@ export default function InstallSheet({ mode, platform, trigger, onClose, onNotNo
     }
   })();
 
-  const showIntro = view === 'intro' && (mode === 'native' || mode === 'ios_safari');
+  const showIntro = view === 'intro' && (mode === 'native' || mode === 'ios_safari' || mode === 'ios_share');
   const primaryLabel = 'Install WaveLead';
 
   return (
@@ -179,7 +194,7 @@ export default function InstallSheet({ mode, platform, trigger, onClose, onNotNo
                 <div className="mt-4">{steps}</div>
               )}
 
-              {mode === 'ios_safari' && view === 'steps' && (
+              {(mode === 'ios_safari' || mode === 'ios_share') && view === 'steps' && (
                 <p className="mt-3 text-xs text-muted-foreground">WaveLead then opens full-screen like an app, without Safari&rsquo;s address bar.</p>
               )}
 

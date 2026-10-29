@@ -35,15 +35,41 @@ export function detectPwaPlatform(ua: string, maxTouchPoints = 0): PwaPlatform {
 
 export const isMobilePlatform = (p: PwaPlatform) => p !== 'desktop' && p !== 'unknown';
 
-/** Which install experience the sheet should show. */
-export type InstallMode = 'native' | 'ios_safari' | 'ios_open_in_safari' | 'android_manual' | 'open_in_browser' | 'none';
+/** Third-party iOS browser, for browser-specific Add to Home Screen steps. */
+export type IosBrowser = 'safari' | 'chrome' | 'edge' | 'firefox' | 'other';
+export function detectIosBrowser(ua: string): IosBrowser {
+  if (/CriOS/i.test(ua)) return 'chrome';
+  if (/EdgiOS/i.test(ua)) return 'edge';
+  if (/FxiOS/i.test(ua)) return 'firefox';
+  if (IOS_OTHER_RE.test(ua)) return 'other';
+  return 'safari';
+}
+/** iOS version as a number (e.g. 16.4), or null when not an iOS UA. */
+export function iosVersion(ua: string): number | null {
+  const m = /OS (\d+)[_.](\d+)(?:[_.]\d+)? like Mac OS X/i.exec(ua);
+  return m ? Number(m[1]) + Number(m[2]) / 10 : null;
+}
+/**
+ * Since iOS 16.4, Chrome, Edge and Firefox on iOS can Add to Home Screen via
+ * the iOS share sheet. iPadOS desktop-mode UAs carry no iOS version; those are
+ * treated as supported.
+ */
+export function iosThirdPartyCanInstall(ua: string): boolean {
+  const b = detectIosBrowser(ua);
+  if (b !== 'chrome' && b !== 'edge' && b !== 'firefox') return false;
+  const v = iosVersion(ua);
+  return v === null ? true : v >= 16.4;
+}
 
-export function installModeFor(p: PwaPlatform, nativePromptAvailable: boolean, standalone: boolean): InstallMode {
+/** Which install experience the sheet should show. */
+export type InstallMode = 'native' | 'ios_safari' | 'ios_share' | 'ios_open_in_safari' | 'android_manual' | 'open_in_browser' | 'none';
+
+export function installModeFor(p: PwaPlatform, nativePromptAvailable: boolean, standalone: boolean, iosThirdPartySupported = false): InstallMode {
   if (standalone) return 'none';
   if (nativePromptAvailable && p !== 'ios_safari' && p !== 'ios_other_browser' && p !== 'ios_in_app') return 'native';
   switch (p) {
     case 'ios_safari': return 'ios_safari';
-    case 'ios_other_browser': return 'ios_open_in_safari';
+    case 'ios_other_browser': return iosThirdPartySupported ? 'ios_share' : 'ios_open_in_safari';
     case 'ios_in_app':
     case 'android_in_app': return 'open_in_browser';
     case 'android_chromium':
@@ -92,6 +118,8 @@ export interface AutoSuggestInput {
   shownThisSession: boolean;
   dismissedAt: number | null;
   now: number;
+  /** Chrome / Edge / Firefox on iOS 16.4+ (share-sheet install). */
+  iosThirdPartySupported?: boolean;
 }
 
 export function shouldAutoSuggest(i: AutoSuggestInput): boolean {
@@ -99,7 +127,8 @@ export function shouldAutoSuggest(i: AutoSuggestInput): boolean {
   // Only where a real install path exists right now: a captured native
   // prompt, or Safari on iOS (Add to Home Screen).
   const eligible = (i.nativePromptAvailable && (i.platform === 'android_chromium' || i.platform === 'android_other'))
-    || i.platform === 'ios_safari';
+    || i.platform === 'ios_safari'
+    || (i.platform === 'ios_other_browser' && i.iosThirdPartySupported === true);
   if (!eligible) return false;
   if (i.dismissedAt && i.now - i.dismissedAt < DISMISS_SUPPRESS_MS) return false;
   if (i.distinctPages < AUTO_MIN_PAGES || i.engagedMs < AUTO_MIN_MS) return false;

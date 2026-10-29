@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-  detectPwaPlatform, installModeFor, isSensitiveLocation, isAutoSuggestPath, shouldAutoSuggest,
+  detectPwaPlatform, detectIosBrowser, iosVersion, iosThirdPartyCanInstall, installModeFor, isSensitiveLocation, isAutoSuggestPath, shouldAutoSuggest,
   AUTO_MIN_MS, DISMISS_SUPPRESS_MS,
 } from '@/lib/pwa/platform';
 
@@ -43,6 +43,19 @@ describe('install mode', () => {
     expect(installModeFor('android_chromium', false, false)).toBe('android_manual');
     expect(installModeFor('ios_safari', true, false)).toBe('ios_safari');
     expect(installModeFor('ios_other_browser', false, false)).toBe('ios_open_in_safari');
+    expect(installModeFor('ios_other_browser', false, false, true)).toBe('ios_share');
+  });
+  it('iOS third-party browsers: share-sheet install on iOS 16.4+, Safari otherwise', () => {
+    expect(detectIosBrowser(UA.iosChrome)).toBe('chrome');
+    expect(iosVersion(UA.iosChrome)).toBe(18);
+    expect(iosThirdPartyCanInstall(UA.iosChrome)).toBe(true);
+    const edge164 = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/120.0 Mobile/15E148 Safari/605.1.15';
+    const ff163 = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/120.0 Mobile/15E148 Safari/605.1.15';
+    const ddg = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 DuckDuckGo/7 Safari/605.1.15';
+    expect(iosThirdPartyCanInstall(edge164)).toBe(true);
+    expect(iosThirdPartyCanInstall(ff163)).toBe(false);
+    expect(iosThirdPartyCanInstall(ddg)).toBe(false);
+    expect(iosThirdPartyCanInstall(UA.iosSafari)).toBe(false); // Safari uses its own mode
     expect(installModeFor('ios_in_app', false, false)).toBe('open_in_browser');
     expect(installModeFor('android_in_app', false, false)).toBe('open_in_browser');
   });
@@ -92,6 +105,7 @@ describe('automatic suggestion gating', () => {
     expect(shouldAutoSuggest({ ...base, nativePromptAvailable: false })).toBe(false);
     expect(shouldAutoSuggest({ ...base, platform: 'ios_safari', nativePromptAvailable: false })).toBe(true);
     expect(shouldAutoSuggest({ ...base, platform: 'ios_other_browser', nativePromptAvailable: false })).toBe(false);
+    expect(shouldAutoSuggest({ ...base, platform: 'ios_other_browser', nativePromptAvailable: false, iosThirdPartySupported: true })).toBe(true);
     expect(shouldAutoSuggest({ ...base, platform: 'android_in_app' })).toBe(false);
     expect(shouldAutoSuggest({ ...base, platform: 'desktop' })).toBe(false);
   });
