@@ -7,6 +7,7 @@
 import Link from 'next/link';
 import BrandLogo from '@/components/brand/BrandLogo';
 import CookiePreferencesTrigger from '@/components/consent/CookiePreferencesTrigger';
+import InstallAppEntry from '@/components/pwa/InstallAppEntry';
 
 const DISCOVER = [
   { href: '/channels', label: 'All Channels' },
@@ -53,6 +54,7 @@ export default function Footer() {
           <p className="mt-3 text-sm text-muted-foreground">
             Helping WhatsApp Channels grow, monetize and connect with brands.
           </p>
+          <InstallAppEntry trigger="footer" className="mt-4 text-sm font-medium md:hidden" />
         </div>
 
         {/* COL 2 — Discover */}

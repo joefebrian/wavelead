@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { Radio, Menu, X, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { PublicUser } from '@/lib/types';
+import InstallAppEntry from '@/components/pwa/InstallAppEntry';
 
 export default function Header() {
   const [me, setMe] = useState<PublicUser | null>(null);
@@ -112,6 +113,7 @@ export default function Header() {
             </form>
             {nav.map((n) => (<Link key={n.href} href={n.href} className="py-2 text-sm font-medium" onClick={() => setOpen(false)}>{n.label}</Link>))}
             <Link href="/submit" className="py-2 text-sm font-medium" onClick={() => setOpen(false)}>Submit Channel</Link>
+            <InstallAppEntry trigger="menu" onOpen={() => setOpen(false)} className="py-2 text-sm font-medium" />
             <div className="flex gap-2 pt-2 border-t border-border/60">
               {me ? (
                 <>

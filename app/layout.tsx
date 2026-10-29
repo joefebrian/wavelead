@@ -1,5 +1,5 @@
 import './globals.css';
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Providers } from './providers';
 import { Toaster } from 'sonner';
 import type { ReactNode } from 'react';
@@ -7,6 +7,7 @@ import ConsentBanner from '@/components/consent/ConsentBanner';
 import AnalyticsAutoPageView from '@/components/consent/AnalyticsAutoPageView';
 import GoogleAnalytics from '@/components/analytics/GoogleAnalytics';
 import SupportWidget from '@/components/support/SupportWidget';
+import PwaProvider from '@/components/pwa/PwaProvider';
 import { JsonLd, organizationSchema, webSiteSchema } from '@/lib/seo/structuredData';
 
 export const metadata: Metadata = {
@@ -26,9 +27,31 @@ export const metadata: Metadata = {
     // temporary/signed external URL).
     images: [{ url: '/brand/wavelead-logo.png', width: 2172, height: 724, alt: 'WaveLead' }],
   },
-  icons: { icon: '/brand/wavelead-logo.png', apple: '/brand/wavelead-logo.png' },
+  applicationName: 'WaveLead',
+  manifest: '/manifest.webmanifest',
+  icons: {
+    icon: [
+      { url: '/icons/favicon-32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/icons/favicon-16.png', sizes: '16x16', type: 'image/png' },
+      { url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+    ],
+    apple: [{ url: '/icons/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
+  },
+  appleWebApp: { capable: true, title: 'WaveLead', statusBarStyle: 'default' },
+  formatDetection: { telephone: false },
   robots: { index: true, follow: true },
 };
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#12B981',
+};
+
+// Captures the install prompt as early as possible (before React hydrates) so
+// it is never lost; the PWA provider picks it up from window.__wlBip.
+const PWA_EARLY_CAPTURE = "window.__wlBip=null;window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();window.__wlBip=e;window.dispatchEvent(new Event('wl:bip'));});window.addEventListener('appinstalled',function(){window.__wlBip=null;window.__wlInstalled=true;window.dispatchEvent(new Event('wl:appinstalled'));});";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
@@ -40,12 +63,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
           rel="stylesheet"
         />
+        <script dangerouslySetInnerHTML={{ __html: PWA_EARLY_CAPTURE }} />
       </head>
-      <body className="min-h-screen bg-background text-foreground overflow-x-hidden">
+      <body className="min-h-screen bg-background text-foreground overflow-x-hidden pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
         {/* M17 — AEO/GEO entity graph. Server-rendered from our own data only. */}
         <JsonLd id="ld-organization" data={organizationSchema()} />
         <JsonLd id="ld-website" data={webSiteSchema()} />
         <Providers>
+          <PwaProvider>
           {children}
           <ConsentBanner />
           <AnalyticsAutoPageView />
@@ -54,6 +79,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           {/* M19.2 — Support chat widget. Never renders inside /admin. */}
           <SupportWidget />
           <Toaster richColors position="top-right" />
+          </PwaProvider>
         </Providers>
       </body>
     </html>
